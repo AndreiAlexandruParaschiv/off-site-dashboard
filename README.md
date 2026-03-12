@@ -1,12 +1,12 @@
 # Off-Site Dashboard
 
-Small React + TypeScript dashboard for SpaceCat read-only API workflows.
+Small React + TypeScript dashboard for read-only API workflows.
 
 ## What it does
 
-- Accepts an API key and SpaceCat API base URL.
+- Accepts an API key and API base URL.
 - Accepts one or more site URLs.
-- Resolves `siteId` values through SpaceCat site lookup endpoints.
+- Resolves `siteId` values through site lookup endpoints.
 - Fetches `GET /api/v1/sites/{siteId}/opportunities`.
 - Filters to Reddit, YouTube, Cited URLs, Prompt Gap, and Wikipedia opportunities.
 - Shows grouped suggestions per opportunity with CSV export.
@@ -53,5 +53,5 @@ This repo includes `vercel.json` with build/output and SPA rewrite config.
 
 - Requests are `GET` only.
 - API key is manual input only and is not persisted in browser `localStorage`.
-- API requests send `Authorization: Bearer <API_KEY>` (and `x-api-key` for compatibility).
+- API requests include the configured authentication headers.
 - If browser CORS blocks the API, add a server-side proxy for the fetches.

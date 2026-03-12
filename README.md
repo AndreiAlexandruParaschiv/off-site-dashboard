@@ -24,18 +24,30 @@ npm run dev
 npm run build
 ```
 
-## Deploy to GitHub Pages
+## Deploy (Recommended)
 
-This repo includes a GitHub Actions workflow at:
+GitHub Pages is disabled for Enterprise Managed User repositories in your setup.
+Use Netlify or Vercel instead.
 
-- `.github/workflows/deploy-pages.yml`
+### Netlify
 
-To enable it:
+This repo includes `netlify.toml` with the build and SPA routing config.
 
-1. Push to `main`.
-2. In GitHub repo settings, open `Pages`.
-3. Set `Source` to `GitHub Actions`.
-4. The workflow will build and deploy `dist/`.
+1. In Netlify, import this GitHub repo.
+2. Deploy settings will be auto-detected:
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+3. Deploy and share the generated site URL with your team.
+
+### Vercel
+
+This repo includes `vercel.json` with build/output and SPA rewrite config.
+
+1. In Vercel, import this GitHub repo.
+2. Confirm settings:
+   - Build command: `npm run build`
+   - Output directory: `dist`
+3. Deploy and share the generated site URL with your team.
 
 ## Notes
 

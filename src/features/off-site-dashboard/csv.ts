@@ -9,6 +9,12 @@ const CSV_HEADERS = [
   'Suggestions',
   'Status',
 ] as const;
+const SENTIMENT_OPPORTUNITY_TYPES = new Set([
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+  'Prompt Gap',
+]);
 
 function escapeCell(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
@@ -63,11 +69,7 @@ function formatRow(row: GroupedOpportunityRow) {
   ];
 }
 
-export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
-  if (!rows.length) {
-    return;
-  }
-
+function downloadCsvFile(rows: GroupedOpportunityRow[], filename: string) {
   const headerRow = CSV_HEADERS.map((header) => escapeCell(header)).join(',');
   const bodyRows = rows.map((row) =>
     formatRow(row).map((value) => escapeCell(String(value))).join(','),
@@ -77,9 +79,23 @@ export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'off-site-dashboard.csv';
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
+  if (!rows.length) {
+    return;
+  }
+
+  const sentimentRows = rows.filter((row) =>
+    row.opportunityType
+      ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType)
+      : false,
+  );
+  downloadCsvFile(rows, 'EvaluationSuggestion.csv');
+  downloadCsvFile(sentimentRows, 'EvaluationSentiment.csv');
 }

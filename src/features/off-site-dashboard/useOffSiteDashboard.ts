@@ -330,7 +330,8 @@ export function useOffSiteDashboard() {
     configuredSites.length > 0;
 
   const exportableRows = useMemo(
-    () => allRows.filter((row) => Boolean(row.opportunityId)),
+    () =>
+      groupOpportunityRows(allRows.filter((row) => Boolean(row.opportunityId))),
     [allRows],
   );
 

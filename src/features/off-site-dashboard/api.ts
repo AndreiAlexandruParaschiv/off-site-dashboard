@@ -212,7 +212,10 @@ async function fetchSuggestionsForOpportunity(
 
     return {
       ...opportunity,
-      suggestions: normalizeSuggestionCollection(suggestionsPayload),
+      suggestions: normalizeSuggestionCollection(
+        suggestionsPayload,
+        opportunity.opportunityType,
+      ),
     };
   } catch (error) {
     if (

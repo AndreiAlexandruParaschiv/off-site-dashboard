@@ -178,6 +178,15 @@ function DashboardTable(props: { rows: GroupedOpportunityRow[] }) {
                       const suggestionText = trimSuggestionText(
                         suggestion.suggestionText,
                       );
+                      const suggestionLines = suggestionText
+                        ? suggestionText.split('\n')
+                        : [];
+                      const suggestionHeading =
+                        suggestionLines.length > 1 ? suggestionLines[0] : '';
+                      const suggestionBody =
+                        suggestionLines.length > 1
+                          ? suggestionLines.slice(1).join('\n')
+                          : suggestionText;
 
                       return (
                         <li
@@ -189,7 +198,20 @@ function DashboardTable(props: { rows: GroupedOpportunityRow[] }) {
                               {suggestion.suggestionId}
                             </span>
                           )}
-                          <span>{suggestionText || ' - '}</span>
+                          {suggestionHeading ? (
+                            <>
+                              <strong className="suggestion-heading">
+                                {suggestionHeading}
+                              </strong>
+                              <span className="suggestion-copy">
+                                {suggestionBody || ' - '}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="suggestion-copy">
+                              {suggestionBody || ' - '}
+                            </span>
+                          )}
                           {suggestion.suggestionUrl && (
                             <a
                               className="suggestion-link"

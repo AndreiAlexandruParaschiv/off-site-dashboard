@@ -10,6 +10,11 @@ import type {
 const LOOKUP_SITE_KEYS = ['sites', 'items', 'data', 'results'] as const;
 const OPPORTUNITY_KEYS = ['opportunities', 'items', 'data', 'results'] as const;
 const SUGGESTION_KEYS = ['suggestions', 'items', 'data', 'results'] as const;
+const STRATEGIC_RECOMMENDATION_TYPES = new Set<CanonicalOpportunityType>([
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+]);
 const SITE_URL_KEYS = [
   'baseURL',
   'baseUrl',
@@ -434,7 +439,189 @@ function extractSuggestionTextValue(record: Record<string, unknown>) {
   return '';
 }
 
-function normalizeSuggestion(record: Record<string, unknown>, index: number) {
+function normalizeTextContent(value?: string | null) {
+  if (!value) {
+    return '';
+  }
+
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeMultilineText(value: string) {
+  return value
+    .split('\n')
+    .map((line) => normalizeTextContent(line))
+    .filter(Boolean)
+    .join('\n');
+}
+
+function getSuggestionValue(record: Record<string, unknown>) {
+  const directValue =
+    getStringValue(record, ['suggestionValue', 'value', 'content']) ?? '';
+
+  if (directValue) {
+    return directValue;
+  }
+
+  const nestedData = record.data;
+  if (isRecord(nestedData)) {
+    return (
+      getStringValue(nestedData, ['suggestionValue', 'value', 'content']) ?? ''
+    );
+  }
+
+  return '';
+}
+
+function extractRecommendationSection(value: string) {
+  const headingMatch = /^#{1,6}\s*Strategic Recommendations\b.*$/im.exec(value);
+
+  if (!headingMatch) {
+    return '';
+  }
+
+  const sectionStart = headingMatch.index + headingMatch[0].length;
+  const sectionBody = value.slice(sectionStart);
+  const nextBoundaryMatch = /\n---\s*\n|\n#{1,6}\s+/i.exec(sectionBody);
+  const sectionEnd = nextBoundaryMatch ? nextBoundaryMatch.index : sectionBody.length;
+
+  return sectionBody.slice(0, sectionEnd).trim();
+}
+
+function createPlainTextFromHtmlFragment(fragment: string) {
+  if (typeof DOMParser === 'undefined') {
+    return normalizeTextContent(fragment.replace(/<[^>]+>/g, ' '));
+  }
+
+  const parser = new DOMParser();
+  const document = parser.parseFromString(`<div>${fragment}</div>`, 'text/html');
+  const root = document.body.firstElementChild;
+
+  if (!root) {
+    return '';
+  }
+
+  root.querySelectorAll('br').forEach((element) => {
+    element.replaceWith(document.createTextNode('\n'));
+  });
+
+  root.querySelectorAll('li').forEach((element) => {
+    element.prepend(document.createTextNode('- '));
+    element.append(document.createTextNode('\n'));
+  });
+
+  root
+    .querySelectorAll(
+      'p, div, ul, ol, table, tr, h1, h2, h3, h4, h5, h6, summary',
+    )
+    .forEach((element) => {
+      element.append(document.createTextNode('\n'));
+    });
+
+  return normalizeMultilineText(root.textContent ?? '');
+}
+
+function extractRecommendationUrl(detailsElement: Element) {
+  const firstLink = detailsElement.querySelector('a[href]');
+  const href = firstLink?.getAttribute('href')?.trim();
+
+  if (!href) {
+    return undefined;
+  }
+
+  return /^https?:\/\//i.test(href) ? href : undefined;
+}
+
+function extractStrategicRecommendationSuggestions(
+  suggestionValue: string,
+  suggestionId: string,
+): SuggestionRecord[] {
+  if (typeof DOMParser === 'undefined') {
+    return [] as SuggestionRecord[];
+  }
+
+  const recommendationSection = extractRecommendationSection(suggestionValue);
+  if (!recommendationSection) {
+    return [] as SuggestionRecord[];
+  }
+
+  const detailsMatches = recommendationSection.match(/<details\b[\s\S]*?<\/details>/gi);
+  if (!detailsMatches || detailsMatches.length === 0) {
+    const plainSection = normalizeMultilineText(
+      createPlainTextFromHtmlFragment(recommendationSection),
+    );
+
+    return plainSection
+      ? [
+          {
+            suggestionId,
+            suggestionText: plainSection,
+          },
+        ]
+      : [];
+  }
+
+  const parser = new DOMParser();
+
+  return detailsMatches
+    .map((detailsMarkup, recommendationIndex) => {
+      const document = parser.parseFromString(`<div>${detailsMarkup}</div>`, 'text/html');
+      const detailsElement = document.querySelector('details');
+
+      if (!detailsElement) {
+        return null;
+      }
+
+      const summaryElement = detailsElement.querySelector('summary');
+      const summaryText = normalizeTextContent(summaryElement?.textContent);
+
+      if (!summaryText) {
+        return null;
+      }
+
+      const priorityMatch = /\b(HIGH|MEDIUM|LOW)\b/i.exec(summaryText);
+      const cleanedTitle = summaryText
+        .replace(/\b(HIGH|MEDIUM|LOW)\b/i, '')
+        .replace(/[▼▾]+$/u, '')
+        .replace(/^\s*\d+\.\s*/, '')
+        .trim();
+
+      const contentBlocks = Array.from(detailsElement.children)
+        .filter((element) => element !== summaryElement)
+        .map((element) => createPlainTextFromHtmlFragment(element.innerHTML))
+        .map((value) => normalizeTextContent(value))
+        .filter(Boolean);
+
+      const suggestionParts = [
+        priorityMatch ? `[${priorityMatch[1].toUpperCase()}] ${cleanedTitle}` : cleanedTitle,
+        ...contentBlocks,
+      ];
+      const suggestionText = normalizeMultilineText(suggestionParts.join('\n\n'));
+
+      if (!suggestionText) {
+        return null;
+      }
+
+      const normalizedSuggestion: SuggestionRecord = {
+        suggestionId: `${suggestionId}-rec-${recommendationIndex + 1}`,
+        suggestionText,
+      };
+      const recommendationUrl = extractRecommendationUrl(detailsElement);
+
+      if (recommendationUrl) {
+        normalizedSuggestion.suggestionUrl = recommendationUrl;
+      }
+
+      return normalizedSuggestion;
+    })
+    .filter((value): value is SuggestionRecord => value !== null);
+}
+
+function normalizeSuggestion(
+  record: Record<string, unknown>,
+  index: number,
+  opportunityType?: CanonicalOpportunityType,
+): SuggestionRecord[] | null {
   const suggestionText = extractSuggestionTextValue(record);
   const suggestionUrl =
     getStringValue(record, [
@@ -448,6 +635,22 @@ function normalizeSuggestion(record: Record<string, unknown>, index: number) {
   const suggestionId =
     getStringValue(record, ['suggestionId', 'id', 'uuid']) ??
     `suggestion-${index + 1}`;
+  const suggestionValue = getSuggestionValue(record);
+
+  if (
+    opportunityType &&
+    STRATEGIC_RECOMMENDATION_TYPES.has(opportunityType) &&
+    suggestionValue
+  ) {
+    const strategicSuggestions = extractStrategicRecommendationSuggestions(
+      suggestionValue,
+      suggestionId,
+    );
+
+    if (strategicSuggestions.length > 0) {
+      return strategicSuggestions;
+    }
+  }
 
   if (!suggestionText && !suggestionUrl && !suggestionId) {
     return null;
@@ -462,7 +665,7 @@ function normalizeSuggestion(record: Record<string, unknown>, index: number) {
     normalizedSuggestion.suggestionUrl = suggestionUrl;
   }
 
-  return normalizedSuggestion;
+  return [normalizedSuggestion];
 }
 
 function normalizeOpportunity(record: Record<string, unknown>, index: number) {
@@ -493,10 +696,14 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   ]);
   const suggestions = rawSuggestions
     .filter(isRecord)
-    .map((suggestion, suggestionIndex) =>
-      normalizeSuggestion(suggestion, suggestionIndex),
-    )
-    .filter((value): value is SuggestionRecord => value !== null);
+    .flatMap((suggestion, suggestionIndex) => {
+      const normalizedSuggestion = normalizeSuggestion(
+        suggestion,
+        suggestionIndex,
+        opportunityType,
+      );
+      return normalizedSuggestion ?? [];
+    });
 
   const normalizedOpportunity: OpportunityRecord = {
     opportunityId,
@@ -530,7 +737,10 @@ export function normalizeOpportunityCollection(responsePayload: unknown) {
     .filter((value): value is OpportunityRecord => value !== null);
 }
 
-export function normalizeSuggestionCollection(responsePayload: unknown) {
+export function normalizeSuggestionCollection(
+  responsePayload: unknown,
+  opportunityType?: CanonicalOpportunityType,
+) {
   const collection = extractCollection(responsePayload, SUGGESTION_KEYS);
 
   if (collection.length === 0) {
@@ -541,8 +751,12 @@ export function normalizeSuggestionCollection(responsePayload: unknown) {
         'uuid',
       ]);
       if (directSuggestionId) {
-        const suggestion = normalizeSuggestion(responsePayload, 0);
-        return suggestion ? [suggestion] : [];
+        const suggestions = normalizeSuggestion(
+          responsePayload,
+          0,
+          opportunityType,
+        );
+        return suggestions ?? [];
       }
     }
 
@@ -550,8 +764,10 @@ export function normalizeSuggestionCollection(responsePayload: unknown) {
   }
 
   return collection
-    .map((record, index) => normalizeSuggestion(record, index))
-    .filter((value): value is SuggestionRecord => value !== null);
+    .flatMap((record, index) => {
+      const suggestions = normalizeSuggestion(record, index, opportunityType);
+      return suggestions ?? [];
+    });
 }
 
 export function createIdleSiteResult(requestSite: string): SiteDashboardResult {
@@ -684,7 +900,7 @@ export function trimSuggestionText(value?: string) {
     return '';
   }
 
-  return value.replace(/\s+/g, ' ').trim();
+  return normalizeMultilineText(value);
 }
 
 export function getOpportunityTypeSummary(rows: DashboardRow[]) {

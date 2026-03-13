@@ -481,7 +481,7 @@ a {
 
 .suggestion-list-item {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   color: var(--ink);
 }
 
@@ -490,6 +490,18 @@ a {
   font-size: 0.76rem;
   line-height: 1.2;
   word-break: break-all;
+}
+
+.suggestion-heading {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.suggestion-copy {
+  display: block;
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .suggestion-link {

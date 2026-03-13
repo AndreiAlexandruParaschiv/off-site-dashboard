@@ -96,6 +96,6 @@ export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
       ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType)
       : false,
   );
-  downloadCsvFile(rows, 'EvaluationSuggestion.csv');
-  downloadCsvFile(sentimentRows, 'EvaluationSentiment.csv');
+  downloadCsvFile(rows, 'Off-Site Evaluation Suggestions.csv');
+  downloadCsvFile(sentimentRows, 'Off-Site Evaluation Sentiment.csv');
 }

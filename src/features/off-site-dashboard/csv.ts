@@ -1,6 +1,6 @@
 import type { GroupedOpportunityRow } from './types';
 
-const CSV_HEADERS = [
+const SUGGESTION_CSV_HEADERS = [
   'Site',
   'Site ID',
   'Opportunity Type',
@@ -8,6 +8,22 @@ const CSV_HEADERS = [
   'Suggestion IDs',
   'Suggestions',
   'Status',
+  'Accepted',
+  'Hallucinated',
+  'Notes',
+] as const;
+const SENTIMENT_CSV_HEADERS = [
+  'Site',
+  'Site ID',
+  'Opportunity Type',
+  'Opportunity ID',
+  'Url',
+  'SOV',
+  'Sentiment',
+  'Status',
+  'Accepted',
+  'Hallucinated',
+  'Notes',
 ] as const;
 const SENTIMENT_OPPORTUNITY_TYPES = new Set([
   'Reddit',
@@ -66,13 +82,54 @@ function formatRow(row: GroupedOpportunityRow) {
     formatSuggestionIds(row),
     formatSuggestions(row),
     row.status,
+    '',
+    '',
+    '',
   ];
 }
 
-function downloadCsvFile(rows: GroupedOpportunityRow[], filename: string) {
-  const headerRow = CSV_HEADERS.map((header) => escapeCell(header)).join(',');
+function formatSentimentRows(rows: GroupedOpportunityRow[]) {
+  return rows.flatMap((row) => {
+    if (row.sentimentItems.length === 0) {
+      return [[
+        row.site,
+        row.siteId ?? '',
+        row.opportunityType ?? '',
+        row.opportunityId ?? '',
+        '',
+        '',
+        '',
+        row.status,
+        '',
+        '',
+        '',
+      ]];
+    }
+
+    return row.sentimentItems.map((item, index) => [
+      index === 0 ? row.site : '',
+      index === 0 ? row.siteId ?? '' : '',
+      index === 0 ? row.opportunityType ?? '' : '',
+      index === 0 ? row.opportunityId ?? '' : '',
+      item.item.trim(),
+      item.sov.trim(),
+      item.sentiment.trim(),
+      index === 0 ? row.status : '',
+      '',
+      '',
+      '',
+    ]);
+  });
+}
+
+function downloadCsvFile(
+  headers: readonly string[],
+  rows: string[][],
+  filename: string,
+) {
+  const headerRow = headers.map((header) => escapeCell(header)).join(',');
   const bodyRows = rows.map((row) =>
-    formatRow(row).map((value) => escapeCell(String(value))).join(','),
+    row.map((value) => escapeCell(String(value))).join(','),
   );
   const csvContent = [headerRow, ...bodyRows].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
@@ -96,6 +153,14 @@ export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
       ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType)
       : false,
   );
-  downloadCsvFile(rows, 'Off-Site Evaluation Suggestions.csv');
-  downloadCsvFile(sentimentRows, 'Off-Site Evaluation Sentiment.csv');
+  downloadCsvFile(
+    SUGGESTION_CSV_HEADERS,
+    rows.map(formatRow),
+    'Off-Site Evaluation Suggestions.csv',
+  );
+  downloadCsvFile(
+    SENTIMENT_CSV_HEADERS,
+    formatSentimentRows(sentimentRows),
+    'Off-Site Evaluation Sentiment.csv',
+  );
 }

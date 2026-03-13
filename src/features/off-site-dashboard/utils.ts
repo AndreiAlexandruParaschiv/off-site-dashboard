@@ -3,6 +3,7 @@ import type {
   CanonicalOpportunityType,
   DashboardRow,
   OpportunityRecord,
+  SentimentItemRecord,
   SiteDashboardResult,
   SuggestionRecord,
 } from './types';
@@ -14,6 +15,12 @@ const STRATEGIC_RECOMMENDATION_TYPES = new Set<CanonicalOpportunityType>([
   'Reddit',
   'YouTube',
   'Cited URLs',
+]);
+const SENTIMENT_TABLE_TYPES = new Set<CanonicalOpportunityType>([
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+  'Prompt Gap',
 ]);
 const SITE_URL_KEYS = [
   'baseURL',
@@ -31,6 +38,11 @@ const OPPORTUNITY_SIGNAL_KEYS = [
   'title',
   'description',
 ] as const;
+
+interface NormalizedSuggestionPayload {
+  suggestions: SuggestionRecord[];
+  sentimentItems: SentimentItemRecord[];
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -532,6 +544,227 @@ function extractRecommendationUrl(detailsElement: Element) {
   return /^https?:\/\//i.test(href) ? href : undefined;
 }
 
+function extractFirstMarkdownLinkUrl(value: string) {
+  const linkMatch = /\[[^\]]*]\((https?:\/\/[^)\s]+)\)/i.exec(value);
+  return linkMatch?.[1]?.trim();
+}
+
+function extractFirstHtmlLinkUrl(value: string) {
+  if (typeof DOMParser === 'undefined' || !/<a\b/i.test(value)) {
+    return undefined;
+  }
+
+  const parser = new DOMParser();
+  const document = parser.parseFromString(`<div>${value}</div>`, 'text/html');
+  const href = document.querySelector('a[href]')?.getAttribute('href')?.trim();
+
+  return href && /^https?:\/\//i.test(href) ? href : undefined;
+}
+
+function normalizeMarkdownCellValue(
+  value: string,
+  options: { preferLinkUrl?: boolean } = {},
+) {
+  if (!value.trim()) {
+    return '';
+  }
+
+  if (options.preferLinkUrl) {
+    const linkUrl = extractFirstMarkdownLinkUrl(value);
+    if (linkUrl) {
+      return linkUrl;
+    }
+
+    const htmlLinkUrl = extractFirstHtmlLinkUrl(value);
+    if (htmlLinkUrl) {
+      return htmlLinkUrl;
+    }
+  }
+
+  const normalizedValue = value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/gi, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '');
+
+  return createPlainTextFromHtmlFragment(normalizedValue);
+}
+
+function splitMarkdownTableCells(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function isMarkdownTableRow(line: string) {
+  return /^\s*\|.*\|\s*$/.test(line);
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = splitMarkdownTableCells(line);
+
+  return (
+    cells.length > 0 &&
+    cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')))
+  );
+}
+
+function extractMarkdownTables(value: string) {
+  const lines = value.replace(/\r\n/g, '\n').split('\n');
+  const tables: Array<{ headers: string[]; rows: string[][] }> = [];
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (
+      !isMarkdownTableRow(lines[index]) ||
+      !isMarkdownTableRow(lines[index + 1]) ||
+      !isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      continue;
+    }
+
+    const headers = splitMarkdownTableCells(lines[index]);
+    const rows: string[][] = [];
+    index += 2;
+
+    while (index < lines.length && isMarkdownTableRow(lines[index])) {
+      const cells = splitMarkdownTableCells(lines[index]);
+      const normalizedCells = headers.map((_, cellIndex) => cells[cellIndex] ?? '');
+      rows.push(normalizedCells);
+      index += 1;
+    }
+
+    tables.push({ headers, rows });
+    index -= 1;
+  }
+
+  return tables;
+}
+
+function extractHtmlTables(value: string) {
+  if (typeof DOMParser === 'undefined' || !/<table\b/i.test(value)) {
+    return [] as Array<{ headers: string[]; rows: string[][] }>;
+  }
+
+  const parser = new DOMParser();
+  const document = parser.parseFromString(`<div>${value}</div>`, 'text/html');
+
+  return Array.from(document.querySelectorAll('table')).flatMap((table) => {
+    const tableRows = Array.from(table.querySelectorAll('tr')).filter(
+      (row) =>
+        row.closest('table') === table &&
+        row.querySelectorAll('th, td').length > 0,
+    );
+
+    if (tableRows.length === 0) {
+      return [];
+    }
+
+    const headerRow =
+      tableRows.find((row) => row.querySelectorAll('th').length > 0) ?? tableRows[0];
+    const headerCells = Array.from(headerRow.querySelectorAll('th, td')).filter(
+      (cell) => cell.closest('tr') === headerRow,
+    );
+    const headers = headerCells.map((cell) =>
+      createPlainTextFromHtmlFragment(cell.innerHTML),
+    );
+
+    if (headers.length === 0) {
+      return [];
+    }
+
+    const rows = tableRows
+      .filter((row) => row !== headerRow)
+      .map((row) => {
+        const cells = Array.from(row.querySelectorAll('th, td')).filter(
+          (cell) => cell.closest('tr') === row,
+        );
+
+        return headers.map(
+          (_, cellIndex) =>
+            cells[cellIndex]?.innerHTML ?? '',
+        );
+      })
+      .filter((row) =>
+        row.some((cell) => createPlainTextFromHtmlFragment(cell).trim()),
+      );
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    return [{ headers, rows }];
+  });
+}
+
+function extractSentimentItemsFromSuggestionValue(
+  suggestionValue: string,
+): SentimentItemRecord[] {
+  const tables = [
+    ...extractMarkdownTables(suggestionValue),
+    ...extractHtmlTables(suggestionValue),
+  ];
+
+  return tables.flatMap((table) => {
+    const normalizedHeaders = table.headers.map((header) =>
+      normalizeTextContent(header).toLowerCase(),
+    );
+    const sovIndex = normalizedHeaders.findIndex(
+      (header) => header === 'sov' || header.includes('share of voice'),
+    );
+    const sentimentIndex = normalizedHeaders.findIndex(
+      (header) =>
+        header === 'sentiment' || header.includes('brand sentiment'),
+    );
+
+    if (sovIndex === -1 || sentimentIndex === -1) {
+      return [];
+    }
+
+    const preferredItemIndex = normalizedHeaders.findIndex((header) =>
+      ['item', 'url', 'thread', 'video', 'page', 'article', 'post', 'source', 'prompt'].some(
+        (candidate) =>
+          header === candidate ||
+          header.startsWith(`${candidate} `) ||
+          header.includes(`${candidate} (`),
+      ),
+    );
+    const itemIndex =
+      preferredItemIndex !== -1
+        ? preferredItemIndex
+        : normalizedHeaders.findIndex(
+            (_, headerIndex) =>
+              headerIndex !== sovIndex && headerIndex !== sentimentIndex,
+          );
+
+    if (itemIndex === -1) {
+      return [];
+    }
+
+    return table.rows
+      .map((row) => {
+        const item = normalizeMarkdownCellValue(row[itemIndex] ?? '', {
+          preferLinkUrl: true,
+        });
+        const sov = normalizeMarkdownCellValue(row[sovIndex] ?? '');
+        const sentiment = normalizeMarkdownCellValue(row[sentimentIndex] ?? '');
+
+        if (!item && !sov && !sentiment) {
+          return null;
+        }
+
+        return {
+          item,
+          sov,
+          sentiment,
+        } satisfies SentimentItemRecord;
+      })
+      .filter((value): value is SentimentItemRecord => value !== null);
+  });
+}
+
 function extractStrategicRecommendationSuggestions(
   suggestionValue: string,
   suggestionId: string,
@@ -617,11 +850,18 @@ function extractStrategicRecommendationSuggestions(
     .filter((value): value is SuggestionRecord => value !== null);
 }
 
+function createEmptySuggestionPayload(): NormalizedSuggestionPayload {
+  return {
+    suggestions: [],
+    sentimentItems: [],
+  };
+}
+
 function normalizeSuggestion(
   record: Record<string, unknown>,
   index: number,
   opportunityType?: CanonicalOpportunityType,
-): SuggestionRecord[] | null {
+): NormalizedSuggestionPayload | null {
   const suggestionText = extractSuggestionTextValue(record);
   const suggestionUrl =
     getStringValue(record, [
@@ -636,6 +876,12 @@ function normalizeSuggestion(
     getStringValue(record, ['suggestionId', 'id', 'uuid']) ??
     `suggestion-${index + 1}`;
   const suggestionValue = getSuggestionValue(record);
+  const sentimentItems =
+    opportunityType &&
+    SENTIMENT_TABLE_TYPES.has(opportunityType) &&
+    suggestionValue
+      ? extractSentimentItemsFromSuggestionValue(suggestionValue)
+      : [];
 
   if (
     opportunityType &&
@@ -648,12 +894,20 @@ function normalizeSuggestion(
     );
 
     if (strategicSuggestions.length > 0) {
-      return strategicSuggestions;
+      return {
+        suggestions: strategicSuggestions,
+        sentimentItems,
+      };
     }
   }
 
   if (!suggestionText && !suggestionUrl && !suggestionId) {
-    return null;
+    return sentimentItems.length > 0
+      ? {
+          suggestions: [],
+          sentimentItems,
+        }
+      : null;
   }
 
   const normalizedSuggestion: SuggestionRecord = {
@@ -665,7 +919,10 @@ function normalizeSuggestion(
     normalizedSuggestion.suggestionUrl = suggestionUrl;
   }
 
-  return [normalizedSuggestion];
+  return {
+    suggestions: [normalizedSuggestion],
+    sentimentItems,
+  };
 }
 
 function normalizeOpportunity(record: Record<string, unknown>, index: number) {
@@ -694,22 +951,31 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
     'recommendations',
     'suggestionItems',
   ]);
-  const suggestions = rawSuggestions
+  const normalizedSuggestionPayloads = rawSuggestions
     .filter(isRecord)
-    .flatMap((suggestion, suggestionIndex) => {
-      const normalizedSuggestion = normalizeSuggestion(
+    .map((suggestion, suggestionIndex) =>
+      normalizeSuggestion(
         suggestion,
         suggestionIndex,
         opportunityType,
-      );
-      return normalizedSuggestion ?? [];
-    });
+      ),
+    )
+    .filter(
+      (value): value is NormalizedSuggestionPayload => value !== null,
+    );
+  const suggestions = normalizedSuggestionPayloads.flatMap(
+    (payload) => payload.suggestions,
+  );
+  const sentimentItems = normalizedSuggestionPayloads.flatMap(
+    (payload) => payload.sentimentItems,
+  );
 
   const normalizedOpportunity: OpportunityRecord = {
     opportunityId,
     opportunityType,
     rawType: rawType || opportunityType,
     suggestions,
+    sentimentItems,
   };
 
   return normalizedOpportunity;
@@ -756,18 +1022,25 @@ export function normalizeSuggestionCollection(
           0,
           opportunityType,
         );
-        return suggestions ?? [];
+        return suggestions ?? createEmptySuggestionPayload();
       }
     }
 
-    return [];
+    return createEmptySuggestionPayload();
   }
 
-  return collection
-    .flatMap((record, index) => {
-      const suggestions = normalizeSuggestion(record, index, opportunityType);
-      return suggestions ?? [];
-    });
+  const suggestionPayloads = collection
+    .map((record, index) =>
+      normalizeSuggestion(record, index, opportunityType),
+    )
+    .filter((value): value is NormalizedSuggestionPayload => value !== null);
+
+  return {
+    suggestions: suggestionPayloads.flatMap((payload) => payload.suggestions),
+    sentimentItems: suggestionPayloads.flatMap(
+      (payload) => payload.sentimentItems,
+    ),
+  };
 }
 
 export function createIdleSiteResult(requestSite: string): SiteDashboardResult {

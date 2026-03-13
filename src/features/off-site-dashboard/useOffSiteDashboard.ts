@@ -20,11 +20,12 @@ import {
 import type {
   CanonicalOpportunityType,
   DashboardConfig,
-  DashboardRow,
   GroupedOpportunityRow,
   SiteDashboardResult,
   SiteOpportunityPresence,
 } from './types';
+
+type OpportunityTypeSortOrder = 'default' | 'asc' | 'desc';
 
 function updateSelection<T extends string>(values: T[], value: T) {
   return values.includes(value)
@@ -32,43 +33,38 @@ function updateSelection<T extends string>(values: T[], value: T) {
     : [...values, value];
 }
 
-function groupOpportunityRows(rows: DashboardRow[]) {
-  const groups = new Map<string, GroupedOpportunityRow>();
+function buildExportableOpportunityRows(siteCards: SiteDashboardResult[]) {
+  return siteCards.flatMap((siteCard) =>
+    siteCard.opportunities.map((opportunity) => {
+      const hasExportContent =
+        opportunity.suggestions.length > 0 || opportunity.sentimentItems.length > 0;
 
-  rows.forEach((row) => {
-    if (!row.opportunityType || !row.opportunityId) {
-      return;
-    }
-
-    const groupId = [
-      row.site,
-      row.siteId ?? '',
-      row.opportunityType,
-      row.opportunityId,
-    ].join('::');
-
-    if (!groups.has(groupId)) {
-      groups.set(groupId, {
-        id: groupId,
-        site: row.site,
-        siteId: row.siteId,
-        opportunityType: row.opportunityType,
-        opportunityId: row.opportunityId,
-        suggestions: [],
-        status: row.status,
-      });
-    }
-
-    if (row.suggestionId || row.suggestionText || row.suggestionUrl) {
-      groups.get(groupId)?.suggestions.push({
-        suggestionId: row.suggestionId,
-        suggestionText: row.suggestionText,
-        suggestionUrl: row.suggestionUrl,
-      });
-    }
-  });
-
-  return Array.from(groups.values());
+      return {
+        id: [
+          siteCard.requestSite,
+          siteCard.siteId ?? '',
+          opportunity.opportunityType,
+          opportunity.opportunityId,
+        ].join('::'),
+        site: siteCard.requestSite,
+        siteId: siteCard.siteId,
+        opportunityType: opportunity.opportunityType,
+        opportunityId: opportunity.opportunityId,
+        suggestions: opportunity.suggestions.map((suggestion) => ({
+          suggestionId: suggestion.suggestionId,
+          suggestionText: suggestion.suggestionText,
+          suggestionUrl: suggestion.suggestionUrl,
+        })),
+        sentimentItems: opportunity.sentimentItems,
+        status:
+          siteCard.status === 'error'
+            ? `Stale data - ${siteCard.error ?? siteCard.statusMessage}`
+            : hasExportContent
+              ? 'Ready'
+              : 'No suggestions returned',
+      } satisfies GroupedOpportunityRow;
+    }),
+  );
 }
 
 export function useOffSiteDashboard() {
@@ -76,10 +72,10 @@ export function useOffSiteDashboard() {
   const [siteResults, setSiteResults] = useState<Record<string, SiteDashboardResult>>(
     {},
   );
-  const [selectedTypes, setSelectedTypes] = useState<CanonicalOpportunityType[]>(
-    TARGET_OPPORTUNITY_TYPES,
-  );
+  const [selectedTypes, setSelectedTypes] = useState<CanonicalOpportunityType[]>([]);
   const [selectedSites, setSelectedSites] = useState<string[]>([]);
+  const [typeSortOrder, setTypeSortOrder] =
+    useState<OpportunityTypeSortOrder>('default');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [didAutoRefresh, setDidAutoRefresh] = useState(false);
@@ -215,8 +211,9 @@ export function useOffSiteDashboard() {
   ]);
 
   const resetFilters = useCallback(() => {
-    setSelectedTypes(TARGET_OPPORTUNITY_TYPES);
+    setSelectedTypes([]);
     setSelectedSites(configuredSites);
+    setTypeSortOrder('default');
     setPage(1);
   }, [configuredSites]);
 
@@ -281,10 +278,47 @@ export function useOffSiteDashboard() {
     });
   }, [allRows, selectedSites, selectedTypes]);
 
-  const filteredOpportunityRows = useMemo(
-    () => groupOpportunityRows(filteredRows),
-    [filteredRows],
+  const allOpportunityRows = useMemo(
+    () => buildExportableOpportunityRows(siteCards),
+    [siteCards],
   );
+
+  const filteredOpportunityRows = useMemo(() => {
+    const nextRows = allOpportunityRows.filter((row) => {
+      const siteMatches = selectedSites.includes(row.site);
+      const typeMatches = row.opportunityType
+        ? selectedTypes.includes(row.opportunityType)
+        : true;
+
+      return siteMatches && typeMatches;
+    });
+
+    if (typeSortOrder === 'default') {
+      return nextRows;
+    }
+
+    const sortedRows = [...nextRows];
+    const direction = typeSortOrder === 'asc' ? 1 : -1;
+
+    sortedRows.sort((left, right) => {
+      const typeComparison =
+        (left.opportunityType ?? '').localeCompare(right.opportunityType ?? '') *
+        direction;
+
+      if (typeComparison !== 0) {
+        return typeComparison;
+      }
+
+      const siteComparison = left.site.localeCompare(right.site);
+      if (siteComparison !== 0) {
+        return siteComparison;
+      }
+
+      return (left.opportunityId ?? '').localeCompare(right.opportunityId ?? '');
+    });
+
+    return sortedRows;
+  }, [allOpportunityRows, selectedSites, selectedTypes, typeSortOrder]);
 
   const deferredRows = useDeferredValue(filteredOpportunityRows);
 
@@ -329,11 +363,7 @@ export function useOffSiteDashboard() {
     Boolean(config.apiBaseUrl.trim()) &&
     configuredSites.length > 0;
 
-  const exportableRows = useMemo(
-    () =>
-      groupOpportunityRows(allRows.filter((row) => Boolean(row.opportunityId))),
-    [allRows],
-  );
+  const exportableRows = allOpportunityRows;
 
   const exportRows = useCallback(() => {
     downloadRowsAsCsv(exportableRows);
@@ -346,6 +376,7 @@ export function useOffSiteDashboard() {
     configuredSites,
     selectedTypes,
     selectedSites,
+    typeSortOrder,
     page,
     pageSize,
     totalPages,
@@ -377,6 +408,10 @@ export function useOffSiteDashboard() {
     },
     toggleSite: (site: string) => {
       setSelectedSites((previousSites) => updateSelection(previousSites, site));
+      setPage(1);
+    },
+    setTypeSortOrder: (value: OpportunityTypeSortOrder) => {
+      setTypeSortOrder(value);
       setPage(1);
     },
     refreshSite,

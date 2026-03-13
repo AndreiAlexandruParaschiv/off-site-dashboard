@@ -19,11 +19,18 @@ export interface SuggestionRecord {
   suggestionUrl?: string;
 }
 
+export interface SentimentItemRecord {
+  item: string;
+  sov: string;
+  sentiment: string;
+}
+
 export interface OpportunityRecord {
   opportunityId: string;
   opportunityType: CanonicalOpportunityType;
   rawType: string;
   suggestions: SuggestionRecord[];
+  sentimentItems: SentimentItemRecord[];
 }
 
 export interface SiteDashboardResult {
@@ -73,6 +80,7 @@ export interface GroupedOpportunityRow {
   opportunityType?: CanonicalOpportunityType;
   opportunityId?: string;
   suggestions: GroupedSuggestionItem[];
+  sentimentItems: SentimentItemRecord[];
   status: string;
 }
 

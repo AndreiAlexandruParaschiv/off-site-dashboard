@@ -209,13 +209,15 @@ async function fetchSuggestionsForOpportunity(
       `${normalizedApiBaseUrl}/api/v1/sites/${encodeURIComponent(siteId)}` +
       `/opportunities/${encodeURIComponent(opportunity.opportunityId)}/suggestions`;
     const suggestionsPayload = await requestJson<unknown>(suggestionsUrl, apiKey);
+    const normalizedSuggestions = normalizeSuggestionCollection(
+      suggestionsPayload,
+      opportunity.opportunityType,
+    );
 
     return {
       ...opportunity,
-      suggestions: normalizeSuggestionCollection(
-        suggestionsPayload,
-        opportunity.opportunityType,
-      ),
+      suggestions: normalizedSuggestions.suggestions,
+      sentimentItems: normalizedSuggestions.sentimentItems,
     };
   } catch (error) {
     if (

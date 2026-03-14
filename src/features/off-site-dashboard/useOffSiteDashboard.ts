@@ -6,7 +6,7 @@ import {
   useState,
 } from 'react';
 import { DEFAULT_PAGE_SIZE, TARGET_OPPORTUNITY_TYPES } from './constants';
-import { downloadRowsAsCsv } from './csv';
+import { downloadRowsAsCsv, downloadRowsAsExcel } from './csv';
 import { SpacecatApiError, fetchSiteDashboardData } from './api';
 import { loadDashboardConfig, saveDashboardConfig } from './storage';
 import {
@@ -369,6 +369,10 @@ export function useOffSiteDashboard() {
     downloadRowsAsCsv(exportableRows);
   }, [exportableRows]);
 
+  const exportExcel = useCallback(() => {
+    downloadRowsAsExcel(exportableRows);
+  }, [exportableRows]);
+
   return {
     config,
     siteCards,
@@ -419,6 +423,7 @@ export function useOffSiteDashboard() {
     resetFilters,
     clearResults,
     exportRows,
+    exportExcel,
     setPage,
     setPageSize,
   };

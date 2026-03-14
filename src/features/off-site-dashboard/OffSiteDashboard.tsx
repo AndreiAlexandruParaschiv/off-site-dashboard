@@ -521,6 +521,14 @@ export function OffSiteDashboard() {
               </button>
               <button
                 className="ghost-button"
+                disabled={!dashboard.hasExportRows}
+                onClick={dashboard.exportExcel}
+                type="button"
+              >
+                Export Excel
+              </button>
+              <button
+                className="ghost-button"
                 onClick={dashboard.clearResults}
                 type="button"
               >

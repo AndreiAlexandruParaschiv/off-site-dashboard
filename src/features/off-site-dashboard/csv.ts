@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import type { GroupedOpportunityRow } from './types';
 
 const SUGGESTION_CSV_HEADERS = [
@@ -88,6 +89,10 @@ function formatRow(row: GroupedOpportunityRow) {
   ];
 }
 
+function formatSuggestionRows(rows: GroupedOpportunityRow[]) {
+  return rows.map(formatRow);
+}
+
 function formatSentimentRows(rows: GroupedOpportunityRow[]) {
   return rows.flatMap((row) => {
     if (row.sentimentItems.length === 0) {
@@ -122,6 +127,16 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
   });
 }
 
+function getSentimentExportRows(rows: GroupedOpportunityRow[]) {
+  const sentimentRows = rows.filter((row) =>
+    row.opportunityType
+      ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType)
+      : false,
+  );
+
+  return formatSentimentRows(sentimentRows);
+}
+
 function downloadCsvFile(
   headers: readonly string[],
   rows: string[][],
@@ -143,24 +158,59 @@ function downloadCsvFile(
   URL.revokeObjectURL(url);
 }
 
+function buildExcelSheet(headers: readonly string[], rows: string[][]) {
+  const worksheet = XLSX.utils.aoa_to_sheet([Array.from(headers), ...rows]);
+
+  worksheet['!cols'] = headers.map((header, columnIndex) => {
+    const columnWidth = rows.reduce((maxWidth, row) => {
+      const cellValue = String(row[columnIndex] ?? '');
+      const longestLine = cellValue
+        .split('\n')
+        .reduce((lineWidth, line) => Math.max(lineWidth, line.length), 0);
+
+      return Math.max(maxWidth, longestLine);
+    }, header.length);
+
+    return { wch: Math.min(Math.max(columnWidth + 2, 14), 60) };
+  });
+
+  return worksheet;
+}
+
 export function downloadRowsAsCsv(rows: GroupedOpportunityRow[]) {
   if (!rows.length) {
     return;
   }
 
-  const sentimentRows = rows.filter((row) =>
-    row.opportunityType
-      ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType)
-      : false,
-  );
   downloadCsvFile(
     SUGGESTION_CSV_HEADERS,
-    rows.map(formatRow),
+    formatSuggestionRows(rows),
     'Off-Site Evaluation Suggestions.csv',
   );
   downloadCsvFile(
     SENTIMENT_CSV_HEADERS,
-    formatSentimentRows(sentimentRows),
+    getSentimentExportRows(rows),
     'Off-Site Evaluation Sentiment.csv',
   );
+}
+
+export function downloadRowsAsExcel(rows: GroupedOpportunityRow[]) {
+  if (!rows.length) {
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(SUGGESTION_CSV_HEADERS, formatSuggestionRows(rows)),
+    'EvaluationSuggestion',
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(SENTIMENT_CSV_HEADERS, getSentimentExportRows(rows)),
+    'EvaluationSentiment',
+  );
+
+  XLSX.writeFile(workbook, 'Off-Site Evaluation.xlsx');
 }

@@ -139,6 +139,10 @@ function encodeBase64PathValue(value: string) {
   return encodeURIComponent(window.btoa(binaryString));
 }
 
+function buildApiUrl(baseUrl: string, path: string) {
+  return `${normalizeApiBaseUrl(baseUrl)}/${path.replace(/^\/+/, '')}`;
+}
+
 async function resolveSiteByDirectLookup(
   normalizedApiBaseUrl: string,
   apiKey: string,
@@ -146,7 +150,10 @@ async function resolveSiteByDirectLookup(
 ) {
   for (const candidate of lookupCandidates) {
     const encodedCandidate = encodeBase64PathValue(candidate);
-    const lookupUrl = `${normalizedApiBaseUrl}/api/v1/sites/by-base-url/${encodedCandidate}`;
+    const lookupUrl = buildApiUrl(
+      normalizedApiBaseUrl,
+      `sites/by-base-url/${encodedCandidate}`,
+    );
 
     try {
       const lookupResponse = await requestJson<unknown>(lookupUrl, apiKey);
@@ -174,7 +181,7 @@ async function resolveSiteByEnumeratingAllSites(
 ) {
   try {
     const lookupResponse = await requestJson<unknown>(
-      `${normalizedApiBaseUrl}/api/v1/sites`,
+      buildApiUrl(normalizedApiBaseUrl, 'sites'),
       apiKey,
     );
 
@@ -205,9 +212,12 @@ async function fetchSuggestionsForOpportunity(
   opportunity: OpportunityRecord,
 ) {
   try {
-    const suggestionsUrl =
-      `${normalizedApiBaseUrl}/api/v1/sites/${encodeURIComponent(siteId)}` +
-      `/opportunities/${encodeURIComponent(opportunity.opportunityId)}/suggestions`;
+    const suggestionsUrl = buildApiUrl(
+      normalizedApiBaseUrl,
+      `sites/${encodeURIComponent(siteId)}/opportunities/${encodeURIComponent(
+        opportunity.opportunityId,
+      )}/suggestions`,
+    );
     const suggestionsPayload = await requestJson<unknown>(suggestionsUrl, apiKey);
     const normalizedSuggestions = normalizeSuggestionCollection(
       suggestionsPayload,
@@ -280,7 +290,10 @@ export async function fetchSiteDashboardData({
     );
   }
 
-  const opportunitiesUrl = `${normalizedApiBaseUrl}/api/v1/sites/${encodeURIComponent(resolvedSiteId)}/opportunities`;
+  const opportunitiesUrl = buildApiUrl(
+    normalizedApiBaseUrl,
+    `sites/${encodeURIComponent(resolvedSiteId)}/opportunities`,
+  );
   const opportunitiesPayload = await requestJson<unknown>(opportunitiesUrl, apiKey);
   const normalizedOpportunities = normalizeOpportunityCollection(opportunitiesPayload);
   const opportunities = await Promise.all(

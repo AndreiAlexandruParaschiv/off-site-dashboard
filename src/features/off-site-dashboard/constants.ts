@@ -8,7 +8,8 @@ export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
   'Wikipedia',
 ];
 
-export const DEFAULT_API_BASE_URL = 'https://spacecat.experiencecloud.live';
+export const DEFAULT_API_BASE_URL =
+  'https://spacecat.experiencecloud.live/api/v1';
 
 export const DEFAULT_CONFIG: DashboardConfig = {
   apiBaseUrl: DEFAULT_API_BASE_URL,

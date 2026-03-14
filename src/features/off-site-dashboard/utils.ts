@@ -180,7 +180,9 @@ export function normalizeApiBaseUrl(value: string) {
 
   try {
     const url = normalizeUrlParts(value.trim());
-    return stripTrailingSlash(url.origin);
+    const normalizedPath = stripTrailingSlash(url.pathname);
+    const apiPath = normalizedPath && normalizedPath !== '/' ? normalizedPath : '/api/v1';
+    return stripTrailingSlash(`${url.origin}${apiPath}`);
   } catch {
     return stripTrailingSlash(value.trim());
   }

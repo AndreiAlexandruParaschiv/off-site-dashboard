@@ -427,7 +427,7 @@ export function OffSiteDashboard() {
         <div className="hero-copy">
           <h1>Off-Site Opportunity Monitor</h1>
           <p>
-            Resolve site IDs from site URLs, fetch matching SpaceCat opportunities,
+            Resolve site IDs from site URLs, fetch matching off-site opportunities,
             and review every Reddit, YouTube, Cited URLs, Prompt Gap, and Wikipedia
             suggestion in one place.
           </p>
@@ -460,13 +460,13 @@ export function OffSiteDashboard() {
 
             <div className="settings-grid">
               <label className="field">
-                <span>SpaceCat API base URL</span>
+                <span>API base URL</span>
                 <input
                   className="text-input"
                   type="text"
                   value={dashboard.config.apiBaseUrl}
                   onChange={(event) => dashboard.setApiBaseUrl(event.target.value)}
-                  placeholder="https://spacecat.experiencecloud.live"
+                  placeholder="https://spacecat.experiencecloud.live/api/v1"
                 />
               </label>
 
@@ -477,7 +477,7 @@ export function OffSiteDashboard() {
                   type="password"
                   value={dashboard.config.apiKey}
                   onChange={(event) => dashboard.setApiKey(event.target.value)}
-                  placeholder="Paste your SpaceCat API key"
+                  placeholder="Paste your API Key"
                 />
                 <small className="field-note">
                   API key is manual input only and is not persisted in localStorage.

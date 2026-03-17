@@ -2,6 +2,7 @@ import { TARGET_OPPORTUNITY_TYPES } from './constants';
 import type {
   CanonicalOpportunityType,
   DashboardRow,
+  OpportunityPresenceState,
   OpportunityRecord,
   SentimentItemRecord,
   SiteDashboardResult,
@@ -327,6 +328,85 @@ function inferOpportunityType(record: Record<string, unknown>) {
   }
 
   return normalizeOpportunityType(signals.join(' '));
+}
+
+export function createEmptyOpportunityPresence() {
+  return {
+    Reddit: 'missing',
+    YouTube: 'missing',
+    'Cited URLs': 'missing',
+    'Prompt Gap': 'missing',
+    Wikipedia: 'missing',
+  } satisfies Record<CanonicalOpportunityType, OpportunityPresenceState>;
+}
+
+export function summarizeOpportunityPresence(responsePayload: unknown) {
+  const collection = extractCollection(responsePayload, OPPORTUNITY_KEYS);
+  const records =
+    collection.length > 0
+      ? collection
+      : isRecord(responsePayload)
+        ? [responsePayload]
+        : [];
+  const statusBuckets = TARGET_OPPORTUNITY_TYPES.reduce<
+    Record<CanonicalOpportunityType, { hasIgnored: boolean; hasVisible: boolean }>
+  >(
+    (nextBuckets, type) => {
+      nextBuckets[type] = {
+        hasIgnored: false,
+        hasVisible: false,
+      };
+      return nextBuckets;
+    },
+    {
+      Reddit: { hasIgnored: false, hasVisible: false },
+      YouTube: { hasIgnored: false, hasVisible: false },
+      'Cited URLs': { hasIgnored: false, hasVisible: false },
+      'Prompt Gap': { hasIgnored: false, hasVisible: false },
+      Wikipedia: { hasIgnored: false, hasVisible: false },
+    },
+  );
+
+  records.forEach((record) => {
+    const rawType =
+      getStringValue(record, ['type', 'name', 'kind', 'category']) ?? '';
+    const opportunityType =
+      normalizeOpportunityType(rawType) ?? inferOpportunityType(record);
+
+    if (!opportunityType) {
+      return;
+    }
+
+    const opportunityStatus =
+      getStringValue(record, ['status', 'opportunityStatus'])?.trim().toLowerCase() ??
+      '';
+
+    if (opportunityStatus === 'ignored') {
+      statusBuckets[opportunityType].hasIgnored = true;
+      return;
+    }
+
+    statusBuckets[opportunityType].hasVisible = true;
+  });
+
+  return TARGET_OPPORTUNITY_TYPES.reduce<
+    Record<CanonicalOpportunityType, OpportunityPresenceState>
+  >((presence, type) => {
+    const bucket = statusBuckets[type];
+
+    if (bucket.hasIgnored && bucket.hasVisible) {
+      presence[type] = 'exists_mixed';
+      return presence;
+    }
+
+    if (bucket.hasIgnored || bucket.hasVisible) {
+      presence[type] = 'exists';
+      return presence;
+    }
+
+    presence[type] = 'missing';
+    return presence;
+  }, createEmptyOpportunityPresence());
 }
 
 export function extractSiteId(responsePayload: unknown, requestedSite: string) {
@@ -1050,6 +1130,7 @@ export function createIdleSiteResult(requestSite: string): SiteDashboardResult {
     requestSite,
     status: 'idle',
     statusMessage: 'Waiting for refresh',
+    opportunityPresence: createEmptyOpportunityPresence(),
     opportunities: [],
   };
 }

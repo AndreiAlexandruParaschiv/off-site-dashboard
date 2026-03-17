@@ -4,6 +4,7 @@ import { useOffSiteDashboard } from './useOffSiteDashboard';
 import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
 import type {
   GroupedOpportunityRow,
+  OpportunityPresenceState,
   SiteDashboardResult,
   SiteOpportunityPresence,
 } from './types';
@@ -143,6 +144,30 @@ function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
 
+function getPresenceDetails(value: OpportunityPresenceState) {
+  if (value === 'exists_mixed') {
+    return {
+      className: 'presence-pill-yes',
+      label: 'Exists*',
+      title: 'Both active and ignored opportunities were found for this type.',
+    };
+  }
+
+  if (value === 'exists') {
+    return {
+      className: 'presence-pill-yes',
+      label: 'Exists',
+      title: 'At least one opportunity was found for this type.',
+    };
+  }
+
+  return {
+    className: 'presence-pill-no',
+    label: 'Missing',
+    title: 'No opportunities were found for this type.',
+  };
+}
+
 function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
   if (props.rows.length === 0) {
     return (
@@ -171,17 +196,20 @@ function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
             <tr key={row.site}>
               <td>{row.site}</td>
               <td>{row.siteId ?? ' - '}</td>
-              {TARGET_OPPORTUNITY_TYPES.map((type) => (
-                <td key={`${row.site}-${type}`}>
-                  <span
-                    className={`presence-pill ${
-                      row.presence[type] ? 'presence-pill-yes' : 'presence-pill-no'
-                    }`}
-                  >
-                    {row.presence[type] ? 'Exists' : 'Missing'}
-                  </span>
-                </td>
-              ))}
+              {TARGET_OPPORTUNITY_TYPES.map((type) => {
+                const presence = getPresenceDetails(row.presence[type]);
+
+                return (
+                  <td key={`${row.site}-${type}`}>
+                    <span
+                      className={`presence-pill ${presence.className}`}
+                      title={presence.title}
+                    >
+                      {presence.label}
+                    </span>
+                  </td>
+                );
+              })}
               <td>{row.statusMessage}</td>
             </tr>
           ))}

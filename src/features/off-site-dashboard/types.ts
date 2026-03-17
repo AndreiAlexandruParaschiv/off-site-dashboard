@@ -7,6 +7,8 @@ export type CanonicalOpportunityType =
 
 export type SiteFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
+export type OpportunityPresenceState = 'missing' | 'exists' | 'exists_mixed';
+
 export interface DashboardConfig {
   apiBaseUrl: string;
   apiKey: string;
@@ -42,6 +44,7 @@ export interface SiteDashboardResult {
   error?: string;
   lastUpdated?: string;
   retryAfterSeconds?: number;
+  opportunityPresence: Record<CanonicalOpportunityType, OpportunityPresenceState>;
   opportunities: OpportunityRecord[];
 }
 
@@ -51,7 +54,7 @@ export interface SiteOpportunityPresence {
   lastUpdated?: string;
   status: SiteFetchStatus;
   statusMessage: string;
-  presence: Record<CanonicalOpportunityType, boolean>;
+  presence: Record<CanonicalOpportunityType, OpportunityPresenceState>;
 }
 
 export interface DashboardRow {

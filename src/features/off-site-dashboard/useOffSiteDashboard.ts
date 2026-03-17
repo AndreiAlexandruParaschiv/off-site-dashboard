@@ -234,33 +234,13 @@ export function useOffSiteDashboard() {
 
   const sitePresenceRows = useMemo<SiteOpportunityPresence[]>(() => {
     return siteCards.map((siteCard) => {
-      const presence = TARGET_OPPORTUNITY_TYPES.reduce<
-        Record<CanonicalOpportunityType, boolean>
-      >(
-        (nextPresence, type) => {
-          nextPresence[type] = false;
-          return nextPresence;
-        },
-        {
-          Reddit: false,
-          YouTube: false,
-          'Cited URLs': false,
-          'Prompt Gap': false,
-          Wikipedia: false,
-        },
-      );
-
-      siteCard.opportunities.forEach((opportunity) => {
-        presence[opportunity.opportunityType] = true;
-      });
-
       return {
         site: siteCard.requestSite,
         siteId: siteCard.siteId,
         lastUpdated: siteCard.lastUpdated,
         status: siteCard.status,
         statusMessage: siteCard.error ?? siteCard.statusMessage,
-        presence,
+        presence: siteCard.opportunityPresence,
       };
     });
   }, [siteCards]);

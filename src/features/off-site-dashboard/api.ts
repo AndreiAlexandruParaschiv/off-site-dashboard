@@ -1,6 +1,7 @@
 import {
   buildStatusMessage,
   buildLookupCandidates,
+  summarizeOpportunityPresence,
   extractSiteId,
   normalizeApiBaseUrl,
   normalizeOpportunityCollection,
@@ -295,6 +296,7 @@ export async function fetchSiteDashboardData({
     `sites/${encodeURIComponent(resolvedSiteId)}/opportunities`,
   );
   const opportunitiesPayload = await requestJson<unknown>(opportunitiesUrl, apiKey);
+  const opportunityPresence = summarizeOpportunityPresence(opportunitiesPayload);
   const normalizedOpportunities = normalizeOpportunityCollection(opportunitiesPayload);
   const opportunities = await Promise.all(
     normalizedOpportunities.map((opportunity) =>
@@ -314,6 +316,7 @@ export async function fetchSiteDashboardData({
     status: 'success',
     statusMessage: buildStatusMessage(opportunities),
     lastUpdated: new Date().toISOString(),
+    opportunityPresence,
     opportunities,
   };
 }

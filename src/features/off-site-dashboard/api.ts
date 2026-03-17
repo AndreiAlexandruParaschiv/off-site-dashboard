@@ -233,7 +233,9 @@ async function fetchSuggestionsForOpportunity(
   } catch (error) {
     if (
       error instanceof SpacecatApiError &&
-      (error.status === 403 || error.status === 404)
+      (error.status === 403 ||
+        error.status === 404 ||
+        (typeof error.status === 'number' && error.status >= 500))
     ) {
       return opportunity;
     }

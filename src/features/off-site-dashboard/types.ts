@@ -30,6 +30,7 @@ export interface SentimentItemRecord {
 export interface OpportunityRecord {
   opportunityId: string;
   opportunityType: CanonicalOpportunityType;
+  opportunityStatus: string;
   rawType: string;
   suggestions: SuggestionRecord[];
   sentimentItems: SentimentItemRecord[];

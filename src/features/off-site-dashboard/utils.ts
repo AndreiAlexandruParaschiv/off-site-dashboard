@@ -954,9 +954,8 @@ function normalizeSuggestion(
       'suggestionUrl',
     ]) ??
     extractFirstUrl(record.data);
-  const suggestionId =
-    getStringValue(record, ['suggestionId', 'id', 'uuid']) ??
-    `suggestion-${index + 1}`;
+  const rawSuggestionId = getStringValue(record, ['suggestionId', 'id', 'uuid']);
+  const suggestionId = rawSuggestionId ?? `suggestion-${index + 1}`;
   const suggestionValue = getSuggestionValue(record);
   const sentimentItems =
     opportunityType &&
@@ -964,6 +963,10 @@ function normalizeSuggestion(
     suggestionValue
       ? extractSentimentItemsFromSuggestionValue(suggestionValue)
       : [];
+  const fallbackSuggestionText =
+    !suggestionText && suggestionValue
+      ? createPlainTextFromHtmlFragment(suggestionValue)
+      : '';
 
   if (
     opportunityType &&
@@ -983,7 +986,7 @@ function normalizeSuggestion(
     }
   }
 
-  if (!suggestionText && !suggestionUrl && !suggestionId) {
+  if (!suggestionText && !fallbackSuggestionText && !suggestionUrl && !rawSuggestionId) {
     return sentimentItems.length > 0
       ? {
           suggestions: [],
@@ -994,7 +997,7 @@ function normalizeSuggestion(
 
   const normalizedSuggestion: SuggestionRecord = {
     suggestionId,
-    suggestionText,
+    suggestionText: suggestionText || fallbackSuggestionText,
   };
 
   if (suggestionUrl) {
@@ -1011,9 +1014,6 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const opportunityStatus =
     getStringValue(record, ['status', 'opportunityStatus'])?.trim().toLowerCase() ??
     '';
-  if (opportunityStatus === 'ignored') {
-    return null;
-  }
 
   const rawType =
     getStringValue(record, ['type', 'name', 'kind', 'category']) ?? '';
@@ -1055,6 +1055,7 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const normalizedOpportunity: OpportunityRecord = {
     opportunityId,
     opportunityType,
+    opportunityStatus,
     rawType: rawType || opportunityType,
     suggestions,
     sentimentItems,
@@ -1080,9 +1081,21 @@ export function normalizeOpportunityCollection(responsePayload: unknown) {
     return [];
   }
 
-  return collection
+  const normalizedOpportunities = collection
     .map((record, index) => normalizeOpportunity(record, index))
     .filter((value): value is OpportunityRecord => value !== null);
+
+  const activeTypes = new Set(
+    normalizedOpportunities
+      .filter((opportunity) => opportunity.opportunityStatus !== 'ignored')
+      .map((opportunity) => opportunity.opportunityType),
+  );
+
+  return normalizedOpportunities.filter(
+    (opportunity) =>
+      opportunity.opportunityStatus !== 'ignored' ||
+      !activeTypes.has(opportunity.opportunityType),
+  );
 }
 
 export function normalizeSuggestionCollection(

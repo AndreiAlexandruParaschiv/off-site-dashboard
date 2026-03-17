@@ -59,9 +59,13 @@ function buildExportableOpportunityRows(siteCards: SiteDashboardResult[]) {
         status:
           siteCard.status === 'error'
             ? `Stale data - ${siteCard.error ?? siteCard.statusMessage}`
-            : hasExportContent
-              ? 'Ready'
-              : 'No suggestions returned',
+            : opportunity.opportunityStatus === 'ignored'
+              ? hasExportContent
+                ? 'Ready (Ignored)'
+                : 'Ignored - no suggestions returned'
+              : hasExportContent
+                ? 'Ready'
+                : 'No suggestions returned',
       } satisfies GroupedOpportunityRow;
     }),
   );

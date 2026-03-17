@@ -690,7 +690,7 @@ function isMarkdownTableSeparator(line: string) {
 
   return (
     cells.length > 0 &&
-    cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')))
+    cells.every((cell) => /^:?-+:?$/.test(cell.replace(/\s+/g, '')))
   );
 }
 

@@ -856,14 +856,16 @@ function extractStrategicRecommendationSuggestions(
   }
 
   const recommendationSection = extractRecommendationSection(suggestionValue);
-  if (!recommendationSection) {
+  const recommendationSource = recommendationSection || suggestionValue;
+
+  if (!recommendationSource) {
     return [] as SuggestionRecord[];
   }
 
-  const detailsMatches = recommendationSection.match(/<details\b[\s\S]*?<\/details>/gi);
+  const detailsMatches = recommendationSource.match(/<details\b[\s\S]*?<\/details>/gi);
   if (!detailsMatches || detailsMatches.length === 0) {
     const plainSection = normalizeMultilineText(
-      createPlainTextFromHtmlFragment(recommendationSection),
+      createPlainTextFromHtmlFragment(recommendationSource),
     );
 
     return plainSection

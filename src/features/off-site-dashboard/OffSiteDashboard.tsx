@@ -9,6 +9,13 @@ import type {
   SiteOpportunityPresence,
 } from './types';
 
+const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+  'Prompt Gap',
+]);
+
 function StatsCard(props: { label: string; value: string }) {
   return (
     <article className="stats-card">
@@ -326,12 +333,14 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
 }
 
 function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
-  const rowsWithSentiment = props.rows.filter((row) => row.sentimentItems.length > 0);
+  const sentimentRows = props.rows.filter(
+    (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
+  );
 
-  if (rowsWithSentiment.length === 0) {
+  if (sentimentRows.length === 0) {
     return (
       <div className="table-empty-state">
-        <h3>No sentiment rows match the current filters</h3>
+        <h3>No sentiment opportunities match the current filters</h3>
         <p>
           Refresh the filtered sites to load URL, share of voice, and sentiment
           coverage.
@@ -364,8 +373,30 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rowsWithSentiment.flatMap((row) =>
-            row.sentimentItems.map((item, index) => {
+          {sentimentRows.flatMap((row) => {
+            if (row.sentimentItems.length === 0) {
+              return (
+                <tr key={`${row.id}-sentiment-empty`}>
+                  <td>{row.site}</td>
+                  <td>{row.siteId ?? ' - '}</td>
+                  <td>{row.opportunityType ?? ' - '}</td>
+                  <td>{row.opportunityId ?? ' - '}</td>
+                  <td>
+                    <span className="metric-copy metric-card" title={row.status}>
+                      No URL / SOV / sentiment rows returned
+                    </span>
+                  </td>
+                  <td>
+                    <span className="metric-copy metric-card"> - </span>
+                  </td>
+                  <td>
+                    <span className="metric-copy metric-card"> - </span>
+                  </td>
+                </tr>
+              );
+            }
+
+            return row.sentimentItems.map((item, index) => {
               const itemValue = trimSuggestionText(item.item);
               const isUrl = /^https?:\/\//i.test(itemValue);
               const rowSpan = row.sentimentItems.length;
@@ -417,8 +448,8 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                   </td>
                 </tr>
               );
-            }),
-          )}
+            });
+          })}
         </tbody>
       </table>
     </div>
@@ -439,14 +470,18 @@ export function OffSiteDashboard() {
     0,
   );
   const visibleSentimentOpportunityCount = dashboard.filteredOpportunityRows.filter(
-    (row) => row.sentimentItems.length > 0,
+    (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
   ).length;
   const visibleSentimentCount = dashboard.filteredOpportunityRows.reduce(
     (count, row) => count + row.sentimentItems.length,
     0,
   );
-  const visibleSiteCount = new Set(
-    dashboard.filteredOpportunityRows.map((row) => row.site),
+  const visibleSentimentSiteCount = new Set(
+    dashboard.filteredOpportunityRows
+      .filter(
+        (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
+      )
+      .map((row) => row.site),
   ).size;
 
   return (
@@ -687,7 +722,8 @@ export function OffSiteDashboard() {
                 {visibleSentimentCount === 1 ? 'y' : 'ies'} from{' '}
                 {visibleSentimentOpportunityCount} opportunit
                 {visibleSentimentOpportunityCount === 1 ? 'y' : 'ies'} across{' '}
-                {visibleSiteCount} site{visibleSiteCount === 1 ? '' : 's'}.
+                {visibleSentimentSiteCount} site
+                {visibleSentimentSiteCount === 1 ? '' : 's'}.
               </p>
             </div>
 

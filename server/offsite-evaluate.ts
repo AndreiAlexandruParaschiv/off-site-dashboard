@@ -462,59 +462,170 @@ async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
   }
 }
 
-async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
-  try {
-    const normalizedUrl = itemUrl.replace(/\/+$/, '');
-    const jsonUrl = normalizedUrl.endsWith('.json')
-      ? `${normalizedUrl}?raw_json=1&limit=8`
-      : `${normalizedUrl}.json?raw_json=1&limit=8`;
-    const payload = await fetchText(jsonUrl);
-    const parsedPayload = JSON.parse(payload) as Array<{
-      data?: {
-        children?: Array<{
-          data?: {
-            title?: string;
-            selftext?: string;
-            body?: string;
-          };
-        }>;
-      };
-    }>;
-    const post = parsedPayload[0]?.data?.children?.[0]?.data;
-    const comments = (parsedPayload[1]?.data?.children ?? [])
-      .map((entry) => entry.data?.body?.trim())
-      .filter((value): value is string => Boolean(value))
-      .slice(0, 6);
-    const evidenceText = clampEvidenceText(
-      trimMultilineText(
-        [
-          post?.title ? `Post title: ${post.title}` : '',
-          post?.selftext ? `Post body:\n${post.selftext}` : '',
-          comments.length > 0 ? `Comments:\n${comments.join('\n')}` : '',
-        ].join('\n\n'),
-      ),
-    );
+function normalizeAbsoluteUrl(value: string) {
+  const trimmedValue = value.trim();
 
-    return {
-      sourceType: 'reddit',
-      sourceUrl: itemUrl,
-      usedTranscript: false,
-      status:
-        evidenceText.length >= MIN_EVIDENCE_CHARACTERS
-          ? 'success'
-          : 'insufficient_evidence',
-      evidenceText,
-      fallbackSnippet: post?.title ?? 'Reddit evidence could not be extracted.',
-    };
+  if (!trimmedValue) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  return `https://${trimmedValue.replace(/^\/+/, '')}`;
+}
+
+function buildRedditJsonUrls(itemUrl: string) {
+  try {
+    const normalizedValue = normalizeAbsoluteUrl(itemUrl);
+
+    if (!normalizedValue) {
+      return [];
+    }
+
+    const parsedUrl = new URL(normalizedValue);
+    const normalizedPath = parsedUrl.pathname.replace(/\/+$/, '');
+    const hostCandidates = [
+      parsedUrl.hostname,
+      parsedUrl.hostname.replace(/^old\./i, 'www.'),
+      'old.reddit.com',
+      'www.reddit.com',
+    ];
+
+    return Array.from(new Set(hostCandidates)).map((host) => {
+      const baseUrl = `${parsedUrl.protocol}//${host}${normalizedPath}`;
+      return baseUrl.endsWith('.json')
+        ? `${baseUrl}?raw_json=1&limit=8`
+        : `${baseUrl}.json?raw_json=1&limit=8`;
+    });
   } catch {
-    return {
-      sourceType: 'reddit',
-      sourceUrl: itemUrl,
-      usedTranscript: false,
-      status: 'fetch_failed',
-      evidenceText: '',
-      fallbackSnippet: 'Failed to fetch Reddit content.',
-    };
+    return [];
+  }
+}
+
+function buildRedditHtmlUrls(itemUrl: string) {
+  try {
+    const normalizedValue = normalizeAbsoluteUrl(itemUrl);
+
+    if (!normalizedValue) {
+      return [];
+    }
+
+    const parsedUrl = new URL(normalizedValue);
+    const normalizedPath = parsedUrl.pathname.replace(/\/+$/, '');
+    const hostCandidates = [
+      parsedUrl.hostname,
+      parsedUrl.hostname.replace(/^www\./i, 'old.'),
+      'old.reddit.com',
+      'www.reddit.com',
+    ];
+
+    return Array.from(new Set(hostCandidates)).map(
+      (host) => `${parsedUrl.protocol}//${host}${normalizedPath}`,
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
+  const jsonUrls = buildRedditJsonUrls(itemUrl);
+
+  for (const jsonUrl of jsonUrls) {
+    try {
+      const payload = await fetchText(jsonUrl);
+      const parsedPayload = JSON.parse(payload) as Array<{
+        data?: {
+          children?: Array<{
+            data?: {
+              title?: string;
+              selftext?: string;
+              body?: string;
+            };
+          }>;
+        };
+      }>;
+      const post = parsedPayload[0]?.data?.children?.[0]?.data;
+      const comments = (parsedPayload[1]?.data?.children ?? [])
+        .map((entry) => entry.data?.body?.trim())
+        .filter((value): value is string => Boolean(value))
+        .slice(0, 6);
+      const evidenceText = clampEvidenceText(
+        trimMultilineText(
+          [
+            post?.title ? `Post title: ${post.title}` : '',
+            post?.selftext ? `Post body:\n${post.selftext}` : '',
+            comments.length > 0 ? `Comments:\n${comments.join('\n')}` : '',
+          ].join('\n\n'),
+        ),
+      );
+
+      return {
+        sourceType: 'reddit',
+        sourceUrl: jsonUrl,
+        usedTranscript: false,
+        status:
+          evidenceText.length >= MIN_EVIDENCE_CHARACTERS
+            ? 'success'
+            : 'insufficient_evidence',
+        evidenceText,
+        fallbackSnippet: post?.title ?? 'Reddit evidence could not be extracted.',
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  const htmlUrls = buildRedditHtmlUrls(itemUrl);
+
+  for (const htmlUrl of htmlUrls) {
+    try {
+      const html = await fetchText(htmlUrl);
+      const title =
+        extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
+        extractMetaTagValue(html, /<title>([^<]+)<\/title>/i);
+      const description =
+        extractMetaTagValue(html, /<meta\s+name="description"\s+content="([^"]+)"/i) ||
+        extractMetaTagValue(html, /<meta\s+property="og:description"\s+content="([^"]+)"/i);
+      const pageText = stripHtmlTags(html);
+      const evidenceText = clampEvidenceText(
+        trimMultilineText(
+          [
+            title ? `Post title: ${title}` : '',
+            description ? `Description: ${description}` : '',
+            pageText ? `Page content:\n${pageText}` : '',
+          ].join('\n\n'),
+        ),
+      );
+
+      if (!evidenceText) {
+        continue;
+      }
+
+      return {
+        sourceType: 'reddit',
+        sourceUrl: htmlUrl,
+        usedTranscript: false,
+        status:
+          evidenceText.length >= MIN_EVIDENCE_CHARACTERS
+            ? 'partial'
+            : 'insufficient_evidence',
+        evidenceText,
+        fallbackSnippet: title || description || 'Reddit evidence could not be extracted.',
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    sourceType: 'reddit',
+    sourceUrl: itemUrl,
+    usedTranscript: false,
+    status: 'fetch_failed',
+    evidenceText: '',
+    fallbackSnippet: 'Failed to fetch Reddit content.',
   }
 }
 

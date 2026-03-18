@@ -659,6 +659,7 @@ function EvaluationTable(props: {
 }
 
 export function OffSiteDashboard() {
+  const [isCoverageExpanded, setIsCoverageExpanded] = useState(true);
   const dashboard = useOffSiteDashboard();
   const [isSitesExpanded, setIsSitesExpanded] = useState(false);
   const [isSentimentExpanded, setIsSentimentExpanded] = useState(true);
@@ -880,9 +881,17 @@ export function OffSiteDashboard() {
                 and Wikipedia opportunities.
               </p>
             </div>
+
+            <div className="panel-header-actions">
+              <PanelToggleButton
+                expanded={isCoverageExpanded}
+                onClick={() => setIsCoverageExpanded((value) => !value)}
+                label="Opportunity coverage"
+              />
+            </div>
           </div>
 
-          <CoverageTable rows={dashboard.sitePresenceRows} />
+          {isCoverageExpanded && <CoverageTable rows={dashboard.sitePresenceRows} />}
         </section>
 
         <section className="panel panel-sites panel-sites-inline">

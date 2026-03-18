@@ -24,6 +24,38 @@ npm run dev
 npm run build
 ```
 
+## Sentiment evaluator
+
+The dashboard now includes an on-demand row evaluator for `Sentiment & Share of Voice`.
+
+- Frontend calls `POST /api/offsite-evaluate`
+- Vercel uses `api/offsite-evaluate.ts`
+- Local `npm run dev` serves the same route through Vite middleware
+
+Required environment variables:
+
+```bash
+OPENAI_API_KEY=...
+# Optional override
+OPENAI_EVALUATOR_MODEL=gpt-4.1-mini
+```
+
+Azure OpenAI is also supported:
+
+```bash
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_KEY=...
+# Use your Azure deployment name here. If omitted, the evaluator falls back
+# to OPENAI_EVALUATOR_MODEL and then gpt-4.1-mini.
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
+```
+
+The evaluator independently fetches the cited URL/thread/video and returns:
+
+- evaluated sentiment
+- sentiment confidence score
+- rationale and evidence snippet
+
 ## Deploy (Recommended)
 
 GitHub Pages is disabled for Enterprise Managed User repositories in your setup.

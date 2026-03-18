@@ -1,5 +1,10 @@
-import { DEFAULT_CONFIG, STORAGE_KEY } from './constants';
-import type { DashboardConfig } from './types';
+import {
+  DEFAULT_CONFIG,
+  SENTIMENT_EVALUATION_STORAGE_KEY,
+  STORAGE_KEY,
+} from './constants';
+import { normalizeSentimentEvaluationStore } from './evaluation';
+import type { DashboardConfig, SentimentEvaluationStore } from './types';
 
 function hasWindow() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -47,5 +52,35 @@ export function saveDashboardConfig(config: DashboardConfig) {
       ...config,
       apiKey: '',
     }),
+  );
+}
+
+export function loadSentimentEvaluationStore(): SentimentEvaluationStore {
+  if (!hasWindow()) {
+    return normalizeSentimentEvaluationStore(null);
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(SENTIMENT_EVALUATION_STORAGE_KEY);
+
+    if (!rawValue) {
+      return normalizeSentimentEvaluationStore(null);
+    }
+
+    return normalizeSentimentEvaluationStore(JSON.parse(rawValue));
+  } catch (error) {
+    console.warn('Failed to read saved sentiment evaluations.', error);
+    return normalizeSentimentEvaluationStore(null);
+  }
+}
+
+export function saveSentimentEvaluationStore(store: SentimentEvaluationStore) {
+  if (!hasWindow()) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    SENTIMENT_EVALUATION_STORAGE_KEY,
+    JSON.stringify(store),
   );
 }

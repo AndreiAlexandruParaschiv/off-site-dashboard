@@ -5,10 +5,25 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { DEFAULT_PAGE_SIZE, TARGET_OPPORTUNITY_TYPES } from './constants';
+import {
+  DEFAULT_PAGE_SIZE,
+  SENTIMENT_EVALUATOR_VERSION,
+  TARGET_OPPORTUNITY_TYPES,
+} from './constants';
 import { downloadRowsAsCsv, downloadRowsAsExcel } from './csv';
-import { SpacecatApiError, fetchSiteDashboardData } from './api';
-import { loadDashboardConfig, saveDashboardConfig } from './storage';
+import { SpacecatApiError, evaluateSentimentRow, fetchSiteDashboardData } from './api';
+import {
+  buildSentimentEvaluationRequest,
+  buildSentimentRowKey,
+  canEvaluateSentimentItem,
+  createStoredSentimentEvaluation,
+} from './evaluation';
+import {
+  loadDashboardConfig,
+  loadSentimentEvaluationStore,
+  saveDashboardConfig,
+  saveSentimentEvaluationStore,
+} from './storage';
 import {
   createIdleSiteResult,
   flattenSiteRows,
@@ -21,6 +36,9 @@ import type {
   CanonicalOpportunityType,
   DashboardConfig,
   GroupedOpportunityRow,
+  SentimentEvaluationRequest,
+  SentimentEvaluationStatus,
+  SentimentEvaluationStoredResult,
   SiteDashboardResult,
   SiteOpportunityPresence,
 } from './types';
@@ -33,11 +51,40 @@ function updateSelection<T extends string>(values: T[], value: T) {
     : [...values, value];
 }
 
-function buildExportableOpportunityRows(siteCards: SiteDashboardResult[]) {
+function buildExportableOpportunityRows(
+  siteCards: SiteDashboardResult[],
+  evaluationResults: Record<string, SentimentEvaluationStoredResult>,
+  evaluationStatuses: Record<string, SentimentEvaluationStatus>,
+  evaluationErrors: Record<string, string>,
+) {
   return siteCards.flatMap((siteCard) =>
     siteCard.opportunities.map((opportunity) => {
       const hasExportContent =
         opportunity.suggestions.length > 0 || opportunity.sentimentItems.length > 0;
+      const sentimentItems = opportunity.sentimentItems.map((item) => {
+        const rowKey = buildSentimentRowKey({
+          site: siteCard.requestSite,
+          siteId: siteCard.siteId,
+          opportunityType: opportunity.opportunityType,
+          opportunityId: opportunity.opportunityId,
+          item: item.item,
+        });
+        const storedEvaluation = evaluationResults[rowKey];
+        const evaluationResult =
+          storedEvaluation &&
+          storedEvaluation.extractedSentiment === item.sentiment
+            ? storedEvaluation
+            : undefined;
+
+        return {
+          ...item,
+          rowKey,
+          canEvaluate: canEvaluateSentimentItem(item.item),
+          evaluationStatus: evaluationStatuses[rowKey] ?? 'idle',
+          evaluationResult,
+          evaluationError: evaluationErrors[rowKey],
+        };
+      });
 
       return {
         id: [
@@ -55,7 +102,7 @@ function buildExportableOpportunityRows(siteCards: SiteDashboardResult[]) {
           suggestionText: suggestion.suggestionText,
           suggestionUrl: suggestion.suggestionUrl,
         })),
-        sentimentItems: opportunity.sentimentItems,
+        sentimentItems,
         status:
           siteCard.status === 'error'
             ? `Stale data - ${siteCard.error ?? siteCard.statusMessage}`
@@ -73,6 +120,16 @@ function buildExportableOpportunityRows(siteCards: SiteDashboardResult[]) {
 
 export function useOffSiteDashboard() {
   const [config, setConfig] = useState<DashboardConfig>(() => loadDashboardConfig());
+  const [sentimentEvaluationResults, setSentimentEvaluationResults] = useState<
+    Record<string, SentimentEvaluationStoredResult>
+  >(() => loadSentimentEvaluationStore().results);
+  const [sentimentEvaluationStatuses, setSentimentEvaluationStatuses] = useState<
+    Record<string, SentimentEvaluationStatus>
+  >({});
+  const [sentimentEvaluationErrors, setSentimentEvaluationErrors] = useState<
+    Record<string, string>
+  >({});
+  const [selectedSentimentRowKeys, setSelectedSentimentRowKeys] = useState<string[]>([]);
   const [siteResults, setSiteResults] = useState<Record<string, SiteDashboardResult>>(
     {},
   );
@@ -92,6 +149,13 @@ export function useOffSiteDashboard() {
   useEffect(() => {
     saveDashboardConfig(config);
   }, [config]);
+
+  useEffect(() => {
+    saveSentimentEvaluationStore({
+      evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
+      results: sentimentEvaluationResults,
+    });
+  }, [sentimentEvaluationResults]);
 
   useEffect(() => {
     setSiteResults((previousResults) => {
@@ -228,6 +292,9 @@ export function useOffSiteDashboard() {
         return results;
       }, {}),
     );
+    setSelectedSentimentRowKeys([]);
+    setSentimentEvaluationStatuses({});
+    setSentimentEvaluationErrors({});
     setPage(1);
   }, [configuredSites]);
 
@@ -263,9 +330,50 @@ export function useOffSiteDashboard() {
   }, [allRows, selectedSites, selectedTypes]);
 
   const allOpportunityRows = useMemo(
-    () => buildExportableOpportunityRows(siteCards),
-    [siteCards],
+    () =>
+      buildExportableOpportunityRows(
+        siteCards,
+        sentimentEvaluationResults,
+        sentimentEvaluationStatuses,
+        sentimentEvaluationErrors,
+      ),
+    [
+      sentimentEvaluationErrors,
+      sentimentEvaluationResults,
+      sentimentEvaluationStatuses,
+      siteCards,
+    ],
   );
+
+  const sentimentEvaluationRequestMap = useMemo(() => {
+    return allOpportunityRows.reduce<Map<string, SentimentEvaluationRequest>>(
+      (nextMap, row) => {
+        row.sentimentItems.forEach((item) => {
+          const request = buildSentimentEvaluationRequest({
+            site: row.site,
+            siteId: row.siteId,
+            opportunityType: row.opportunityType,
+            opportunityId: row.opportunityId,
+            item: item.item,
+            extractedSentiment: item.sentiment,
+          });
+
+          if (request && item.rowKey) {
+            nextMap.set(item.rowKey, request);
+          }
+        });
+
+        return nextMap;
+      },
+      new Map<string, SentimentEvaluationRequest>(),
+    );
+  }, [allOpportunityRows]);
+
+  useEffect(() => {
+    setSelectedSentimentRowKeys((currentKeys) =>
+      currentKeys.filter((rowKey) => sentimentEvaluationRequestMap.has(rowKey)),
+    );
+  }, [sentimentEvaluationRequestMap]);
 
   const filteredOpportunityRows = useMemo(() => {
     const nextRows = allOpportunityRows.filter((row) => {
@@ -349,6 +457,13 @@ export function useOffSiteDashboard() {
 
   const exportableRows = allOpportunityRows;
 
+  const isEvaluatingSentiment = Object.values(sentimentEvaluationStatuses).some(
+    (status) => status === 'running',
+  );
+  const selectedSentimentRowsCount = selectedSentimentRowKeys.filter((rowKey) =>
+    sentimentEvaluationRequestMap.has(rowKey),
+  ).length;
+
   const exportRows = useCallback(() => {
     downloadRowsAsCsv(exportableRows);
   }, [exportableRows]);
@@ -356,6 +471,92 @@ export function useOffSiteDashboard() {
   const exportExcel = useCallback(() => {
     downloadRowsAsExcel(exportableRows);
   }, [exportableRows]);
+
+  const toggleSentimentRowSelection = useCallback((rowKey: string) => {
+    setSelectedSentimentRowKeys((currentKeys) =>
+      currentKeys.includes(rowKey)
+        ? currentKeys.filter((currentKey) => currentKey !== rowKey)
+        : [...currentKeys, rowKey],
+    );
+  }, []);
+
+  const setSentimentRowSelections = useCallback(
+    (rowKeys: string[], selected: boolean) => {
+      setSelectedSentimentRowKeys((currentKeys) => {
+        const validRowKeys = rowKeys.filter((rowKey) =>
+          sentimentEvaluationRequestMap.has(rowKey),
+        );
+
+        if (selected) {
+          return Array.from(new Set([...currentKeys, ...validRowKeys]));
+        }
+
+        return currentKeys.filter((rowKey) => !validRowKeys.includes(rowKey));
+      });
+    },
+    [sentimentEvaluationRequestMap],
+  );
+
+  const runSentimentEvaluation = useCallback(
+    async (rowKeys: string[]) => {
+      const uniqueRowKeys = Array.from(new Set(rowKeys)).filter((rowKey) =>
+        sentimentEvaluationRequestMap.has(rowKey),
+      );
+
+      if (uniqueRowKeys.length === 0) {
+        return;
+      }
+
+      setSentimentEvaluationStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+        uniqueRowKeys.forEach((rowKey) => {
+          nextStatuses[rowKey] = 'running';
+        });
+        return nextStatuses;
+      });
+      setSentimentEvaluationErrors((currentErrors) => {
+        const nextErrors = { ...currentErrors };
+        uniqueRowKeys.forEach((rowKey) => {
+          delete nextErrors[rowKey];
+        });
+        return nextErrors;
+      });
+
+      for (const rowKey of uniqueRowKeys) {
+        const request = sentimentEvaluationRequestMap.get(rowKey);
+
+        if (!request) {
+          continue;
+        }
+
+        try {
+          const result = await evaluateSentimentRow(request);
+
+          setSentimentEvaluationResults((currentResults) => ({
+            ...currentResults,
+            [rowKey]: createStoredSentimentEvaluation(rowKey, request, result),
+          }));
+          setSentimentEvaluationStatuses((currentStatuses) => ({
+            ...currentStatuses,
+            [rowKey]: 'success',
+          }));
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Evaluation failed.';
+
+          setSentimentEvaluationStatuses((currentStatuses) => ({
+            ...currentStatuses,
+            [rowKey]: 'error',
+          }));
+          setSentimentEvaluationErrors((currentErrors) => ({
+            ...currentErrors,
+            [rowKey]: message,
+          }));
+        }
+      }
+    },
+    [sentimentEvaluationRequestMap],
+  );
 
   return {
     config,
@@ -369,8 +570,11 @@ export function useOffSiteDashboard() {
     pageSize,
     totalPages,
     isRefreshing,
+    isEvaluatingSentiment,
     canRefresh,
     hasExportRows: exportableRows.length > 0,
+    selectedSentimentRowKeys,
+    selectedSentimentRowsCount,
     pagedOpportunityRows,
     filteredRows,
     filteredOpportunityRows,
@@ -408,6 +612,9 @@ export function useOffSiteDashboard() {
     clearResults,
     exportRows,
     exportExcel,
+    toggleSentimentRowSelection,
+    setSentimentRowSelections,
+    evaluateSentimentRows: runSentimentEvaluation,
     setPage,
     setPageSize,
   };

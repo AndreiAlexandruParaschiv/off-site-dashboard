@@ -8,10 +8,13 @@ import {
   normalizeSuggestionCollection,
   normalizeSiteInput,
 } from './utils';
+import { EVALUATOR_API_PATH } from './constants';
 import type {
   FetchSiteParams,
   FetchSiteSuccessResult,
   OpportunityRecord,
+  SentimentEvaluationRequest,
+  SentimentEvaluationResult,
 } from './types';
 
 const API_HEADERS = {
@@ -129,6 +132,26 @@ async function requestJson<T>(
       'Network or CORS error. If the API blocks browser requests, use a server-side proxy.',
     );
   }
+}
+
+async function requestLocalJson<T>(url: string, payload: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Evaluator request failed with ${response.status}.`,
+      { status: response.status },
+    );
+  }
+
+  return (await response.json()) as T;
 }
 
 function encodeBase64PathValue(value: string) {
@@ -321,4 +344,10 @@ export async function fetchSiteDashboardData({
     opportunityPresence,
     opportunities,
   };
+}
+
+export async function evaluateSentimentRow(
+  payload: SentimentEvaluationRequest,
+): Promise<SentimentEvaluationResult> {
+  return requestLocalJson<SentimentEvaluationResult>(EVALUATOR_API_PATH, payload);
 }

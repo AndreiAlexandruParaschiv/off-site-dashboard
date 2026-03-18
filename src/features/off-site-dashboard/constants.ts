@@ -18,5 +18,9 @@ export const DEFAULT_CONFIG: DashboardConfig = {
 };
 
 export const STORAGE_KEY = 'off-site-dashboard.config.v1';
+export const SENTIMENT_EVALUATION_STORAGE_KEY =
+  'off-site-dashboard.sentiment-evaluations.v1';
+export const SENTIMENT_EVALUATOR_VERSION = 'offsite-sentiment-evaluator.v3';
+export const EVALUATOR_API_PATH = '/api/offsite-evaluate';
 
 export const DEFAULT_PAGE_SIZE = 25;

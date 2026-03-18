@@ -492,37 +492,78 @@ a {
   min-width: 0;
 }
 
+.evaluation-table {
+  table-layout: fixed;
+  min-width: 0;
+}
+
 .suggestions-table {
   table-layout: fixed;
   min-width: 0;
 }
 
 .sentiment-col-site {
-  width: 12%;
+  width: 150px;
 }
 
 .sentiment-col-site-id {
-  width: 12%;
+  width: 170px;
 }
 
 .sentiment-col-type {
-  width: 9%;
+  width: 140px;
 }
 
 .sentiment-col-opportunity-id {
-  width: 17%;
+  width: 220px;
 }
 
 .sentiment-col-url {
-  width: 25%;
+  width: 220px;
 }
 
 .sentiment-col-sov {
-  width: 17%;
+  width: 200px;
 }
 
 .sentiment-col-sentiment {
-  width: 8%;
+  width: 160px;
+}
+
+.evaluation-col-select {
+  width: 64px;
+}
+
+.evaluation-col-site {
+  width: 180px;
+}
+
+.evaluation-col-type {
+  width: 130px;
+}
+
+.evaluation-col-url {
+  width: 220px;
+}
+
+.evaluation-col-sentiment {
+  width: 160px;
+}
+
+.evaluation-col-confidence {
+  width: 180px;
+}
+
+.evaluation-col-evaluated {
+  width: 220px;
+}
+
+.evaluation-col-rationale {
+  width: 260px;
+}
+
+.evaluation-col-evaluated-at {
+  width: 160px;
 }
 
 .suggestions-col-site {
@@ -556,6 +597,8 @@ a {
 
 .sentiment-table th,
 .sentiment-table td,
+.evaluation-table th,
+.evaluation-table td,
 .suggestions-table th,
 .suggestions-table td {
   overflow-wrap: anywhere;
@@ -650,10 +693,69 @@ a {
   text-underline-offset: 2px;
 }
 
+.evaluation-site-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.evaluation-site-meta {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
 .suggestion-heading {
   display: block;
   font-size: 0.95rem;
   line-height: 1.4;
+}
+
+.table-checkbox {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.confidence-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.confidence-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.confidence-pill-success {
+  color: var(--success);
+  border-color: rgba(22, 101, 52, 0.12);
+  background: rgba(22, 101, 52, 0.12);
+}
+
+.confidence-pill-warning {
+  color: var(--warning);
+  border-color: rgba(154, 103, 0, 0.12);
+  background: rgba(154, 103, 0, 0.12);
+}
+
+.confidence-pill-error {
+  color: var(--error);
+  border-color: rgba(180, 35, 24, 0.12);
+  background: rgba(180, 35, 24, 0.12);
+}
+
+.confidence-pill-neutral {
+  color: var(--ink-soft);
+  border-color: rgba(31, 41, 55, 0.08);
+  background: rgba(31, 41, 55, 0.06);
 }
 
 .suggestion-copy {

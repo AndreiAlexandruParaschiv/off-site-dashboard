@@ -8,6 +8,12 @@ export type CanonicalOpportunityType =
 export type SiteFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export type OpportunityPresenceState = 'missing' | 'exists' | 'exists_mixed';
+export type SentimentEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
+export type SentimentEvaluationFetchStatus =
+  | 'success'
+  | 'partial'
+  | 'insufficient_evidence'
+  | 'fetch_failed';
 
 export interface DashboardConfig {
   apiBaseUrl: string;
@@ -25,6 +31,49 @@ export interface SentimentItemRecord {
   item: string;
   sov: string;
   sentiment: string;
+  rowKey?: string;
+  canEvaluate?: boolean;
+  evaluationStatus?: SentimentEvaluationStatus;
+  evaluationResult?: SentimentEvaluationResult;
+  evaluationError?: string;
+}
+
+export interface SentimentEvaluationFetchMetadata {
+  status: SentimentEvaluationFetchStatus;
+  sourceType: 'youtube' | 'reddit' | 'web';
+  sourceUrl: string;
+  usedTranscript: boolean;
+  evidenceCharacters: number;
+}
+
+export interface SentimentEvaluationResult {
+  evaluatedSentiment: string;
+  sentimentConfidence: number;
+  rationale: string;
+  evidenceSnippet: string;
+  evaluatedAt: string;
+  evaluatorVersion: string;
+  fetch: SentimentEvaluationFetchMetadata;
+  targetBrand: string;
+}
+
+export interface SentimentEvaluationRequest {
+  site: string;
+  siteId?: string;
+  opportunityType: CanonicalOpportunityType;
+  opportunityId: string;
+  item: string;
+  extractedSentiment: string;
+}
+
+export interface SentimentEvaluationStoredResult extends SentimentEvaluationResult {
+  rowKey: string;
+  extractedSentiment: string;
+}
+
+export interface SentimentEvaluationStore {
+  evaluatorVersion: string;
+  results: Record<string, SentimentEvaluationStoredResult>;
 }
 
 export interface OpportunityRecord {

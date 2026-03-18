@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
+import { getConfidenceBand } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
 import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
 import type {
@@ -149,6 +150,10 @@ function getSentimentTone(value?: string) {
 
 function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
+}
+
+function formatConfidenceScore(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : ' - ';
 }
 
 function getPresenceDetails(value: OpportunityPresenceState) {
@@ -402,7 +407,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
               const rowSpan = row.sentimentItems.length;
 
               return (
-                <tr key={`${row.id}-sentiment-${index}`}>
+                <tr key={item.rowKey ?? `${row.id}-sentiment-${index}`}>
                   {index === 0 && (
                     <>
                       <td rowSpan={rowSpan}>{row.site}</td>
@@ -456,10 +461,208 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
   );
 }
 
+function EvaluationTable(props: {
+  rows: GroupedOpportunityRow[];
+  selectedRowKeys: string[];
+  onToggleRowSelection: (rowKey: string) => void;
+  onSelectRows: (rowKeys: string[], selected: boolean) => void;
+  isEvaluating: boolean;
+}) {
+  const evaluationRows = props.rows
+    .filter(
+      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
+    )
+    .flatMap((row) =>
+      row.sentimentItems.map((item, index) => ({
+        id: item.rowKey ?? `${row.id}-evaluation-${index}`,
+        site: row.site,
+        siteId: row.siteId,
+        opportunityType: row.opportunityType ?? ' - ',
+        opportunityId: row.opportunityId ?? ' - ',
+        item,
+      })),
+    );
+  const visibleEvaluableRowKeys = evaluationRows
+    .filter((row) => row.item.canEvaluate && row.item.rowKey)
+    .map((row) => row.item.rowKey as string);
+  const selectedVisibleRowCount = visibleEvaluableRowKeys.filter((rowKey) =>
+    props.selectedRowKeys.includes(rowKey),
+  ).length;
+  const areAllVisibleRowsSelected =
+    visibleEvaluableRowKeys.length > 0 &&
+    selectedVisibleRowCount === visibleEvaluableRowKeys.length;
+
+  if (evaluationRows.length === 0) {
+    return (
+      <div className="table-empty-state">
+        <h3>No evaluable sentiment rows match the current filters</h3>
+        <p>Refresh the filtered sites to load rows that can be independently checked.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-wrapper">
+      <table className="dashboard-table evaluation-table">
+        <colgroup>
+          <col className="evaluation-col-select" />
+          <col className="evaluation-col-site" />
+          <col className="evaluation-col-type" />
+          <col className="evaluation-col-url" />
+          <col className="evaluation-col-sentiment" />
+          <col className="evaluation-col-confidence" />
+          <col className="evaluation-col-evaluated" />
+          <col className="evaluation-col-rationale" />
+          <col className="evaluation-col-evaluated-at" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>
+              <label className="table-checkbox" aria-label="Select all visible rows">
+                <input
+                  type="checkbox"
+                  checked={areAllVisibleRowsSelected}
+                  disabled={visibleEvaluableRowKeys.length === 0}
+                  onChange={(event) =>
+                    props.onSelectRows(visibleEvaluableRowKeys, event.target.checked)
+                  }
+                />
+              </label>
+            </th>
+            <th>Site</th>
+            <th>Opportunity Type</th>
+            <th>URL</th>
+            <th>Extracted Sentiment</th>
+            <th>Confidence</th>
+            <th>Evaluator Sentiment</th>
+            <th>Rationale / Evidence</th>
+            <th>Evaluated At</th>
+          </tr>
+        </thead>
+        <tbody>
+          {evaluationRows.map((row) => {
+            const itemValue = trimSuggestionText(row.item.item);
+            const isUrl = /^https?:\/\//i.test(itemValue);
+            const isSelected = row.item.rowKey
+              ? props.selectedRowKeys.includes(row.item.rowKey)
+              : false;
+            const isRunning = row.item.evaluationStatus === 'running';
+            const evaluationResult = row.item.evaluationResult;
+            const evaluationOutput = evaluationResult
+              ? evaluationResult.evaluatedSentiment
+              : 'Not evaluated';
+            const rationaleOutput = row.item.evaluationError
+              ? `Error: ${row.item.evaluationError}`
+              : evaluationResult
+                ? [
+                    evaluationResult.rationale,
+                    evaluationResult.evidenceSnippet
+                      ? `Evidence: ${evaluationResult.evidenceSnippet}`
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n')
+                : 'Run evaluation to score sentiment.';
+
+            return (
+              <tr key={row.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={!row.item.canEvaluate || isRunning}
+                    onChange={() =>
+                      row.item.rowKey
+                        ? props.onToggleRowSelection(row.item.rowKey)
+                        : undefined
+                    }
+                  />
+                </td>
+                <td>
+                  <div className="evaluation-site-stack">
+                    <span>{row.site}</span>
+                    <span className="evaluation-site-meta">
+                      {row.siteId ?? row.opportunityId}
+                    </span>
+                  </div>
+                </td>
+                <td>{row.opportunityType}</td>
+                <td>
+                  {isUrl ? (
+                    <a
+                      className="metric-link metric-card"
+                      href={itemValue}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={itemValue}
+                    >
+                      {getDisplayUrl(itemValue)}
+                    </a>
+                  ) : (
+                    <span className="metric-copy metric-card" title={itemValue}>
+                      {itemValue || ' - '}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span
+                    className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                      row.item.sentiment,
+                    )}`}
+                    title={row.item.sentiment}
+                  >
+                    <span className="sentiment-dot" aria-hidden="true" />
+                    <span className="sentiment-copy">
+                      {trimSuggestionText(row.item.sentiment) || ' - '}
+                    </span>
+                  </span>
+                </td>
+                <td>
+                  {evaluationResult ? (
+                    <div className="confidence-stack">
+                      <span
+                        className={`confidence-pill confidence-pill-${getConfidenceBand(
+                          evaluationResult.sentimentConfidence,
+                        )}`}
+                      >
+                        Sentiment {formatConfidenceScore(evaluationResult.sentimentConfidence)}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="metric-copy metric-card">
+                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={evaluationOutput}>
+                    {evaluationOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={rationaleOutput}>
+                    {rationaleOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card">
+                    {formatTimestamp(evaluationResult?.evaluatedAt)}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function OffSiteDashboard() {
   const dashboard = useOffSiteDashboard();
   const [isSitesExpanded, setIsSitesExpanded] = useState(false);
   const [isSentimentExpanded, setIsSentimentExpanded] = useState(true);
+  const [isEvaluationExpanded, setIsEvaluationExpanded] = useState(false);
   const [isSuggestionsExpanded, setIsSuggestionsExpanded] = useState(true);
   const visibleOpportunityCount = dashboard.filteredOpportunityRows.length;
   const visibleSuggestionOpportunityCount = dashboard.filteredOpportunityRows.filter(
@@ -483,6 +686,11 @@ export function OffSiteDashboard() {
       )
       .map((row) => row.site),
   ).size;
+  const visibleEvaluationCount = dashboard.pagedOpportunityRows
+    .filter(
+      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
+    )
+    .reduce((count, row) => count + row.sentimentItems.length, 0);
 
   return (
     <div className="dashboard-shell">
@@ -777,7 +985,61 @@ export function OffSiteDashboard() {
             </div>
           </div>
 
-          {isSentimentExpanded && <SentimentTable rows={dashboard.pagedOpportunityRows} />}
+          {isSentimentExpanded && (
+            <SentimentTable rows={dashboard.pagedOpportunityRows} />
+          )}
+        </section>
+
+        <section className="panel panel-table panel-table-wide">
+          <div className="panel-header">
+            <div>
+              <h2>Sentiment Evaluation</h2>
+              <p>
+                Independently re-check extracted sentiment for{' '}
+                {visibleEvaluationCount} URL entr
+                {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
+              </p>
+            </div>
+
+            <div className="panel-header-actions">
+              {isEvaluationExpanded && (
+                <div className="table-controls">
+                  <button
+                    className="primary-button"
+                    disabled={
+                      dashboard.selectedSentimentRowsCount === 0 ||
+                      dashboard.isEvaluatingSentiment
+                    }
+                    onClick={() =>
+                      void dashboard.evaluateSentimentRows(
+                        dashboard.selectedSentimentRowKeys,
+                      )
+                    }
+                    type="button"
+                  >
+                    {dashboard.isEvaluatingSentiment
+                      ? 'Evaluating...'
+                      : `Evaluate Selected (${dashboard.selectedSentimentRowsCount})`}
+                  </button>
+                </div>
+              )}
+              <PanelToggleButton
+                expanded={isEvaluationExpanded}
+                onClick={() => setIsEvaluationExpanded((value) => !value)}
+                label="Evaluation"
+              />
+            </div>
+          </div>
+
+          {isEvaluationExpanded && (
+            <EvaluationTable
+              rows={dashboard.pagedOpportunityRows}
+              selectedRowKeys={dashboard.selectedSentimentRowKeys}
+              onToggleRowSelection={dashboard.toggleSentimentRowSelection}
+              onSelectRows={dashboard.setSentimentRowSelections}
+              isEvaluating={dashboard.isEvaluatingSentiment}
+            />
+          )}
         </section>
 
         <section className="panel panel-table panel-table-wide">

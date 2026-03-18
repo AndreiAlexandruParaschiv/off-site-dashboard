@@ -487,6 +487,7 @@ function buildRedditJsonUrls(itemUrl: string) {
     const parsedUrl = new URL(normalizedValue);
     const normalizedPath = parsedUrl.pathname.replace(/\/+$/, '');
     const hostCandidates = [
+      'api.reddit.com',
       parsedUrl.hostname,
       parsedUrl.hostname.replace(/^old\./i, 'www.'),
       'old.reddit.com',
@@ -531,6 +532,7 @@ function buildRedditHtmlUrls(itemUrl: string) {
 
 async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
   const jsonUrls = buildRedditJsonUrls(itemUrl);
+  let lastFetchError = '';
 
   for (const jsonUrl of jsonUrls) {
     try {
@@ -572,7 +574,8 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
         evidenceText,
         fallbackSnippet: post?.title ?? 'Reddit evidence could not be extracted.',
       };
-    } catch {
+    } catch (error) {
+      lastFetchError = error instanceof Error ? error.message : 'Unknown fetch error.';
       continue;
     }
   }
@@ -614,7 +617,8 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
         evidenceText,
         fallbackSnippet: title || description || 'Reddit evidence could not be extracted.',
       };
-    } catch {
+    } catch (error) {
+      lastFetchError = error instanceof Error ? error.message : 'Unknown fetch error.';
       continue;
     }
   }
@@ -625,7 +629,9 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
     usedTranscript: false,
     status: 'fetch_failed',
     evidenceText: '',
-    fallbackSnippet: 'Failed to fetch Reddit content.',
+    fallbackSnippet: lastFetchError
+      ? `Failed to fetch Reddit content. ${lastFetchError}`
+      : 'Failed to fetch Reddit content.',
   }
 }
 

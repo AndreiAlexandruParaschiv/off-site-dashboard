@@ -890,13 +890,24 @@ export async function runOffsiteEvaluation(
   ) {
     const weakEvidenceScore =
       evidence.status === 'fetch_failed' ? 12 : 28;
+    const blockedBySource =
+      evidence.status === 'fetch_failed' &&
+      /fetch failed with 403/i.test(evidence.fallbackSnippet);
+    const blockedSourceLabel =
+      evidence.sourceType === 'reddit'
+        ? 'Reddit'
+        : evidence.sourceType === 'youtube'
+          ? 'YouTube'
+          : 'The source';
 
     return {
       evaluatedSentiment: 'Needs Review',
       sentimentConfidence: weakEvidenceScore,
       rationale:
-        evidence.status === 'fetch_failed'
-          ? 'The source content could not be fetched for an independent check.'
+        blockedBySource
+          ? `${blockedSourceLabel} blocked the server-side request, so the sentiment could not be independently checked from this deployment.`
+          : evidence.status === 'fetch_failed'
+            ? 'The source content could not be fetched for an independent check.'
           : 'The fetched content did not provide enough evidence for a reliable judgment.',
       evidenceSnippet: evidence.fallbackSnippet,
       evaluatedAt: new Date().toISOString(),

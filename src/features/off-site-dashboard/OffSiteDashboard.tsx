@@ -1016,19 +1016,19 @@ export function OffSiteDashboard() {
                   <button
                     className="primary-button"
                     disabled={
-                      dashboard.selectedSentimentRowsCount === 0 ||
+                      dashboard.selectedVisibleSentimentRowsCount === 0 ||
                       dashboard.isEvaluatingSentiment
                     }
                     onClick={() =>
                       void dashboard.evaluateSentimentRows(
-                        dashboard.selectedSentimentRowKeys,
+                        dashboard.selectedVisibleSentimentRowKeys,
                       )
                     }
                     type="button"
                   >
                     {dashboard.isEvaluatingSentiment
                       ? 'Evaluating...'
-                      : `Evaluate Selected (${dashboard.selectedSentimentRowsCount})`}
+                      : `Evaluate Selected Rows (${dashboard.selectedVisibleSentimentRowsCount})`}
                   </button>
                 </div>
               )}

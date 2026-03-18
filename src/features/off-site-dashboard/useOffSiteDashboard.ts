@@ -463,6 +463,17 @@ export function useOffSiteDashboard() {
   const selectedSentimentRowsCount = selectedSentimentRowKeys.filter((rowKey) =>
     sentimentEvaluationRequestMap.has(rowKey),
   ).length;
+  const selectedVisibleSentimentRowKeys = pagedOpportunityRows.flatMap((row) =>
+    row.sentimentItems
+      .filter(
+        (item) =>
+          item.canEvaluate &&
+          item.rowKey &&
+          selectedSentimentRowKeys.includes(item.rowKey),
+      )
+      .map((item) => item.rowKey as string),
+  );
+  const selectedVisibleSentimentRowsCount = selectedVisibleSentimentRowKeys.length;
 
   const exportRows = useCallback(() => {
     downloadRowsAsCsv(exportableRows);
@@ -575,6 +586,8 @@ export function useOffSiteDashboard() {
     hasExportRows: exportableRows.length > 0,
     selectedSentimentRowKeys,
     selectedSentimentRowsCount,
+    selectedVisibleSentimentRowKeys,
+    selectedVisibleSentimentRowsCount,
     pagedOpportunityRows,
     filteredRows,
     filteredOpportunityRows,

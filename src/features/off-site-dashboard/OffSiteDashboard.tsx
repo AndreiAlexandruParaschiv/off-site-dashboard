@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
-import { getConfidenceBand } from './evaluation';
+import { getConfidenceBand, getConfidenceLabel } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
 import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
 import type {
@@ -152,8 +152,46 @@ function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
 
-function formatConfidenceScore(value?: number) {
-  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : ' - ';
+function normalizeSentimentValue(value?: string) {
+  const normalizedValue = value?.trim().toLowerCase() ?? '';
+
+  if (normalizedValue.includes('no brand')) {
+    return 'no_brand_mentions';
+  }
+
+  if (normalizedValue.includes('unfavorable')) {
+    return 'unfavorable';
+  }
+
+  if (normalizedValue.includes('favorable')) {
+    return 'favorable';
+  }
+
+  if (normalizedValue.includes('neutral')) {
+    return 'neutral';
+  }
+
+  if (normalizedValue.includes('review')) {
+    return 'needs_review';
+  }
+
+  return 'unknown';
+}
+
+function isConfirmedSentimentEvaluation(input: {
+  extractedSentiment: string;
+  evaluatedSentiment: string;
+  sentimentConfidence: number;
+}) {
+  const extractedSentiment = normalizeSentimentValue(input.extractedSentiment);
+  const evaluatedSentiment = normalizeSentimentValue(input.evaluatedSentiment);
+
+  return (
+    evaluatedSentiment !== 'needs_review' &&
+    extractedSentiment !== 'unknown' &&
+    extractedSentiment === evaluatedSentiment &&
+    getConfidenceLabel(input.sentimentConfidence) !== 'LOW'
+  );
 }
 
 function getPresenceDetails(value: OpportunityPresenceState) {
@@ -625,7 +663,7 @@ function EvaluationTable(props: {
                           evaluationResult.sentimentConfidence,
                         )}`}
                       >
-                        Sentiment {formatConfidenceScore(evaluationResult.sentimentConfidence)}
+                        {getConfidenceLabel(evaluationResult.sentimentConfidence) || ' - '}
                       </span>
                     </div>
                   ) : (
@@ -692,6 +730,47 @@ export function OffSiteDashboard() {
       (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
     )
     .reduce((count, row) => count + row.sentimentItems.length, 0);
+  const evaluationSummary = dashboard.pagedOpportunityRows
+    .filter(
+      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
+    )
+    .flatMap((row) => row.sentimentItems)
+    .reduce(
+      (summary, item) => {
+        if (item.evaluationResult) {
+          summary.evaluated += 1;
+
+          if (
+            isConfirmedSentimentEvaluation({
+              extractedSentiment: item.sentiment,
+              evaluatedSentiment: item.evaluationResult.evaluatedSentiment,
+              sentimentConfidence: item.evaluationResult.sentimentConfidence,
+            })
+          ) {
+            summary.confirmed += 1;
+          } else {
+            summary.review += 1;
+          }
+
+          return summary;
+        }
+
+        if (item.evaluationError) {
+          summary.evaluated += 1;
+          summary.review += 1;
+          return summary;
+        }
+
+        summary.notEvaluated += 1;
+        return summary;
+      },
+      {
+        evaluated: 0,
+        confirmed: 0,
+        review: 0,
+        notEvaluated: 0,
+      },
+    );
 
   return (
     <div className="dashboard-shell">
@@ -1007,6 +1086,11 @@ export function OffSiteDashboard() {
                 Independently re-check extracted sentiment for{' '}
                 {visibleEvaluationCount} URL entr
                 {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
+              </p>
+              <p className="panel-summary">
+                {evaluationSummary.evaluated === 0
+                  ? 'No evaluation results yet on this page.'
+                  : `Confirmed: ${evaluationSummary.confirmed} · Needs review: ${evaluationSummary.review} · Not evaluated: ${evaluationSummary.notEvaluated}`}
               </p>
             </div>
 

@@ -131,19 +131,55 @@ export function normalizeSentimentEvaluationStore(
 }
 
 export function getConfidenceBand(score?: number) {
-  if (typeof score !== 'number' || !Number.isFinite(score)) {
-    return 'neutral';
-  }
+  const confidenceLevel = getConfidenceLevel(score);
 
-  if (score >= 85) {
+  if (confidenceLevel === 'high') {
     return 'success';
   }
 
-  if (score >= 60) {
+  if (confidenceLevel === 'medium') {
     return 'warning';
   }
 
-  return 'error';
+  if (confidenceLevel === 'low') {
+    return 'error';
+  }
+
+  return 'neutral';
+}
+
+export function getConfidenceLevel(score?: number) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) {
+    return 'unknown';
+  }
+
+  if (score >= 85) {
+    return 'high';
+  }
+
+  if (score >= 60) {
+    return 'medium';
+  }
+
+  return 'low';
+}
+
+export function getConfidenceLabel(score?: number) {
+  const confidenceLevel = getConfidenceLevel(score);
+
+  if (confidenceLevel === 'high') {
+    return 'HIGH';
+  }
+
+  if (confidenceLevel === 'medium') {
+    return 'MEDIUM';
+  }
+
+  if (confidenceLevel === 'low') {
+    return 'LOW';
+  }
+
+  return '';
 }
 
 export function buildSentimentEvaluationRequest(input: {

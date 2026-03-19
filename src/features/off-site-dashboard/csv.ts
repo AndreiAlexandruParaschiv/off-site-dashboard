@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { getConfidenceLabel } from './evaluation';
 import type { GroupedOpportunityRow } from './types';
 
 const SUGGESTION_CSV_HEADERS = [
@@ -188,7 +189,7 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
       item.sentiment.trim(),
       item.evaluationResult?.evaluatedSentiment ?? '',
       item.evaluationResult
-        ? String(item.evaluationResult.sentimentConfidence)
+        ? getConfidenceLabel(item.evaluationResult.sentimentConfidence)
         : '',
       [
         item.evaluationError ? `Error: ${item.evaluationError}` : '',

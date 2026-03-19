@@ -202,6 +202,11 @@ a {
   color: var(--ink-soft);
 }
 
+.panel-summary {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
 .field,
 .inline-field {
   display: grid;

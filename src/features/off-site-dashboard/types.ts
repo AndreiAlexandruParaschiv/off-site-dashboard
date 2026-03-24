@@ -53,6 +53,8 @@ export interface SentimentEvaluationResult {
   evidenceSnippet: string;
   evaluatedAt: string;
   evaluatorVersion: string;
+  evaluatorProvider?: 'bedrock' | 'azure' | 'openai';
+  evaluatorModel?: string;
   fetch: SentimentEvaluationFetchMetadata;
   targetBrand: string;
 }

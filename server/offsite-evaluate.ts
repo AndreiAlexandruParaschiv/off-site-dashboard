@@ -6,6 +6,13 @@ import type {
 } from '../src/features/off-site-dashboard/types';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
+const BEDROCK_MODEL_FALLBACKS = [
+  'us.anthropic.claude-opus-4-6-v1',
+  'us.anthropic.claude-sonnet-4-6',
+  'us.anthropic.claude-opus-4-5-20251101-v1:0',
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+] as const;
 const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
 const REQUEST_USER_AGENT =
   'Mozilla/5.0 (compatible; OffSiteDashboardEvaluator/1.0; +https://vercel.com)';
@@ -13,6 +20,9 @@ const MAX_EVIDENCE_CHARACTERS = 14000;
 const MIN_EVIDENCE_CHARACTERS = 180;
 
 type ServerEnv = {
+  AWS_BEARER_TOKEN_BEDROCK?: string;
+  AWS_REGION?: string;
+  BEDROCK_MODEL_ID?: string;
   OPENAI_API_KEY?: string;
   OPENAI_EVALUATOR_MODEL?: string;
   AZURE_OPENAI_ENDPOINT?: string;
@@ -36,6 +46,12 @@ type LlmEvaluation = {
   confidence: 'high' | 'medium' | 'low';
   rationale: string;
   evidenceSnippet: string;
+};
+
+type LlmEvaluationResponse = {
+  evaluation: LlmEvaluation;
+  provider: 'bedrock' | 'azure' | 'openai';
+  model: string;
 };
 
 function trimMultilineText(value: string) {
@@ -117,6 +133,23 @@ function normalizeAzureOpenAiBaseUrl(value?: string) {
   }
 
   return `${withoutTrailingSlash}/openai/v1/`;
+}
+
+function normalizeBedrockRegion(value?: string) {
+  return value?.trim() || '';
+}
+
+function getBedrockModelCandidates(preferredModel?: string) {
+  const candidates = [
+    preferredModel?.trim(),
+    ...BEDROCK_MODEL_FALLBACKS,
+    DEFAULT_BEDROCK_MODEL,
+  ];
+
+  return candidates.filter(
+    (value, index): value is string =>
+      Boolean(value) && candidates.indexOf(value) === index,
+  );
 }
 
 function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | null {
@@ -716,11 +749,167 @@ function buildLlmPrompt(
   ].join('\n');
 }
 
+function buildBedrockPrompt(
+  payload: SentimentEvaluationRequest,
+  evidence: SourceEvidence,
+) {
+  return [
+    buildLlmPrompt(payload, evidence),
+    '',
+    'Return ONLY a valid JSON object. Do not add markdown, code fences, or any explanatory text.',
+    'Use this exact schema:',
+    '{',
+    '  "targetBrand": string,',
+    '  "evaluatedSentiment": "Favorable" | "Neutral" | "Unfavorable" | "No brand mentions" | "Needs Review",',
+    '  "evidenceSufficient": boolean,',
+    '  "confidence": "high" | "medium" | "low",',
+    '  "rationale": string,',
+    '  "evidenceSnippet": string',
+    '}',
+  ].join('\n');
+}
+
+function extractJsonObject(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const fencedMatch = trimmedValue.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidateValue = fencedMatch?.[1]?.trim() || trimmedValue;
+
+  try {
+    return JSON.parse(candidateValue);
+  } catch {
+    const objectStart = candidateValue.indexOf('{');
+    const objectEnd = candidateValue.lastIndexOf('}');
+
+    if (objectStart === -1 || objectEnd === -1 || objectEnd <= objectStart) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(candidateValue.slice(objectStart, objectEnd + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function parseLlmEvaluationPayload(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Failed to parse evaluator response.');
+  }
+
+  const candidate = value as Partial<LlmEvaluation>;
+
+  if (
+    typeof candidate.targetBrand !== 'string' ||
+    typeof candidate.evaluatedSentiment !== 'string' ||
+    typeof candidate.evidenceSufficient !== 'boolean' ||
+    typeof candidate.confidence !== 'string' ||
+    typeof candidate.rationale !== 'string' ||
+    typeof candidate.evidenceSnippet !== 'string'
+  ) {
+    throw new Error('Failed to parse evaluator response.');
+  }
+
+  return candidate as LlmEvaluation;
+}
+
+async function fetchBedrockEvaluation(
+  payload: SentimentEvaluationRequest,
+  evidence: SourceEvidence,
+  env: ServerEnv,
+): Promise<LlmEvaluationResponse> {
+  const apiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
+  const region = normalizeBedrockRegion(env.AWS_REGION);
+
+  if (!apiKey) {
+    throw new Error('AWS_BEARER_TOKEN_BEDROCK is missing.');
+  }
+
+  if (!region) {
+    throw new Error('AWS_REGION is missing for Bedrock evaluation.');
+  }
+
+  const modelCandidates = getBedrockModelCandidates(env.BEDROCK_MODEL_ID);
+  let lastError = '';
+
+  for (const modelId of modelCandidates) {
+    try {
+      const response = await fetch(
+        `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(
+          modelId,
+        )}/converse`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            messages: [
+              {
+                role: 'user',
+                content: [{ text: buildBedrockPrompt(payload, evidence) }],
+              },
+            ],
+            inferenceConfig: {
+              maxTokens: 700,
+              temperature: 0.1,
+            },
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Bedrock request failed with ${response.status}`);
+      }
+
+      const parsedPayload = (await response.json()) as {
+        output?: {
+          message?: {
+            content?: Array<{ text?: string }>;
+          };
+        };
+      };
+      const outputText =
+        parsedPayload.output?.message?.content
+          ?.map((entry) => entry.text)
+          .find((text): text is string => Boolean(text?.trim())) ?? '';
+
+      return {
+        evaluation: parseLlmEvaluationPayload(extractJsonObject(outputText)),
+        provider: 'bedrock',
+        model: modelId,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Unexpected Bedrock error.';
+    }
+  }
+
+  throw new Error(lastError || 'Bedrock request failed.');
+}
+
 async function fetchLlmEvaluation(
   payload: SentimentEvaluationRequest,
   evidence: SourceEvidence,
   env: ServerEnv,
-) {
+): Promise<LlmEvaluationResponse> {
+  const bedrockApiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
+  const bedrockRegion = normalizeBedrockRegion(env.AWS_REGION);
+
+  if (bedrockApiKey && bedrockRegion) {
+    try {
+      return await fetchBedrockEvaluation(payload, evidence, env);
+    } catch {
+      // Fall through to Azure/OpenAI when the configured Bedrock model chain fails.
+    }
+  }
+
   const azureBaseUrl = normalizeAzureOpenAiBaseUrl(env.AZURE_OPENAI_ENDPOINT);
   const azureApiKey = env.AZURE_OPENAI_KEY?.trim();
   const useAzure = Boolean(azureBaseUrl && azureApiKey);
@@ -730,7 +919,7 @@ async function fetchLlmEvaluation(
     throw new Error(
       useAzure
         ? 'AZURE_OPENAI_KEY is missing.'
-        : 'OPENAI_API_KEY or AZURE_OPENAI_KEY is missing.',
+        : 'OPENAI_API_KEY, AZURE_OPENAI_KEY, or AWS_BEARER_TOKEN_BEDROCK is missing.',
     );
   }
 
@@ -861,15 +1050,11 @@ async function fetchLlmEvaluation(
       }
     })();
 
-  if (
-    !parsedOutput ||
-    typeof parsedOutput !== 'object' ||
-    Array.isArray(parsedOutput)
-  ) {
-    throw new Error('Failed to parse evaluator response.');
-  }
-
-  return parsedOutput as LlmEvaluation;
+  return {
+    evaluation: parseLlmEvaluationPayload(parsedOutput),
+    provider: useAzure ? 'azure' : 'openai',
+    model: modelName,
+  };
 }
 
 export async function runOffsiteEvaluation(
@@ -923,7 +1108,8 @@ export async function runOffsiteEvaluation(
     };
   }
 
-  const llmResult = await fetchLlmEvaluation(payload, evidence, env);
+  const llmResponse = await fetchLlmEvaluation(payload, evidence, env);
+  const llmResult = llmResponse.evaluation;
   const sentimentConfidence = buildConfidenceScores({
     extractedSentiment: payload.extractedSentiment,
     llmResult,
@@ -938,6 +1124,8 @@ export async function runOffsiteEvaluation(
       trimMultilineText(llmResult.evidenceSnippet) || evidence.fallbackSnippet,
     evaluatedAt: new Date().toISOString(),
     evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
+    evaluatorProvider: llmResponse.provider,
+    evaluatorModel: llmResponse.model,
     fetch: {
       status: evidence.status,
       sourceType: evidence.sourceType,

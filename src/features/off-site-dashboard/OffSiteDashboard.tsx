@@ -16,6 +16,27 @@ const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
   'Cited URLs',
   'Prompt Gap',
 ]);
+const NETLIFY_PRODUCTION_HOST = 'off-site-dashboard.netlify.app';
+const NETLIFY_PRODUCTION_EVALUATION_TYPES = new Set<string>(['Cited URLs']);
+
+function getAllowedEvaluationOpportunityTypes() {
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname === NETLIFY_PRODUCTION_HOST
+  ) {
+    return NETLIFY_PRODUCTION_EVALUATION_TYPES;
+  }
+
+  return SENTIMENT_OPPORTUNITY_TYPES;
+}
+
+function filterEvaluationOpportunityRows(rows: GroupedOpportunityRow[]) {
+  const allowedTypes = getAllowedEvaluationOpportunityTypes();
+
+  return rows.filter(
+    (row) => row.opportunityType && allowedTypes.has(row.opportunityType),
+  );
+}
 
 function StatsCard(props: { label: string; value: string }) {
   return (
@@ -506,10 +527,7 @@ function EvaluationTable(props: {
   onSelectRows: (rowKeys: string[], selected: boolean) => void;
   isEvaluating: boolean;
 }) {
-  const evaluationRows = props.rows
-    .filter(
-      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
-    )
+  const evaluationRows = filterEvaluationOpportunityRows(props.rows)
     .flatMap((row) =>
       row.sentimentItems.map((item, index) => ({
         id: item.rowKey ?? `${row.id}-evaluation-${index}`,
@@ -725,15 +743,23 @@ export function OffSiteDashboard() {
       )
       .map((row) => row.site),
   ).size;
-  const visibleEvaluationCount = dashboard.pagedOpportunityRows
-    .filter(
-      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
-    )
+  const evaluationOpportunityRows = filterEvaluationOpportunityRows(
+    dashboard.pagedOpportunityRows,
+  );
+  const visibleSelectedEvaluationRowKeys = evaluationOpportunityRows.flatMap((row) =>
+    row.sentimentItems
+      .filter(
+        (item) =>
+          item.canEvaluate &&
+          item.rowKey &&
+          dashboard.selectedSentimentRowKeys.includes(item.rowKey),
+      )
+      .map((item) => item.rowKey as string),
+  );
+  const visibleSelectedEvaluationRowsCount = visibleSelectedEvaluationRowKeys.length;
+  const visibleEvaluationCount = evaluationOpportunityRows
     .reduce((count, row) => count + row.sentimentItems.length, 0);
-  const evaluationSummary = dashboard.pagedOpportunityRows
-    .filter(
-      (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
-    )
+  const evaluationSummary = evaluationOpportunityRows
     .flatMap((row) => row.sentimentItems)
     .reduce(
       (summary, item) => {
@@ -1087,6 +1113,12 @@ export function OffSiteDashboard() {
                 {visibleEvaluationCount} URL entr
                 {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
               </p>
+              {typeof window !== 'undefined' &&
+                window.location.hostname === NETLIFY_PRODUCTION_HOST && (
+                  <p className="panel-summary">
+                    This deployment evaluates Cited URLs only.
+                  </p>
+                )}
               <p className="panel-summary">
                 {evaluationSummary.evaluated === 0
                   ? 'No evaluation results yet on this page.'
@@ -1100,19 +1132,19 @@ export function OffSiteDashboard() {
                   <button
                     className="primary-button"
                     disabled={
-                      dashboard.selectedVisibleSentimentRowsCount === 0 ||
+                      visibleSelectedEvaluationRowsCount === 0 ||
                       dashboard.isEvaluatingSentiment
                     }
                     onClick={() =>
                       void dashboard.evaluateSentimentRows(
-                        dashboard.selectedVisibleSentimentRowKeys,
+                        visibleSelectedEvaluationRowKeys,
                       )
                     }
                     type="button"
                   >
                     {dashboard.isEvaluatingSentiment
                       ? 'Evaluating...'
-                      : `Evaluate Selected Rows (${dashboard.selectedVisibleSentimentRowsCount})`}
+                      : `Evaluate Selected Rows (${visibleSelectedEvaluationRowsCount})`}
                   </button>
                 </div>
               )}
@@ -1126,7 +1158,7 @@ export function OffSiteDashboard() {
 
           {isEvaluationExpanded && (
             <EvaluationTable
-              rows={dashboard.pagedOpportunityRows}
+              rows={evaluationOpportunityRows}
               selectedRowKeys={dashboard.selectedSentimentRowKeys}
               onToggleRowSelection={dashboard.toggleSentimentRowSelection}
               onSelectRows={dashboard.setSentimentRowSelections}

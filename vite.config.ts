@@ -42,6 +42,9 @@ function evaluationDevMiddleware(env: Record<string, string>) {
             const rawBody = Buffer.concat(chunks).toString('utf-8');
             const payload = rawBody ? JSON.parse(rawBody) : {};
             const result = await runOffsiteEvaluation(payload, {
+              AWS_BEARER_TOKEN_BEDROCK: env.AWS_BEARER_TOKEN_BEDROCK,
+              AWS_REGION: env.AWS_REGION,
+              BEDROCK_MODEL_ID: env.BEDROCK_MODEL_ID,
               OPENAI_API_KEY: env.OPENAI_API_KEY,
               OPENAI_EVALUATOR_MODEL: env.OPENAI_EVALUATOR_MODEL,
               AZURE_OPENAI_ENDPOINT: env.AZURE_OPENAI_ENDPOINT,

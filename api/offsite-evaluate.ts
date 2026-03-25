@@ -1,4 +1,4 @@
-import { handleOffsiteEvaluateRequest } from '../server/offsite-evaluate';
+import { handleOffsiteEvaluateRequest } from '../server/offsite-evaluate.js';
 
 const runtimeEnv =
   (

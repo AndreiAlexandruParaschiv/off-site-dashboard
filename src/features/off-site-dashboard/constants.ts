@@ -1,4 +1,4 @@
-import type { CanonicalOpportunityType, DashboardConfig } from './types';
+import type { CanonicalOpportunityType, DashboardConfig } from './types.js';
 
 export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
   'Reddit',

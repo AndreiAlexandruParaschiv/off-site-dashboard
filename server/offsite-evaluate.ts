@@ -22,7 +22,9 @@ const MIN_EVIDENCE_CHARACTERS = 180;
 type ServerEnv = {
   AWS_BEARER_TOKEN_BEDROCK?: string;
   AWS_REGION?: string;
+  BEDROCK_REGION?: string;
   BEDROCK_MODEL_ID?: string;
+  BEDROCK_MODEL?: string;
   OPENAI_API_KEY?: string;
   OPENAI_EVALUATOR_MODEL?: string;
   AZURE_OPENAI_ENDPOINT?: string;
@@ -137,6 +139,14 @@ function normalizeAzureOpenAiBaseUrl(value?: string) {
 
 function normalizeBedrockRegion(value?: string) {
   return value?.trim() || '';
+}
+
+function getBedrockRegion(env: ServerEnv) {
+  return normalizeBedrockRegion(env.AWS_REGION ?? env.BEDROCK_REGION);
+}
+
+function getPreferredBedrockModel(env: ServerEnv) {
+  return env.BEDROCK_MODEL_ID ?? env.BEDROCK_MODEL;
 }
 
 function getBedrockModelCandidates(preferredModel?: string) {
@@ -824,17 +834,17 @@ async function fetchBedrockEvaluation(
   env: ServerEnv,
 ): Promise<LlmEvaluationResponse> {
   const apiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
-  const region = normalizeBedrockRegion(env.AWS_REGION);
+  const region = getBedrockRegion(env);
 
   if (!apiKey) {
     throw new Error('AWS_BEARER_TOKEN_BEDROCK is missing.');
   }
 
   if (!region) {
-    throw new Error('AWS_REGION is missing for Bedrock evaluation.');
+    throw new Error('AWS_REGION or BEDROCK_REGION is missing for Bedrock evaluation.');
   }
 
-  const modelCandidates = getBedrockModelCandidates(env.BEDROCK_MODEL_ID);
+  const modelCandidates = getBedrockModelCandidates(getPreferredBedrockModel(env));
   let lastError = '';
 
   for (const modelId of modelCandidates) {
@@ -900,7 +910,7 @@ async function fetchLlmEvaluation(
   env: ServerEnv,
 ): Promise<LlmEvaluationResponse> {
   const bedrockApiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
-  const bedrockRegion = normalizeBedrockRegion(env.AWS_REGION);
+  const bedrockRegion = getBedrockRegion(env);
 
   if (bedrockApiKey && bedrockRegion) {
     try {

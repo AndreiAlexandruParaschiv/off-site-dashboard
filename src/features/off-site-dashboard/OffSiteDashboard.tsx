@@ -16,15 +16,26 @@ const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
   'Cited URLs',
   'Prompt Gap',
 ]);
-const NETLIFY_PRODUCTION_HOST = 'off-site-dashboard.netlify.app';
-const NETLIFY_PRODUCTION_EVALUATION_TYPES = new Set<string>(['Cited URLs']);
+const HOSTED_EVALUATION_TYPES = new Set<string>(['Cited URLs']);
+
+function isLocalDevelopmentHost() {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  const hostname = window.location.hostname;
+
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '[::1]'
+  );
+}
 
 function getAllowedEvaluationOpportunityTypes() {
-  if (
-    typeof window !== 'undefined' &&
-    window.location.hostname === NETLIFY_PRODUCTION_HOST
-  ) {
-    return NETLIFY_PRODUCTION_EVALUATION_TYPES;
+  if (!isLocalDevelopmentHost()) {
+    return HOSTED_EVALUATION_TYPES;
   }
 
   return SENTIMENT_OPPORTUNITY_TYPES;
@@ -1113,12 +1124,11 @@ export function OffSiteDashboard() {
                 {visibleEvaluationCount} URL entr
                 {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
               </p>
-              {typeof window !== 'undefined' &&
-                window.location.hostname === NETLIFY_PRODUCTION_HOST && (
-                  <p className="panel-summary">
-                    This deployment evaluates Cited URLs only.
-                  </p>
-                )}
+              {!isLocalDevelopmentHost() && (
+                <p className="panel-summary">
+                  Hosted deployments evaluate Cited URLs only.
+                </p>
+              )}
               <p className="panel-summary">
                 {evaluationSummary.evaluated === 0
                   ? 'No evaluation results yet on this page.'

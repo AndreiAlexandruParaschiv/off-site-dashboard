@@ -4,8 +4,10 @@ import { getConfidenceBand, getConfidenceLabel } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
 import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
 import type {
+  GroupedSuggestionItem,
   GroupedOpportunityRow,
   OpportunityPresenceState,
+  SentimentItemRecord,
   SiteDashboardResult,
   SiteOpportunityPresence,
 } from './types';
@@ -48,6 +50,24 @@ function filterEvaluationOpportunityRows(rows: GroupedOpportunityRow[]) {
     (row) => row.opportunityType && allowedTypes.has(row.opportunityType),
   );
 }
+
+type EvaluationRowEntry = {
+  id: string;
+  site: string;
+  siteId?: string;
+  opportunityType: string;
+  opportunityId: string;
+  item: SentimentItemRecord;
+};
+
+type SuggestionEvaluationRowEntry = {
+  id: string;
+  site: string;
+  siteId?: string;
+  opportunityType: string;
+  opportunityId: string;
+  suggestion: GroupedSuggestionItem;
+};
 
 function StatsCard(props: { label: string; value: string }) {
   return (
@@ -180,6 +200,10 @@ function getSentimentTone(value?: string) {
   return 'neutral';
 }
 
+function getSentimentLabel(value?: string) {
+  return (value ?? '').replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '').trim();
+}
+
 function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
@@ -223,6 +247,109 @@ function isConfirmedSentimentEvaluation(input: {
     extractedSentiment !== 'unknown' &&
     extractedSentiment === evaluatedSentiment &&
     getConfidenceLabel(input.sentimentConfidence) !== 'LOW'
+  );
+}
+
+function normalizeSovValue(value?: string) {
+  const normalizedValue = value?.trim().toLowerCase() ?? '';
+
+  if (normalizedValue.includes('review')) {
+    return 'needs_review';
+  }
+
+  if (normalizedValue.includes('no brand')) {
+    return 'no_brand_mentions';
+  }
+
+  if (normalizedValue.includes('%')) {
+    return 'percentage';
+  }
+
+  return 'unknown';
+}
+
+function isConfirmedSovEvaluation(input: {
+  evaluatedSov: string;
+  sovConfidence: number;
+}) {
+  return (
+    normalizeSovValue(input.evaluatedSov) !== 'needs_review' &&
+    getConfidenceLabel(input.sovConfidence) !== 'LOW'
+  );
+}
+
+function normalizeSuggestionVerdict(value?: string) {
+  const normalizedValue = value?.trim().toLowerCase() ?? '';
+
+  if (normalizedValue.includes('incorrect')) {
+    return 'incorrect';
+  }
+
+  if (normalizedValue.includes('correct')) {
+    return 'correct';
+  }
+
+  if (normalizedValue.includes('review')) {
+    return 'needs_review';
+  }
+
+  return 'unknown';
+}
+
+function getSuggestionVerdictTone(value?: string) {
+  const normalizedValue = normalizeSuggestionVerdict(value);
+
+  if (normalizedValue === 'correct') {
+    return 'success';
+  }
+
+  if (normalizedValue === 'incorrect') {
+    return 'error';
+  }
+
+  if (normalizedValue === 'needs_review') {
+    return 'warning';
+  }
+
+  return 'neutral';
+}
+
+function isConfirmedSuggestionEvaluation(input: {
+  verdict: string;
+  confidence: number;
+}) {
+  return (
+    normalizeSuggestionVerdict(input.verdict) === 'correct' &&
+    getConfidenceLabel(input.confidence) !== 'LOW'
+  );
+}
+
+function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[] {
+  return filterEvaluationOpportunityRows(rows)
+    .flatMap((row) =>
+      row.sentimentItems.map((item, index) => ({
+        id: item.rowKey ?? `${row.id}-evaluation-${index}`,
+        site: row.site,
+        siteId: row.siteId,
+        opportunityType: row.opportunityType ?? ' - ',
+        opportunityId: row.opportunityId ?? ' - ',
+        item,
+      })),
+    );
+}
+
+function buildSuggestionEvaluationRows(
+  rows: GroupedOpportunityRow[],
+): SuggestionEvaluationRowEntry[] {
+  return rows.flatMap((row) =>
+    row.suggestions.map((suggestion, index) => ({
+      id: suggestion.rowKey ?? `${row.id}-suggestion-evaluation-${index}`,
+      site: row.site,
+      siteId: row.siteId,
+      opportunityType: row.opportunityType ?? ' - ',
+      opportunityId: row.opportunityId ?? ' - ',
+      suggestion,
+    })),
   );
 }
 
@@ -509,21 +636,231 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     </span>
                   </td>
                   <td>
-                    <span
-                      className={`sentiment-pill sentiment-pill-${getSentimentTone(
-                        item.sentiment,
-                      )}`}
-                      title={item.sentiment}
-                    >
-                      <span className="sentiment-dot" aria-hidden="true" />
-                      <span className="sentiment-copy">
-                        {trimSuggestionText(item.sentiment) || ' - '}
-                      </span>
-                    </span>
+                    {(() => {
+                      const sentimentLabel = getSentimentLabel(item.sentiment);
+
+                      return (
+                        <span
+                          className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                            item.sentiment,
+                          )}`}
+                          title={sentimentLabel || item.sentiment}
+                        >
+                          <span className="sentiment-dot" aria-hidden="true" />
+                          <span className="sentiment-copy">
+                            {trimSuggestionText(sentimentLabel) || ' - '}
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </td>
                 </tr>
               );
             });
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SuggestionEvaluationTable(props: {
+  rows: GroupedOpportunityRow[];
+  selectedRowKeys: string[];
+  onToggleRowSelection: (rowKey: string) => void;
+  onSelectRows: (rowKeys: string[], selected: boolean) => void;
+  onEvaluateRow: (rowKey: string) => void;
+  isEvaluating: boolean;
+}) {
+  const evaluationRows = buildSuggestionEvaluationRows(props.rows);
+  const visibleEvaluableRowKeys = evaluationRows
+    .filter((row) => row.suggestion.canEvaluate && row.suggestion.rowKey)
+    .map((row) => row.suggestion.rowKey as string);
+  const selectedVisibleRowCount = visibleEvaluableRowKeys.filter((rowKey) =>
+    props.selectedRowKeys.includes(rowKey),
+  ).length;
+  const areAllVisibleRowsSelected =
+    visibleEvaluableRowKeys.length > 0 &&
+    selectedVisibleRowCount === visibleEvaluableRowKeys.length;
+
+  if (evaluationRows.length === 0) {
+    return (
+      <div className="table-empty-state">
+        <h3>No suggestion rows match the current filters</h3>
+        <p>Refresh the filtered sites to load suggestion rows that can be checked.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-wrapper">
+      <table className="dashboard-table evaluation-table suggestion-evaluation-table">
+        <colgroup>
+          <col className="evaluation-col-select" />
+          <col className="suggestion-evaluation-col-site" />
+          <col className="suggestion-evaluation-col-type" />
+          <col className="suggestion-evaluation-col-suggestion" />
+          <col className="suggestion-evaluation-col-confidence" />
+          <col className="suggestion-evaluation-col-verdict" />
+          <col className="suggestion-evaluation-col-rationale" />
+          <col className="suggestion-evaluation-col-correction" />
+          <col className="evaluation-col-evaluated-at" />
+          <col className="evaluation-col-action" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>
+              <label className="table-checkbox" aria-label="Select all visible rows">
+                <input
+                  type="checkbox"
+                  checked={areAllVisibleRowsSelected}
+                  disabled={visibleEvaluableRowKeys.length === 0}
+                  onChange={(event) =>
+                    props.onSelectRows(visibleEvaluableRowKeys, event.target.checked)
+                  }
+                />
+              </label>
+            </th>
+            <th>Site</th>
+            <th>Opportunity Type</th>
+            <th>Suggestion</th>
+            <th>Confidence</th>
+            <th>Verdict</th>
+            <th>Rationale / Evidence</th>
+            <th>Corrected Suggestion</th>
+            <th>Evaluated At</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {evaluationRows.map((row) => {
+            const isSelected = row.suggestion.rowKey
+              ? props.selectedRowKeys.includes(row.suggestion.rowKey)
+              : false;
+            const isRunning = row.suggestion.evaluationStatus === 'running';
+            const isActionDisabled =
+              !row.suggestion.canEvaluate ||
+              !row.suggestion.rowKey ||
+              props.isEvaluating ||
+              isRunning;
+            const evaluationResult = row.suggestion.evaluationResult;
+            const suggestionText = trimSuggestionText(row.suggestion.suggestionText);
+            const verdictOutput = evaluationResult ? evaluationResult.verdict : 'Not evaluated';
+            const rationaleOutput = row.suggestion.evaluationError
+              ? `Error: ${row.suggestion.evaluationError}`
+              : evaluationResult
+                ? [
+                    evaluationResult.rationale,
+                    evaluationResult.evidenceSnippet
+                      ? `Evidence: ${evaluationResult.evidenceSnippet}`
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n')
+                : 'Run evaluation to check whether this suggestion is grounded in the evidence.';
+            const correctedSuggestion =
+              row.suggestion.evaluationError || !evaluationResult
+                ? ' - '
+                : evaluationResult.correctedSuggestion || 'No change needed';
+
+            return (
+              <tr key={row.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={!row.suggestion.canEvaluate || isRunning}
+                    onChange={() =>
+                      row.suggestion.rowKey
+                        ? props.onToggleRowSelection(row.suggestion.rowKey)
+                        : undefined
+                    }
+                  />
+                </td>
+                <td>
+                  <div className="evaluation-site-stack">
+                    <span>{row.site}</span>
+                    <span className="evaluation-site-meta">
+                      {row.siteId ?? row.opportunityId}
+                    </span>
+                  </div>
+                </td>
+                <td>{row.opportunityType}</td>
+                <td>
+                  <div className="metric-card">
+                    {row.suggestion.suggestionId && (
+                      <span className="suggestion-meta-id">
+                        {row.suggestion.suggestionId}
+                      </span>
+                    )}
+                    <span className="suggestion-copy">{suggestionText || ' - '}</span>
+                    {row.suggestion.suggestionUrl && (
+                      <a
+                        className="suggestion-link"
+                        href={row.suggestion.suggestionUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open link
+                      </a>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  {evaluationResult ? (
+                    <span
+                      className={`confidence-pill confidence-pill-${getConfidenceBand(
+                        evaluationResult.confidence,
+                      )}`}
+                    >
+                      {getConfidenceLabel(evaluationResult.confidence) || ' - '}
+                    </span>
+                  ) : (
+                    <span className="metric-copy metric-card">
+                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span
+                    className={`status-pill status-pill-${getSuggestionVerdictTone(
+                      verdictOutput,
+                    )}`}
+                  >
+                    {verdictOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={rationaleOutput}>
+                    {rationaleOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={correctedSuggestion}>
+                    {correctedSuggestion}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card">
+                    {formatTimestamp(evaluationResult?.evaluatedAt)}
+                  </span>
+                </td>
+                <td>
+                  <button
+                    className="ghost-button"
+                    disabled={isActionDisabled}
+                    onClick={() =>
+                      row.suggestion.rowKey
+                        ? props.onEvaluateRow(row.suggestion.rowKey)
+                        : undefined
+                    }
+                    type="button"
+                  >
+                    {isRunning ? 'Evaluating...' : 'Evaluate'}
+                  </button>
+                </td>
+              </tr>
+            );
           })}
         </tbody>
       </table>
@@ -536,19 +873,10 @@ function EvaluationTable(props: {
   selectedRowKeys: string[];
   onToggleRowSelection: (rowKey: string) => void;
   onSelectRows: (rowKeys: string[], selected: boolean) => void;
+  onEvaluateRow: (rowKey: string) => void;
   isEvaluating: boolean;
 }) {
-  const evaluationRows = filterEvaluationOpportunityRows(props.rows)
-    .flatMap((row) =>
-      row.sentimentItems.map((item, index) => ({
-        id: item.rowKey ?? `${row.id}-evaluation-${index}`,
-        site: row.site,
-        siteId: row.siteId,
-        opportunityType: row.opportunityType ?? ' - ',
-        opportunityId: row.opportunityId ?? ' - ',
-        item,
-      })),
-    );
+  const evaluationRows = buildEvaluationRows(props.rows);
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.item.canEvaluate && row.item.rowKey)
     .map((row) => row.item.rowKey as string);
@@ -581,6 +909,7 @@ function EvaluationTable(props: {
           <col className="evaluation-col-evaluated" />
           <col className="evaluation-col-rationale" />
           <col className="evaluation-col-evaluated-at" />
+          <col className="evaluation-col-action" />
         </colgroup>
         <thead>
           <tr>
@@ -604,6 +933,7 @@ function EvaluationTable(props: {
             <th>Evaluator Sentiment</th>
             <th>Rationale / Evidence</th>
             <th>Evaluated At</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -614,6 +944,8 @@ function EvaluationTable(props: {
               ? props.selectedRowKeys.includes(row.item.rowKey)
               : false;
             const isRunning = row.item.evaluationStatus === 'running';
+            const isActionDisabled =
+              !row.item.canEvaluate || !row.item.rowKey || props.isEvaluating || isRunning;
             const evaluationResult = row.item.evaluationResult;
             const evaluationOutput = evaluationResult
               ? evaluationResult.evaluatedSentiment
@@ -672,17 +1004,23 @@ function EvaluationTable(props: {
                   )}
                 </td>
                 <td>
-                  <span
-                    className={`sentiment-pill sentiment-pill-${getSentimentTone(
-                      row.item.sentiment,
-                    )}`}
-                    title={row.item.sentiment}
-                  >
-                    <span className="sentiment-dot" aria-hidden="true" />
-                    <span className="sentiment-copy">
-                      {trimSuggestionText(row.item.sentiment) || ' - '}
-                    </span>
-                  </span>
+                  {(() => {
+                    const sentimentLabel = getSentimentLabel(row.item.sentiment);
+
+                    return (
+                      <span
+                        className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                          row.item.sentiment,
+                        )}`}
+                        title={sentimentLabel || row.item.sentiment}
+                      >
+                        <span className="sentiment-dot" aria-hidden="true" />
+                        <span className="sentiment-copy">
+                          {trimSuggestionText(sentimentLabel) || ' - '}
+                        </span>
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td>
                   {evaluationResult ? (
@@ -716,6 +1054,211 @@ function EvaluationTable(props: {
                     {formatTimestamp(evaluationResult?.evaluatedAt)}
                   </span>
                 </td>
+                <td>
+                  <button
+                    className="ghost-button"
+                    disabled={isActionDisabled}
+                    onClick={() =>
+                      row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
+                    }
+                    type="button"
+                  >
+                    {isRunning ? 'Evaluating...' : 'Evaluate'}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SovEvaluationTable(props: {
+  rows: GroupedOpportunityRow[];
+  selectedRowKeys: string[];
+  onToggleRowSelection: (rowKey: string) => void;
+  onSelectRows: (rowKeys: string[], selected: boolean) => void;
+  onEvaluateRow: (rowKey: string) => void;
+  isEvaluating: boolean;
+}) {
+  const evaluationRows = buildEvaluationRows(props.rows);
+  const visibleEvaluableRowKeys = evaluationRows
+    .filter((row) => row.item.canEvaluate && row.item.rowKey)
+    .map((row) => row.item.rowKey as string);
+  const selectedVisibleRowCount = visibleEvaluableRowKeys.filter((rowKey) =>
+    props.selectedRowKeys.includes(rowKey),
+  ).length;
+  const areAllVisibleRowsSelected =
+    visibleEvaluableRowKeys.length > 0 &&
+    selectedVisibleRowCount === visibleEvaluableRowKeys.length;
+
+  if (evaluationRows.length === 0) {
+    return (
+      <div className="table-empty-state">
+        <h3>No evaluable SOV rows match the current filters</h3>
+        <p>Run sentiment evaluation above to calculate share-of-voice confidence.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-wrapper">
+      <table className="dashboard-table evaluation-table">
+        <colgroup>
+          <col className="evaluation-col-select" />
+          <col className="evaluation-col-site" />
+          <col className="evaluation-col-type" />
+          <col className="evaluation-col-url" />
+          <col className="evaluation-col-sentiment" />
+          <col className="evaluation-col-confidence" />
+          <col className="evaluation-col-evaluated" />
+          <col className="evaluation-col-rationale" />
+          <col className="evaluation-col-evaluated-at" />
+          <col className="evaluation-col-action" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>
+              <label className="table-checkbox" aria-label="Select all visible rows">
+                <input
+                  type="checkbox"
+                  checked={areAllVisibleRowsSelected}
+                  disabled={visibleEvaluableRowKeys.length === 0}
+                  onChange={(event) =>
+                    props.onSelectRows(visibleEvaluableRowKeys, event.target.checked)
+                  }
+                />
+              </label>
+            </th>
+            <th>Site</th>
+            <th>Opportunity Type</th>
+            <th>URL</th>
+            <th>Extracted SOV</th>
+            <th>Confidence</th>
+            <th>Evaluator SOV</th>
+            <th>Rationale / Evidence</th>
+            <th>Evaluated At</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {evaluationRows.map((row) => {
+            const itemValue = trimSuggestionText(row.item.item);
+            const isUrl = /^https?:\/\//i.test(itemValue);
+            const isSelected = row.item.rowKey
+              ? props.selectedRowKeys.includes(row.item.rowKey)
+              : false;
+            const isRunning = row.item.evaluationStatus === 'running';
+            const isActionDisabled =
+              !row.item.canEvaluate || !row.item.rowKey || props.isEvaluating || isRunning;
+            const evaluationResult = row.item.evaluationResult;
+            const evaluationOutput = evaluationResult
+              ? evaluationResult.evaluatedSov
+              : 'Not evaluated';
+            const rationaleOutput = row.item.evaluationError
+              ? `Error: ${row.item.evaluationError}`
+              : evaluationResult
+                ? [
+                    evaluationResult.rationale,
+                    evaluationResult.evidenceSnippet
+                      ? `Evidence: ${evaluationResult.evidenceSnippet}`
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n')
+                : 'Run sentiment evaluation above to score share of voice.';
+
+            return (
+              <tr key={`${row.id}-sov`}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={!row.item.canEvaluate || isRunning}
+                    onChange={() =>
+                      row.item.rowKey
+                        ? props.onToggleRowSelection(row.item.rowKey)
+                        : undefined
+                    }
+                  />
+                </td>
+                <td>
+                  <div className="evaluation-site-stack">
+                    <span>{row.site}</span>
+                    <span className="evaluation-site-meta">
+                      {row.siteId ?? row.opportunityId}
+                    </span>
+                  </div>
+                </td>
+                <td>{row.opportunityType}</td>
+                <td>
+                  {isUrl ? (
+                    <a
+                      className="metric-link metric-card"
+                      href={itemValue}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={itemValue}
+                    >
+                      {getDisplayUrl(itemValue)}
+                    </a>
+                  ) : (
+                    <span className="metric-copy metric-card" title={itemValue}>
+                      {itemValue || ' - '}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={row.item.sov}>
+                    {trimSuggestionText(row.item.sov) || ' - '}
+                  </span>
+                </td>
+                <td>
+                  {evaluationResult ? (
+                    <div className="confidence-stack">
+                      <span
+                        className={`confidence-pill confidence-pill-${getConfidenceBand(
+                          evaluationResult.sovConfidence,
+                        )}`}
+                      >
+                        {getConfidenceLabel(evaluationResult.sovConfidence) || ' - '}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="metric-copy metric-card">
+                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={evaluationOutput}>
+                    {evaluationOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card" title={rationaleOutput}>
+                    {rationaleOutput}
+                  </span>
+                </td>
+                <td>
+                  <span className="metric-copy metric-card">
+                    {formatTimestamp(evaluationResult?.evaluatedAt)}
+                  </span>
+                </td>
+                <td>
+                  <button
+                    className="ghost-button"
+                    disabled={isActionDisabled}
+                    onClick={() =>
+                      row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
+                    }
+                    type="button"
+                  >
+                    {isRunning ? 'Evaluating...' : 'Evaluate'}
+                  </button>
+                </td>
               </tr>
             );
           })}
@@ -730,7 +1273,10 @@ export function OffSiteDashboard() {
   const dashboard = useOffSiteDashboard();
   const [isSitesExpanded, setIsSitesExpanded] = useState(false);
   const [isSentimentExpanded, setIsSentimentExpanded] = useState(true);
+  const [isSuggestionEvaluationExpanded, setIsSuggestionEvaluationExpanded] =
+    useState(false);
   const [isEvaluationExpanded, setIsEvaluationExpanded] = useState(false);
+  const [isSovEvaluationExpanded, setIsSovEvaluationExpanded] = useState(false);
   const [isSuggestionsExpanded, setIsSuggestionsExpanded] = useState(true);
   const visibleOpportunityCount = dashboard.filteredOpportunityRows.length;
   const visibleSuggestionOpportunityCount = dashboard.filteredOpportunityRows.filter(
@@ -740,6 +1286,10 @@ export function OffSiteDashboard() {
     (count, row) => count + row.suggestions.length,
     0,
   );
+  const visibleSuggestionEvaluationRows = buildSuggestionEvaluationRows(
+    dashboard.pagedOpportunityRows,
+  );
+  const visibleSuggestionEvaluationCount = visibleSuggestionEvaluationRows.length;
   const visibleSentimentOpportunityCount = dashboard.filteredOpportunityRows.filter(
     (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
   ).length;
@@ -770,6 +1320,21 @@ export function OffSiteDashboard() {
   const visibleSelectedEvaluationRowsCount = visibleSelectedEvaluationRowKeys.length;
   const visibleEvaluationCount = evaluationOpportunityRows
     .reduce((count, row) => count + row.sentimentItems.length, 0);
+  const visibleEvaluationItems = buildEvaluationRows(dashboard.pagedOpportunityRows).map(
+    (row) => row.item,
+  );
+  const visibleSelectedSovEvaluationRowKeys = buildEvaluationRows(
+    dashboard.pagedOpportunityRows,
+  )
+    .filter(
+      (row) =>
+        row.item.canEvaluate &&
+        row.item.rowKey &&
+        dashboard.selectedSentimentRowKeys.includes(row.item.rowKey),
+    )
+    .map((row) => row.item.rowKey as string);
+  const visibleSelectedSovEvaluationRowsCount =
+    visibleSelectedSovEvaluationRowKeys.length;
   const evaluationSummary = evaluationOpportunityRows
     .flatMap((row) => row.sentimentItems)
     .reduce(
@@ -808,6 +1373,83 @@ export function OffSiteDashboard() {
         notEvaluated: 0,
       },
     );
+  const sovEvaluationSummary = visibleEvaluationItems.reduce(
+    (summary, item) => {
+      if (item.evaluationResult) {
+        summary.evaluated += 1;
+
+        if (
+          isConfirmedSovEvaluation({
+            evaluatedSov: item.evaluationResult.evaluatedSov,
+            sovConfidence: item.evaluationResult.sovConfidence,
+          })
+        ) {
+          summary.confirmed += 1;
+        } else {
+          summary.review += 1;
+        }
+
+        return summary;
+      }
+
+      if (item.evaluationError) {
+        summary.evaluated += 1;
+        summary.review += 1;
+        return summary;
+      }
+
+      summary.notEvaluated += 1;
+      return summary;
+    },
+    {
+      evaluated: 0,
+      confirmed: 0,
+      review: 0,
+      notEvaluated: 0,
+    },
+  );
+  const suggestionEvaluationSummary = visibleSuggestionEvaluationRows.reduce(
+    (summary, row) => {
+      const suggestion = row.suggestion;
+
+      if (suggestion.evaluationResult) {
+        summary.evaluated += 1;
+
+        if (
+          isConfirmedSuggestionEvaluation({
+            verdict: suggestion.evaluationResult.verdict,
+            confidence: suggestion.evaluationResult.confidence,
+          })
+        ) {
+          summary.confirmed += 1;
+        } else if (
+          normalizeSuggestionVerdict(suggestion.evaluationResult.verdict) === 'incorrect'
+        ) {
+          summary.incorrect += 1;
+        } else {
+          summary.review += 1;
+        }
+
+        return summary;
+      }
+
+      if (suggestion.evaluationError) {
+        summary.evaluated += 1;
+        summary.review += 1;
+        return summary;
+      }
+
+      summary.notEvaluated += 1;
+      return summary;
+    },
+    {
+      evaluated: 0,
+      confirmed: 0,
+      incorrect: 0,
+      review: 0,
+      notEvaluated: 0,
+    },
+  );
 
   return (
     <div className="dashboard-shell">
@@ -1118,6 +1760,89 @@ export function OffSiteDashboard() {
         <section className="panel panel-table panel-table-wide">
           <div className="panel-header">
             <div>
+              <h2>Suggestions</h2>
+              <p>
+                {visibleSuggestionCount} suggestion
+                {visibleSuggestionCount === 1 ? '' : 's'} across{' '}
+                {visibleSuggestionOpportunityCount} opportunit
+                {visibleSuggestionOpportunityCount === 1 ? 'y' : 'ies'} in the
+                current filtered view.
+              </p>
+            </div>
+
+            <div className="panel-header-actions">
+              <PanelToggleButton
+                expanded={isSuggestionsExpanded}
+                onClick={() => setIsSuggestionsExpanded((value) => !value)}
+                label="Suggestions"
+              />
+            </div>
+          </div>
+
+          {isSuggestionsExpanded && <SuggestionsTable rows={dashboard.pagedOpportunityRows} />}
+        </section>
+
+        <section className="panel panel-table panel-table-wide">
+          <div className="panel-header">
+            <div>
+              <h2>Suggestion Evaluation</h2>
+              <p>
+                Validate {visibleSuggestionEvaluationCount} suggestion
+                {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the current
+                page against off-site evidence.
+              </p>
+              <p className="panel-summary">
+                {suggestionEvaluationSummary.evaluated === 0
+                  ? 'No suggestion evaluation results yet on this page.'
+                  : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
+              </p>
+            </div>
+
+            <div className="panel-header-actions">
+              {isSuggestionEvaluationExpanded && (
+                <div className="table-controls">
+                  <button
+                    className="primary-button"
+                    disabled={
+                      dashboard.selectedVisibleSuggestionRowsCount === 0 ||
+                      dashboard.isEvaluatingSuggestions
+                    }
+                    onClick={() =>
+                      void dashboard.evaluateSuggestionRows(
+                        dashboard.selectedVisibleSuggestionRowKeys,
+                      )
+                    }
+                    type="button"
+                  >
+                    {dashboard.isEvaluatingSuggestions
+                      ? 'Evaluating...'
+                      : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
+                  </button>
+                </div>
+              )}
+              <PanelToggleButton
+                expanded={isSuggestionEvaluationExpanded}
+                onClick={() => setIsSuggestionEvaluationExpanded((value) => !value)}
+                label="Suggestion evaluation"
+              />
+            </div>
+          </div>
+
+          {isSuggestionEvaluationExpanded && (
+            <SuggestionEvaluationTable
+              rows={dashboard.pagedOpportunityRows}
+              selectedRowKeys={dashboard.selectedSuggestionRowKeys}
+              onToggleRowSelection={dashboard.toggleSuggestionRowSelection}
+              onSelectRows={dashboard.setSuggestionRowSelections}
+              onEvaluateRow={(rowKey) => void dashboard.evaluateSuggestionRows([rowKey])}
+              isEvaluating={dashboard.isEvaluatingSuggestions}
+            />
+          )}
+        </section>
+
+        <section className="panel panel-table panel-table-wide">
+          <div className="panel-header">
+            <div>
               <h2>Sentiment Evaluation</h2>
               <p>
                 Independently re-check extracted sentiment for{' '}
@@ -1172,6 +1897,7 @@ export function OffSiteDashboard() {
               selectedRowKeys={dashboard.selectedSentimentRowKeys}
               onToggleRowSelection={dashboard.toggleSentimentRowSelection}
               onSelectRows={dashboard.setSentimentRowSelections}
+              onEvaluateRow={(rowKey) => void dashboard.evaluateSentimentRows([rowKey])}
               isEvaluating={dashboard.isEvaluatingSentiment}
             />
           )}
@@ -1180,26 +1906,58 @@ export function OffSiteDashboard() {
         <section className="panel panel-table panel-table-wide">
           <div className="panel-header">
             <div>
-              <h2>Suggestions</h2>
+              <h2>SOV Evaluation</h2>
               <p>
-                {visibleSuggestionCount} suggestion
-                {visibleSuggestionCount === 1 ? '' : 's'} across{' '}
-                {visibleSuggestionOpportunityCount} opportunit
-                {visibleSuggestionOpportunityCount === 1 ? 'y' : 'ies'} in the
-                current filtered view.
+                Re-check extracted share of voice for {visibleEvaluationCount} URL entr
+                {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
+              </p>
+              <p className="panel-summary">
+                {sovEvaluationSummary.evaluated === 0
+                  ? 'No SOV evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
+                  : `Confirmed: ${sovEvaluationSummary.confirmed} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
               </p>
             </div>
 
             <div className="panel-header-actions">
+              {isSovEvaluationExpanded && (
+                <div className="table-controls">
+                  <button
+                    className="primary-button"
+                    disabled={
+                      visibleSelectedSovEvaluationRowsCount === 0 ||
+                      dashboard.isEvaluatingSentiment
+                    }
+                    onClick={() =>
+                      void dashboard.evaluateSentimentRows(
+                        visibleSelectedSovEvaluationRowKeys,
+                      )
+                    }
+                    type="button"
+                  >
+                    {dashboard.isEvaluatingSentiment
+                      ? 'Evaluating...'
+                      : `Evaluate Selected Rows (${visibleSelectedSovEvaluationRowsCount})`}
+                  </button>
+                </div>
+              )}
               <PanelToggleButton
-                expanded={isSuggestionsExpanded}
-                onClick={() => setIsSuggestionsExpanded((value) => !value)}
-                label="Suggestions"
+                expanded={isSovEvaluationExpanded}
+                onClick={() => setIsSovEvaluationExpanded((value) => !value)}
+                label="SOV evaluation"
               />
             </div>
           </div>
 
-          {isSuggestionsExpanded && <SuggestionsTable rows={dashboard.pagedOpportunityRows} />}
+          {isSovEvaluationExpanded && (
+            <SovEvaluationTable
+              rows={dashboard.pagedOpportunityRows}
+              selectedRowKeys={dashboard.selectedSentimentRowKeys}
+              onToggleRowSelection={dashboard.toggleSentimentRowSelection}
+              onSelectRows={dashboard.setSentimentRowSelections}
+              onEvaluateRow={(rowKey) => void dashboard.evaluateSentimentRows([rowKey])}
+              isEvaluating={dashboard.isEvaluatingSentiment}
+            />
+          )}
         </section>
       </main>
     </div>

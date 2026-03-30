@@ -8,13 +8,15 @@ import {
   normalizeSuggestionCollection,
   normalizeSiteInput,
 } from './utils';
-import { EVALUATOR_API_PATH } from './constants';
+import { EVALUATOR_API_PATH, SUGGESTION_EVALUATOR_API_PATH } from './constants';
 import type {
   FetchSiteParams,
   FetchSiteSuccessResult,
   OpportunityRecord,
   SentimentEvaluationRequest,
   SentimentEvaluationResult,
+  SuggestionEvaluationRequest,
+  SuggestionEvaluationResult,
 } from './types';
 
 const API_HEADERS = {
@@ -350,4 +352,13 @@ export async function evaluateSentimentRow(
   payload: SentimentEvaluationRequest,
 ): Promise<SentimentEvaluationResult> {
   return requestLocalJson<SentimentEvaluationResult>(EVALUATOR_API_PATH, payload);
+}
+
+export async function evaluateSuggestionRow(
+  payload: SuggestionEvaluationRequest,
+): Promise<SuggestionEvaluationResult> {
+  return requestLocalJson<SuggestionEvaluationResult>(
+    SUGGESTION_EVALUATOR_API_PATH,
+    payload,
+  );
 }

@@ -9,11 +9,19 @@ export type SiteFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export type OpportunityPresenceState = 'missing' | 'exists' | 'exists_mixed';
 export type SentimentEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
+export type SuggestionEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
 export type SentimentEvaluationFetchStatus =
   | 'success'
   | 'partial'
   | 'insufficient_evidence'
   | 'fetch_failed';
+export type SuggestionEvaluationVerdict = 'Correct' | 'Incorrect' | 'Needs Review';
+export type YouTubeTranscriptStatus =
+  | 'available_and_used'
+  | 'available_but_not_used'
+  | 'not_available'
+  | 'not_applicable'
+  | 'unknown';
 
 export interface DashboardConfig {
   apiBaseUrl: string;
@@ -25,6 +33,11 @@ export interface SuggestionRecord {
   suggestionId: string;
   suggestionText: string;
   suggestionUrl?: string;
+  rowKey?: string;
+  canEvaluate?: boolean;
+  evaluationStatus?: SuggestionEvaluationStatus;
+  evaluationResult?: SuggestionEvaluationResult;
+  evaluationError?: string;
 }
 
 export interface SentimentItemRecord {
@@ -43,12 +56,16 @@ export interface SentimentEvaluationFetchMetadata {
   sourceType: 'youtube' | 'reddit' | 'web';
   sourceUrl: string;
   usedTranscript: boolean;
+  transcriptStatus?: YouTubeTranscriptStatus;
   evidenceCharacters: number;
 }
 
 export interface SentimentEvaluationResult {
   evaluatedSentiment: string;
   sentimentConfidence: number;
+  evaluatedSov: string;
+  sovConfidence: number;
+  evaluatedTargetBrandSharePct: number;
   rationale: string;
   evidenceSnippet: string;
   evaluatedAt: string;
@@ -59,23 +76,70 @@ export interface SentimentEvaluationResult {
   targetBrand: string;
 }
 
+export interface SuggestionEvaluationEvidenceSource {
+  status: SentimentEvaluationFetchStatus;
+  sourceType: 'youtube' | 'reddit' | 'web';
+  sourceUrl: string;
+  usedTranscript: boolean;
+  transcriptStatus?: YouTubeTranscriptStatus;
+  evidenceCharacters: number;
+}
+
+export interface SuggestionEvaluationResult {
+  verdict: SuggestionEvaluationVerdict;
+  confidence: number;
+  rationale: string;
+  evidenceSnippet: string;
+  correctedSuggestion: string;
+  evaluatedAt: string;
+  evaluatorVersion: string;
+  evaluatorProvider?: 'bedrock' | 'azure' | 'openai';
+  evaluatorModel?: string;
+  evidenceSources: SuggestionEvaluationEvidenceSource[];
+  targetBrand: string;
+}
+
 export interface SentimentEvaluationRequest {
   site: string;
   siteId?: string;
   opportunityType: CanonicalOpportunityType;
   opportunityId: string;
   item: string;
+  extractedSov: string;
   extractedSentiment: string;
+}
+
+export interface SuggestionEvaluationRequest {
+  site: string;
+  siteId?: string;
+  opportunityType: CanonicalOpportunityType;
+  opportunityId: string;
+  suggestionId?: string;
+  suggestionText: string;
+  suggestionUrl?: string;
+  evidenceItems: string[];
 }
 
 export interface SentimentEvaluationStoredResult extends SentimentEvaluationResult {
   rowKey: string;
   extractedSentiment: string;
+  extractedSov: string;
+}
+
+export interface SuggestionEvaluationStoredResult extends SuggestionEvaluationResult {
+  rowKey: string;
+  suggestionText: string;
+  suggestionUrl?: string;
 }
 
 export interface SentimentEvaluationStore {
   evaluatorVersion: string;
   results: Record<string, SentimentEvaluationStoredResult>;
+}
+
+export interface SuggestionEvaluationStore {
+  evaluatorVersion: string;
+  results: Record<string, SuggestionEvaluationStoredResult>;
 }
 
 export interface OpportunityRecord {
@@ -126,6 +190,11 @@ export interface GroupedSuggestionItem {
   suggestionId?: string;
   suggestionText?: string;
   suggestionUrl?: string;
+  rowKey?: string;
+  canEvaluate?: boolean;
+  evaluationStatus?: SuggestionEvaluationStatus;
+  evaluationResult?: SuggestionEvaluationResult;
+  evaluationError?: string;
 }
 
 export interface GroupedOpportunityRow {

@@ -1,10 +1,16 @@
 import {
   DEFAULT_CONFIG,
   SENTIMENT_EVALUATION_STORAGE_KEY,
+  SUGGESTION_EVALUATION_STORAGE_KEY,
   STORAGE_KEY,
 } from './constants';
 import { normalizeSentimentEvaluationStore } from './evaluation';
-import type { DashboardConfig, SentimentEvaluationStore } from './types';
+import { normalizeSuggestionEvaluationStore } from './suggestionEvaluation';
+import type {
+  DashboardConfig,
+  SentimentEvaluationStore,
+  SuggestionEvaluationStore,
+} from './types';
 
 function hasWindow() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -81,6 +87,36 @@ export function saveSentimentEvaluationStore(store: SentimentEvaluationStore) {
 
   window.localStorage.setItem(
     SENTIMENT_EVALUATION_STORAGE_KEY,
+    JSON.stringify(store),
+  );
+}
+
+export function loadSuggestionEvaluationStore(): SuggestionEvaluationStore {
+  if (!hasWindow()) {
+    return normalizeSuggestionEvaluationStore(null);
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(SUGGESTION_EVALUATION_STORAGE_KEY);
+
+    if (!rawValue) {
+      return normalizeSuggestionEvaluationStore(null);
+    }
+
+    return normalizeSuggestionEvaluationStore(JSON.parse(rawValue));
+  } catch (error) {
+    console.warn('Failed to read saved suggestion evaluations.', error);
+    return normalizeSuggestionEvaluationStore(null);
+  }
+}
+
+export function saveSuggestionEvaluationStore(store: SuggestionEvaluationStore) {
+  if (!hasWindow()) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    SUGGESTION_EVALUATION_STORAGE_KEY,
     JSON.stringify(store),
   );
 }

@@ -571,6 +571,38 @@ a {
   width: 160px;
 }
 
+.evaluation-col-action {
+  width: 120px;
+}
+
+.suggestion-evaluation-col-site {
+  width: 180px;
+}
+
+.suggestion-evaluation-col-type {
+  width: 140px;
+}
+
+.suggestion-evaluation-col-suggestion {
+  width: 320px;
+}
+
+.suggestion-evaluation-col-confidence {
+  width: 150px;
+}
+
+.suggestion-evaluation-col-verdict {
+  width: 160px;
+}
+
+.suggestion-evaluation-col-rationale {
+  width: 280px;
+}
+
+.suggestion-evaluation-col-correction {
+  width: 260px;
+}
+
 .suggestions-col-site {
   width: 12%;
 }

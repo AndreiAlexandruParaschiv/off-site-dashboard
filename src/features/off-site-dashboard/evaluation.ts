@@ -69,6 +69,7 @@ export function createStoredSentimentEvaluation(
   return {
     rowKey,
     extractedSentiment: request.extractedSentiment,
+    extractedSov: request.extractedSov,
     ...result,
   };
 }
@@ -107,8 +108,12 @@ export function normalizeSentimentEvaluationStore(
           if (
             typeof candidate.rowKey !== 'string' ||
             typeof candidate.extractedSentiment !== 'string' ||
+            typeof candidate.extractedSov !== 'string' ||
             typeof candidate.evaluatedSentiment !== 'string' ||
             typeof candidate.sentimentConfidence !== 'number' ||
+            typeof candidate.evaluatedSov !== 'string' ||
+            typeof candidate.sovConfidence !== 'number' ||
+            typeof candidate.evaluatedTargetBrandSharePct !== 'number' ||
             typeof candidate.rationale !== 'string' ||
             typeof candidate.evidenceSnippet !== 'string' ||
             typeof candidate.evaluatedAt !== 'string' ||
@@ -188,6 +193,7 @@ export function buildSentimentEvaluationRequest(input: {
   opportunityType?: CanonicalOpportunityType;
   opportunityId?: string;
   item: string;
+  extractedSov: string;
   extractedSentiment: string;
 }): SentimentEvaluationRequest | null {
   const opportunityId = input.opportunityId?.trim();
@@ -207,6 +213,7 @@ export function buildSentimentEvaluationRequest(input: {
     opportunityType: input.opportunityType,
     opportunityId,
     item: input.item,
+    extractedSov: input.extractedSov,
     extractedSentiment: input.extractedSentiment,
   };
 }

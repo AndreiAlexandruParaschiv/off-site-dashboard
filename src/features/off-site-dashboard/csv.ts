@@ -36,6 +36,8 @@ const SENTIMENT_CSV_HEADERS = [
   'Url',
   'SOV',
   'Sentiment',
+  'Evaluated SOV',
+  'SOV Confidence',
   'Evaluated Sentiment',
   'Sentiment Confidence',
   'Evaluation Notes',
@@ -55,6 +57,8 @@ const SENTIMENT_EXCEL_HEADERS = [
   'Url',
   'SOV',
   'Sentiment',
+  'Evaluated SOV',
+  'SOV Confidence',
   'Evaluated Sentiment',
   'Sentiment Confidence',
   'Evaluation Notes',
@@ -187,6 +191,10 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
       item.item.trim(),
       item.sov.trim(),
       item.sentiment.trim(),
+      item.evaluationResult?.evaluatedSov ?? '',
+      item.evaluationResult
+        ? getConfidenceLabel(item.evaluationResult.sovConfidence)
+        : '',
       item.evaluationResult?.evaluatedSentiment ?? '',
       item.evaluationResult
         ? getConfidenceLabel(item.evaluationResult.sentimentConfidence)
@@ -194,6 +202,9 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
       [
         item.evaluationError ? `Error: ${item.evaluationError}` : '',
         item.evaluationResult?.rationale ?? '',
+        item.evaluationResult?.fetch.transcriptStatus
+          ? `Transcript status: ${item.evaluationResult.fetch.transcriptStatus}`
+          : '',
         item.evaluationResult?.evidenceSnippet
           ? `Evidence: ${item.evaluationResult.evidenceSnippet}`
           : '',

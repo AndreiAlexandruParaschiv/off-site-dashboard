@@ -1,9 +1,9 @@
-import { SENTIMENT_EVALUATOR_VERSION } from '../src/features/off-site-dashboard/constants.js';
+import { SUGGESTION_EVALUATOR_VERSION } from '../src/features/off-site-dashboard/constants';
 import type {
-  CanonicalOpportunityType,
-  SentimentEvaluationRequest,
-  SentimentEvaluationResult,
-} from '../src/features/off-site-dashboard/types.js';
+  SuggestionEvaluationRequest,
+  SuggestionEvaluationResult,
+  SuggestionEvaluationVerdict,
+} from '../src/features/off-site-dashboard/types';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
@@ -15,7 +15,7 @@ const BEDROCK_MODEL_FALLBACKS = [
 ] as const;
 const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
 const REQUEST_USER_AGENT =
-  'Mozilla/5.0 (compatible; OffSiteDashboardEvaluator/1.0; +https://vercel.com)';
+  'Mozilla/5.0 (compatible; OffSiteDashboardSuggestionEvaluator/1.0; +https://vercel.com)';
 const MAX_EVIDENCE_CHARACTERS = 14000;
 const MIN_EVIDENCE_CHARACTERS = 180;
 
@@ -47,22 +47,25 @@ type SourceEvidence = {
   fallbackSnippet: string;
 };
 
-type LlmEvaluation = {
+type SuggestionEvidenceBundle = {
+  sources: SourceEvidence[];
+  status: SourceEvidence['status'];
+  combinedEvidenceText: string;
+  fallbackSnippet: string;
+};
+
+type LlmSuggestionEvaluation = {
   targetBrand: string;
-  targetBrandMentionCount: number;
-  evaluatedSentiment: string;
-  brandMentions: Array<{
-    brand: string;
-    mentionCount: number;
-  }>;
+  verdict: SuggestionEvaluationVerdict;
   evidenceSufficient: boolean;
   confidence: 'high' | 'medium' | 'low';
   rationale: string;
   evidenceSnippet: string;
+  correctedSuggestion: string;
 };
 
-type LlmEvaluationResponse = {
-  evaluation: LlmEvaluation;
+type LlmSuggestionEvaluationResponse = {
+  evaluation: LlmSuggestionEvaluation;
   provider: 'bedrock' | 'azure' | 'openai';
   model: string;
 };
@@ -74,20 +77,6 @@ function trimMultilineText(value: string) {
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .join('\n');
-}
-
-function stripHtmlTags(value: string) {
-  return trimMultilineText(
-    decodeHtmlEntities(
-      value
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-        .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
-        .replace(/<\/(p|div|li|section|article|header|footer|main|h1|h2|h3|h4|h5|h6|br)>/gi, '\n')
-        .replace(/<[^>]+>/g, ' '),
-    ),
-  );
 }
 
 function decodeHtmlEntities(value: string) {
@@ -121,6 +110,20 @@ function decodeHtmlEntities(value: string) {
 
       return match;
     },
+  );
+}
+
+function stripHtmlTags(value: string) {
+  return trimMultilineText(
+    decodeHtmlEntities(
+      value
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+        .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+        .replace(/<\/(p|div|li|section|article|header|footer|main|h1|h2|h3|h4|h5|h6|br)>/gi, '\n')
+        .replace(/<[^>]+>/g, ' '),
+    ),
   );
 }
 
@@ -173,20 +176,19 @@ function getBedrockModelCandidates(preferredModel?: string) {
   );
 }
 
-function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | null {
+function normalizeRequestPayload(value: unknown): SuggestionEvaluationRequest | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
 
-  const candidate = value as Partial<SentimentEvaluationRequest>;
+  const candidate = value as Partial<SuggestionEvaluationRequest>;
 
   if (
     typeof candidate.site !== 'string' ||
     typeof candidate.opportunityType !== 'string' ||
     typeof candidate.opportunityId !== 'string' ||
-    typeof candidate.item !== 'string' ||
-    typeof candidate.extractedSov !== 'string' ||
-    typeof candidate.extractedSentiment !== 'string'
+    typeof candidate.suggestionText !== 'string' ||
+    !Array.isArray(candidate.evidenceItems)
   ) {
     return null;
   }
@@ -194,21 +196,17 @@ function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | n
   return {
     site: candidate.site,
     siteId: typeof candidate.siteId === 'string' ? candidate.siteId : undefined,
-    opportunityType: candidate.opportunityType as CanonicalOpportunityType,
+    opportunityType: candidate.opportunityType,
     opportunityId: candidate.opportunityId,
-    item: candidate.item,
-    extractedSov: candidate.extractedSov,
-    extractedSentiment: candidate.extractedSentiment,
+    suggestionId:
+      typeof candidate.suggestionId === 'string' ? candidate.suggestionId : undefined,
+    suggestionText: candidate.suggestionText,
+    suggestionUrl:
+      typeof candidate.suggestionUrl === 'string' ? candidate.suggestionUrl : undefined,
+    evidenceItems: candidate.evidenceItems.filter(
+      (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0,
+    ),
   };
-}
-
-function buildJsonResponse(payload: unknown, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-    },
-  });
 }
 
 async function fetchText(url: string) {
@@ -323,412 +321,159 @@ function parseYouTubeTranscriptPayload(payload: string) {
   return trimMultilineText(transcriptChunks.join(' '));
 }
 
-function normalizeComparableText(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+function normalizeAbsoluteUrl(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  return `https://${trimmedValue.replace(/^\/+/, '')}`;
+}
+
+function normalizeWikipediaTitle(value: string) {
+  return decodeURIComponent(value)
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
-function parsePercentageValue(value: string) {
-  const match = value.match(/(\d+(?:\.\d+)?)\s*%/);
+function buildWikipediaSearchTerms(site: string) {
+  try {
+    const normalizedSite = normalizeAbsoluteUrl(site);
 
-  if (!match) {
-    return null;
-  }
-
-  const parsedValue = Number.parseFloat(match[1]);
-  return Number.isFinite(parsedValue) ? parsedValue : null;
-}
-
-type BrandShare = {
-  brand: string;
-  sharePct: number;
-};
-
-function normalizeBrandKey(value: string) {
-  return normalizeComparableText(value);
-}
-
-function isIgnorableSovBrand(value: string) {
-  const normalizedValue = normalizeBrandKey(value);
-
-  return (
-    !normalizedValue ||
-    normalizedValue === 'market' ||
-    normalizedValue === 'others' ||
-    normalizedValue.startsWith('others ') ||
-    normalizedValue === 'other' ||
-    normalizedValue.startsWith('other ')
-  );
-}
-
-function addBrandShare(
-  nextShares: BrandShare[],
-  seenBrands: Set<string>,
-  brand: string,
-  sharePct: number,
-) {
-  const cleanedBrand = trimMultilineText(
-    decodeHtmlEntities(brand.replace(/\*\*/g, '')).replace(/^[•·\-\s]+/, ''),
-  );
-  const normalizedBrand = normalizeBrandKey(cleanedBrand);
-
-  if (
-    isIgnorableSovBrand(cleanedBrand) ||
-    !Number.isFinite(sharePct) ||
-    sharePct < 0 ||
-    seenBrands.has(normalizedBrand)
-  ) {
-    return;
-  }
-
-  seenBrands.add(normalizedBrand);
-  nextShares.push({
-    brand: cleanedBrand,
-    sharePct,
-  });
-}
-
-function extractSovBrandShares(extractedSov: string, targetBrand?: string) {
-  const normalizedSov = trimMultilineText(
-    decodeHtmlEntities(extractedSov).replace(/<br\s*\/?>/gi, '\n'),
-  );
-  const lines = normalizedSov
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const parsedShares: BrandShare[] = [];
-  const seenBrands = new Set<string>();
-
-  for (const line of lines) {
-    const cleanedLine = line.replace(/^[•·\-\s]+/, '').trim();
-
-    if (!cleanedLine || !cleanedLine.includes('%')) {
-      continue;
+    if (!normalizedSite) {
+      return [];
     }
 
-    const colonIndex = cleanedLine.indexOf(':');
-
-    if (colonIndex !== -1) {
-      const leftValue = cleanedLine.slice(0, colonIndex).trim();
-      const rightValue = cleanedLine.slice(colonIndex + 1).trim();
-
-      if (rightValue.includes(',') || rightValue.match(/\d+(?:\.\d+)?\s*%/g)?.length) {
-        const rightSegments = rightValue
-          .split(',')
-          .map((segment) => segment.trim())
-          .filter(Boolean);
-
-        if (rightSegments.length > 1) {
-          for (const segment of rightSegments) {
-            const sharePct = parsePercentageValue(segment);
-
-            if (sharePct === null) {
-              continue;
-            }
-
-            addBrandShare(
-              parsedShares,
-              seenBrands,
-              segment.replace(/\s*\d+(?:\.\d+)?\s*%.*$/, '').trim(),
-              sharePct,
-            );
-          }
-
-          continue;
-        }
-      }
-
-      const sharePct = parsePercentageValue(rightValue);
-
-      if (sharePct !== null) {
-        addBrandShare(parsedShares, seenBrands, leftValue, sharePct);
-        continue;
-      }
-    }
-
-    const segments = cleanedLine
-      .split(',')
-      .map((segment) => segment.trim())
+    const parsedUrl = new URL(normalizedSite);
+    const host = parsedUrl.hostname.replace(/^www\./i, '');
+    const labels = host.split('.').filter(Boolean);
+    const registrableLabel = labels.length >= 2 ? labels[labels.length - 2] : labels[0];
+    const joinedLabels = labels.slice(0, -1).join(' ');
+    const normalizedCandidates = [joinedLabels, registrableLabel, host]
+      .map((value) => value.replace(/[-_]+/g, ' ').trim())
       .filter(Boolean);
 
-    for (const segment of segments) {
-      const sharePct = parsePercentageValue(segment);
-
-      if (sharePct === null) {
-        continue;
-      }
-
-      addBrandShare(
-        parsedShares,
-        seenBrands,
-        segment.replace(/\s*\d+(?:\.\d+)?\s*%.*$/, '').trim(),
-        sharePct,
-      );
-    }
+    return normalizedCandidates.filter(
+      (value, index) => normalizedCandidates.indexOf(value) === index,
+    );
+  } catch {
+    return [];
   }
-
-  const normalizedTargetBrand = targetBrand ? normalizeBrandKey(targetBrand) : '';
-
-  if (
-    normalizedTargetBrand &&
-    !seenBrands.has(normalizedTargetBrand) &&
-    !isIgnorableSovBrand(targetBrand ?? '')
-  ) {
-    parsedShares.unshift({
-      brand: trimMultilineText(targetBrand ?? ''),
-      sharePct: 0,
-    });
-  }
-
-  return parsedShares;
 }
 
-function buildEvaluatedBrandShares(input: {
-  extractedBrandShares: BrandShare[];
-  llmResult: LlmEvaluation;
-}) {
-  const mentionCounts = new Map<string, { brand: string; mentionCount: number }>();
+async function searchWikipediaTitles(searchTerm: string) {
+  if (!searchTerm.trim()) {
+    return [];
+  }
 
-  for (const brandMention of input.llmResult.brandMentions) {
-    const cleanedBrand = trimMultilineText(brandMention.brand);
-    const normalizedBrand = normalizeBrandKey(cleanedBrand);
+  try {
+    const payload = await fetchText(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+        searchTerm,
+      )}&srlimit=3&utf8=1&format=json`,
+    );
+    const parsedPayload = JSON.parse(payload) as {
+      query?: {
+        search?: Array<{ title?: string }>;
+      };
+    };
 
-    if (!normalizedBrand || isIgnorableSovBrand(cleanedBrand)) {
-      continue;
+    return (parsedPayload.query?.search ?? [])
+      .map((entry) => entry.title?.trim())
+      .filter((value): value is string => Boolean(value));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<SourceEvidence> {
+  const normalizedTitle = normalizeWikipediaTitle(articleTitle);
+
+  if (!normalizedTitle) {
+    return {
+      sourceType: 'web',
+      sourceUrl: 'https://en.wikipedia.org/wiki/',
+      usedTranscript: false,
+      transcriptStatus: 'not_applicable',
+      status: 'fetch_failed',
+      evidenceText: '',
+      fallbackSnippet: 'Wikipedia title could not be determined.',
+    };
+  }
+
+  try {
+    const payload = await fetchText(
+      `https://en.wikipedia.org/w/api.php?action=query&prop=extracts|info&redirects=1&inprop=url&explaintext=1&titles=${encodeURIComponent(
+        normalizedTitle,
+      )}&format=json`,
+    );
+    const parsedPayload = JSON.parse(payload) as {
+      query?: {
+        pages?: Record<
+          string,
+          {
+            title?: string;
+            fullurl?: string;
+            canonicalurl?: string;
+            extract?: string;
+            missing?: boolean | string;
+          }
+        >;
+      };
+    };
+    const page = Object.values(parsedPayload.query?.pages ?? {})[0];
+    const title = page?.title?.trim() || normalizedTitle;
+    const extract = trimMultilineText(page?.extract ?? '');
+    const sourceUrl =
+      page?.fullurl?.trim() ||
+      page?.canonicalurl?.trim() ||
+      `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`;
+
+    if (!page || page.missing || !extract) {
+      return {
+        sourceType: 'web',
+        sourceUrl,
+        usedTranscript: false,
+        transcriptStatus: 'not_applicable',
+        status: 'insufficient_evidence',
+        evidenceText: '',
+        fallbackSnippet: `Wikipedia page "${title}" could not be loaded.`,
+      };
     }
 
-    mentionCounts.set(normalizedBrand, {
-      brand: cleanedBrand,
-      mentionCount: Math.max(0, Math.round(brandMention.mentionCount)),
-    });
-  }
-
-  const targetBrand = trimMultilineText(input.llmResult.targetBrand);
-  const targetBrandKey = normalizeBrandKey(targetBrand);
-  const orderedBrands = input.extractedBrandShares.map((share) => share.brand);
-
-  if (
-    targetBrandKey &&
-    !orderedBrands.some((brand) => normalizeBrandKey(brand) === targetBrandKey)
-  ) {
-    orderedBrands.unshift(targetBrand);
-  }
-
-  const evaluatedBrands = orderedBrands.map((brand) => {
-    const normalizedBrand = normalizeBrandKey(brand);
-    const mentionCount =
-      normalizedBrand === targetBrandKey
-        ? Math.max(0, Math.round(input.llmResult.targetBrandMentionCount))
-        : mentionCounts.get(normalizedBrand)?.mentionCount ?? 0;
+    const evidenceText = clampEvidenceText(
+      trimMultilineText([`Wikipedia title: ${title}`, `Extract:\n${extract}`].join('\n\n')),
+    );
 
     return {
-      brand,
-      mentionCount,
+      sourceType: 'web',
+      sourceUrl,
+      usedTranscript: false,
+      transcriptStatus: 'not_applicable',
+      status:
+        evidenceText.length >= MIN_EVIDENCE_CHARACTERS ? 'success' : 'partial',
+      evidenceText,
+      fallbackSnippet: title,
     };
-  });
-  const totalMentions = evaluatedBrands.reduce(
-    (sum, brand) => sum + brand.mentionCount,
-    0,
-  );
-
-  return evaluatedBrands.map((brand) => ({
-    brand: brand.brand,
-    sharePct: totalMentions > 0 ? (brand.mentionCount / totalMentions) * 100 : 0,
-  }));
-}
-
-function formatSharePct(value: number) {
-  return `${value.toFixed(1)}%`;
-}
-
-function formatEvaluatedSov(brandShares: BrandShare[]) {
-  const visibleShares = brandShares.filter(
-    (share, index) => index === 0 || share.sharePct > 0,
-  );
-
-  if (visibleShares.length === 0) {
-    return 'Needs Review';
+  } catch {
+    return {
+      sourceType: 'web',
+      sourceUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(
+        normalizedTitle.replace(/\s+/g, '_'),
+      )}`,
+      usedTranscript: false,
+      transcriptStatus: 'not_applicable',
+      status: 'fetch_failed',
+      evidenceText: '',
+      fallbackSnippet: 'Failed to fetch Wikipedia page content.',
+    };
   }
-
-  return visibleShares
-    .map((share) => `${share.brand}: ${formatSharePct(share.sharePct)}`)
-    .join(', ');
-}
-
-function getTargetBrandSharePct(brandShares: BrandShare[], targetBrand: string) {
-  const normalizedTargetBrand = normalizeBrandKey(targetBrand);
-
-  if (!normalizedTargetBrand) {
-    return -1;
-  }
-
-  return (
-    brandShares.find((share) => normalizeBrandKey(share.brand) === normalizedTargetBrand)
-      ?.sharePct ?? 0
-  );
-}
-
-function normalizeSentimentValue(value: string) {
-  const normalizedValue = normalizeComparableText(value);
-
-  if (
-    normalizedValue.includes('no brand mention') ||
-    normalizedValue.includes('no target brand mention')
-  ) {
-    return 'no_brand_mentions';
-  }
-
-  if (normalizedValue.includes('unfavorable') || normalizedValue.includes('negative')) {
-    return 'unfavorable';
-  }
-
-  if (normalizedValue.includes('favorable') || normalizedValue.includes('positive')) {
-    return 'favorable';
-  }
-
-  if (normalizedValue.includes('neutral')) {
-    return 'neutral';
-  }
-
-  if (normalizedValue.includes('review')) {
-    return 'needs_review';
-  }
-
-  return 'unknown';
-}
-
-function clampConfidenceScore(value: number) {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function getEvidencePenalty(fetchStatus: SourceEvidence['status']) {
-  if (fetchStatus === 'success') {
-    return 0;
-  }
-
-  if (fetchStatus === 'partial') {
-    return 18;
-  }
-
-  if (fetchStatus === 'insufficient_evidence') {
-    return 42;
-  }
-
-  return 55;
-}
-
-function getConfidenceBase(
-  confidence: LlmEvaluation['confidence'],
-  evidenceSufficient: boolean,
-) {
-  if (!evidenceSufficient) {
-    return 42;
-  }
-
-  if (confidence === 'high') {
-    return 92;
-  }
-
-  if (confidence === 'medium') {
-    return 76;
-  }
-
-  return 58;
-}
-
-function buildConfidenceScores(input: {
-  extractedSentiment: string;
-  llmResult: LlmEvaluation;
-  fetchStatus: SourceEvidence['status'];
-}) {
-  const baseScore = getConfidenceBase(
-    input.llmResult.confidence,
-    input.llmResult.evidenceSufficient,
-  );
-  const evidencePenalty = getEvidencePenalty(input.fetchStatus);
-  const normalizedExtractedSentiment = normalizeSentimentValue(input.extractedSentiment);
-  const normalizedEvaluatedSentiment = normalizeSentimentValue(
-    input.llmResult.evaluatedSentiment,
-  );
-  const sentimentMatches =
-    normalizedExtractedSentiment !== 'unknown' &&
-    normalizedExtractedSentiment === normalizedEvaluatedSentiment;
-
-  let sentimentConfidence = baseScore - evidencePenalty;
-
-  if (sentimentMatches) {
-    sentimentConfidence += 4;
-  } else if (
-    normalizedExtractedSentiment !== 'unknown' &&
-    normalizedEvaluatedSentiment !== 'needs_review'
-  ) {
-    sentimentConfidence -= 48;
-  } else {
-    sentimentConfidence -= 16;
-  }
-
-  return clampConfidenceScore(sentimentConfidence);
-}
-
-function buildSovConfidenceScore(input: {
-  extractedBrandShares: BrandShare[];
-  evaluatedBrandShares: BrandShare[];
-  llmResult: LlmEvaluation;
-  fetchStatus: SourceEvidence['status'];
-}) {
-  const baseScore = getConfidenceBase(
-    input.llmResult.confidence,
-    input.llmResult.evidenceSufficient,
-  );
-  const evidencePenalty = getEvidencePenalty(input.fetchStatus);
-  let sovConfidence = baseScore - evidencePenalty;
-
-  if (!input.llmResult.evidenceSufficient) {
-    return clampConfidenceScore(sovConfidence - 16);
-  }
-
-  const extractedShareMap = new Map(
-    input.extractedBrandShares.map((share) => [normalizeBrandKey(share.brand), share.sharePct]),
-  );
-  const evaluatedShareMap = new Map(
-    input.evaluatedBrandShares.map((share) => [normalizeBrandKey(share.brand), share.sharePct]),
-  );
-  const comparedBrands = Array.from(
-    new Set([
-      ...input.extractedBrandShares.map((share) => normalizeBrandKey(share.brand)),
-      ...input.evaluatedBrandShares.map((share) => normalizeBrandKey(share.brand)),
-    ]),
-  ).filter(Boolean);
-
-  if (comparedBrands.length === 0) {
-    return clampConfidenceScore(sovConfidence - 18);
-  }
-
-  let maxShareDelta = 0;
-
-  for (const brand of comparedBrands) {
-    const extractedShare = extractedShareMap.get(brand) ?? 0;
-    const evaluatedShare = evaluatedShareMap.get(brand) ?? 0;
-    maxShareDelta = Math.max(maxShareDelta, Math.abs(extractedShare - evaluatedShare));
-  }
-
-  if (maxShareDelta <= 1) {
-    sovConfidence = Math.max(sovConfidence, 89);
-  } else if (maxShareDelta <= 5) {
-    sovConfidence += 4;
-  } else if (maxShareDelta <= 10) {
-    sovConfidence -= 10;
-  } else if (maxShareDelta <= 20) {
-    sovConfidence -= 24;
-  } else if (maxShareDelta <= 30) {
-    sovConfidence -= 40;
-  } else {
-    sovConfidence -= 56;
-  }
-
-  return clampConfidenceScore(sovConfidence);
 }
 
 async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
@@ -738,15 +483,8 @@ async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
       extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
       extractMetaTagValue(html, /<title>([^<]+)<\/title>/i);
     const description =
-      extractMetaTagValue(
-        html,
-        /"shortDescription":"([^"]+)"/i,
-      ) ||
-      extractMetaTagValue(
-        html,
-        /<meta\s+name="description"\s+content="([^"]+)"/i,
-      );
-
+      extractMetaTagValue(html, /"shortDescription":"([^"]+)"/i) ||
+      extractMetaTagValue(html, /<meta\s+name="description"\s+content="([^"]+)"/i);
     const playerResponseJson =
       extractBalancedObjectLiteral(html, 'ytInitialPlayerResponse =') ??
       extractBalancedObjectLiteral(html, 'var ytInitialPlayerResponse =');
@@ -829,20 +567,6 @@ async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
       fallbackSnippet: 'Failed to fetch YouTube content.',
     };
   }
-}
-
-function normalizeAbsoluteUrl(value: string) {
-  const trimmedValue = value.trim();
-
-  if (!trimmedValue) {
-    return '';
-  }
-
-  if (/^https?:\/\//i.test(trimmedValue)) {
-    return trimmedValue;
-  }
-
-  return `https://${trimmedValue.replace(/^\/+/, '')}`;
 }
 
 function buildRedditJsonUrls(itemUrl: string) {
@@ -946,13 +670,10 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
       };
     } catch (error) {
       lastFetchError = error instanceof Error ? error.message : 'Unknown fetch error.';
-      continue;
     }
   }
 
-  const htmlUrls = buildRedditHtmlUrls(itemUrl);
-
-  for (const htmlUrl of htmlUrls) {
+  for (const htmlUrl of buildRedditHtmlUrls(itemUrl)) {
     try {
       const html = await fetchText(htmlUrl);
       const title =
@@ -990,7 +711,6 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
       };
     } catch (error) {
       lastFetchError = error instanceof Error ? error.message : 'Unknown fetch error.';
-      continue;
     }
   }
 
@@ -1004,7 +724,7 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
     fallbackSnippet: lastFetchError
       ? `Failed to fetch Reddit content. ${lastFetchError}`
       : 'Failed to fetch Reddit content.',
-  }
+  };
 }
 
 async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
@@ -1052,72 +772,252 @@ async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
   }
 }
 
-async function fetchEvidenceForRequest(
-  payload: SentimentEvaluationRequest,
-): Promise<SourceEvidence> {
-  if (payload.opportunityType === 'YouTube') {
-    return fetchYoutubeEvidence(payload.item);
+async function fetchEvidenceForSuggestionRequest(
+  payload: SuggestionEvaluationRequest,
+): Promise<SuggestionEvidenceBundle> {
+  if (payload.opportunityType === 'Wikipedia') {
+    const wikipediaTitles = new Set<string>();
+    const normalizedSuggestionUrl = payload.suggestionUrl
+      ? normalizeAbsoluteUrl(payload.suggestionUrl)
+      : '';
+
+    if (normalizedSuggestionUrl) {
+      try {
+        const parsedSuggestionUrl = new URL(normalizedSuggestionUrl);
+
+        if (parsedSuggestionUrl.hostname.includes('wikipedia.org')) {
+          const suggestionTitle = normalizeWikipediaTitle(
+            parsedSuggestionUrl.pathname.replace(/^\/wiki\//i, ''),
+          );
+
+          if (suggestionTitle) {
+            wikipediaTitles.add(suggestionTitle);
+          }
+        }
+      } catch {
+        // Ignore malformed suggestion URLs and fall back to search terms.
+      }
+    }
+
+    if (wikipediaTitles.size === 0) {
+      const searchTerms = buildWikipediaSearchTerms(payload.site);
+
+      for (const searchTerm of searchTerms) {
+        const titles = await searchWikipediaTitles(searchTerm);
+        titles.forEach((title) => wikipediaTitles.add(title));
+
+        if (wikipediaTitles.size > 0) {
+          break;
+        }
+      }
+    }
+
+    const sources =
+      wikipediaTitles.size > 0
+        ? await Promise.all(
+            Array.from(wikipediaTitles)
+              .slice(0, 2)
+              .map((title) => fetchWikipediaArticleEvidence(title)),
+          )
+        : [
+            {
+              sourceType: 'web' as const,
+              sourceUrl: payload.site,
+              usedTranscript: false,
+              transcriptStatus: 'not_applicable' as const,
+              status: 'fetch_failed' as const,
+              evidenceText: '',
+              fallbackSnippet: 'No matching Wikipedia page could be identified for this site.',
+            },
+          ];
+    const evidenceSections = sources
+      .filter((source) => source.evidenceText)
+      .map(
+        (source, index) =>
+          `Source ${index + 1} (${source.sourceUrl}):\n${source.evidenceText}`,
+      );
+    const combinedEvidenceText = clampEvidenceText(evidenceSections.join('\n\n---\n\n'));
+    const fallbackSnippet =
+      sources.map((source) => source.fallbackSnippet).find(Boolean) ||
+      'No evidence could be gathered for this suggestion.';
+    const hasSuccess = sources.some((source) => source.status === 'success');
+    const hasPartial = sources.some((source) => source.status === 'partial');
+    const hasAnyEvidence = sources.some((source) => source.evidenceText.length > 0);
+
+    return {
+      sources,
+      combinedEvidenceText,
+      fallbackSnippet,
+      status:
+        combinedEvidenceText.length < MIN_EVIDENCE_CHARACTERS
+          ? hasAnyEvidence
+            ? 'insufficient_evidence'
+            : 'fetch_failed'
+          : hasSuccess
+            ? 'success'
+            : hasPartial
+              ? 'partial'
+              : 'insufficient_evidence',
+    };
   }
 
-  if (payload.opportunityType === 'Reddit') {
-    return fetchRedditEvidence(payload.item);
-  }
+  const candidateUrls = Array.from(
+    new Set(
+      [
+        payload.suggestionUrl ? normalizeAbsoluteUrl(payload.suggestionUrl) : '',
+        ...payload.evidenceItems.map(normalizeAbsoluteUrl),
+        payload.evidenceItems.length === 0 ? normalizeAbsoluteUrl(payload.site) : '',
+      ].filter(Boolean),
+    ),
+  ).slice(0, 3);
 
-  return fetchWebEvidence(payload.item);
+  const sources = await Promise.all(
+    candidateUrls.map((url) => {
+      if (payload.opportunityType === 'YouTube') {
+        return fetchYoutubeEvidence(url);
+      }
+
+      if (payload.opportunityType === 'Reddit') {
+        return fetchRedditEvidence(url);
+      }
+
+      return fetchWebEvidence(url);
+    }),
+  );
+
+  const evidenceSections = sources
+    .filter((source) => source.evidenceText)
+    .map(
+      (source, index) =>
+        `Source ${index + 1} (${source.sourceType} | ${source.sourceUrl}):\n${source.evidenceText}`,
+    );
+  const combinedEvidenceText = clampEvidenceText(evidenceSections.join('\n\n---\n\n'));
+  const fallbackSnippet =
+    sources.map((source) => source.fallbackSnippet).find(Boolean) ||
+    'No evidence could be gathered for this suggestion.';
+  const hasSuccess = sources.some((source) => source.status === 'success');
+  const hasPartial = sources.some((source) => source.status === 'partial');
+  const hasAnyEvidence = sources.some((source) => source.evidenceText.length > 0);
+
+  return {
+    sources,
+    combinedEvidenceText,
+    fallbackSnippet,
+    status:
+      combinedEvidenceText.length < MIN_EVIDENCE_CHARACTERS
+        ? hasAnyEvidence
+          ? 'insufficient_evidence'
+          : 'fetch_failed'
+        : hasSuccess
+          ? 'success'
+          : hasPartial
+            ? 'partial'
+            : 'insufficient_evidence',
+  };
 }
 
-function buildLlmPrompt(
-  payload: SentimentEvaluationRequest,
-  evidence: SourceEvidence,
-) {
-  const extractedBrandShares = extractSovBrandShares(payload.extractedSov);
-  const extractedBrandList = extractedBrandShares.map((share) => share.brand);
+function clampConfidenceScore(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
 
+function getEvidencePenalty(fetchStatus: SourceEvidence['status']) {
+  if (fetchStatus === 'success') {
+    return 0;
+  }
+
+  if (fetchStatus === 'partial') {
+    return 18;
+  }
+
+  if (fetchStatus === 'insufficient_evidence') {
+    return 42;
+  }
+
+  return 55;
+}
+
+function getConfidenceBase(
+  confidence: LlmSuggestionEvaluation['confidence'],
+  evidenceSufficient: boolean,
+) {
+  if (!evidenceSufficient) {
+    return 42;
+  }
+
+  if (confidence === 'high') {
+    return 92;
+  }
+
+  if (confidence === 'medium') {
+    return 76;
+  }
+
+  return 58;
+}
+
+function buildSuggestionConfidenceScore(input: {
+  llmResult: LlmSuggestionEvaluation;
+  fetchStatus: SourceEvidence['status'];
+}) {
+  let confidenceScore =
+    getConfidenceBase(input.llmResult.confidence, input.llmResult.evidenceSufficient) -
+    getEvidencePenalty(input.fetchStatus);
+
+  if (!input.llmResult.evidenceSufficient || input.llmResult.verdict === 'Needs Review') {
+    confidenceScore -= 16;
+  } else {
+    confidenceScore += 4;
+  }
+
+  return clampConfidenceScore(confidenceScore);
+}
+
+function buildSuggestionPrompt(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
+) {
   return [
-    'You are an off-site SEO/GEO analyst verifying extracted sentiment for off-site citations.',
-    'Review the evidence and determine whether the extracted sentiment is supported.',
-    'The target brand is the brand/company associated with the site URL.',
+    'You are an expert in off-site SEO, GEO, AEO, Reddit, YouTube, Cited URLs, and Wikipedia visibility.',
+    'Judge whether the suggestion is grounded in the provided evidence or appears hallucinated / unsupported.',
+    'Use only the evidence provided below.',
     '',
     `Site URL: ${payload.site}`,
     `Site ID: ${payload.siteId ?? 'Unknown'}`,
     `Opportunity Type: ${payload.opportunityType}`,
     `Opportunity ID: ${payload.opportunityId}`,
-    `Item URL: ${payload.item}`,
-    `Extracted SOV: ${payload.extractedSov || 'None'}`,
-    `Extracted SOV brands: ${extractedBrandList.join(', ') || 'None'}`,
-    `Extracted Sentiment: ${payload.extractedSentiment || 'None'}`,
+    `Suggestion ID: ${payload.suggestionId ?? 'Unknown'}`,
+    `Suggestion text: ${payload.suggestionText}`,
+    `Suggestion URL: ${payload.suggestionUrl ?? 'None'}`,
     '',
-    'Return a grounded judgment from the evidence only.',
-    'Also assess whether the extracted share of voice is supported for the target brand.',
-    'Count explicit brand mentions from the evidence for the brands listed in Extracted SOV brands.',
-    'Return integer mention counts for those brands only, plus a separate targetBrandMentionCount.',
-    'Do not compute percentages yourself; the system will compute percentages from the mention counts.',
-    'If the target brand is already one of the extracted SOV brands, use the same mention count for targetBrandMentionCount.',
-    'If the evidence is too weak to support a confident judgment, set evidenceSufficient to false and use "Needs Review" for evaluatedSentiment.',
+    'Return:',
+    '- verdict = "Correct", "Incorrect", or "Needs Review"',
+    '- rationale explaining why',
+    '- evidenceSnippet with the strongest supporting or contradictory evidence',
+    '- correctedSuggestion if the original suggestion is incorrect; otherwise return an empty string',
+    '- evidenceSufficient = false if the fetched evidence is too weak to make a grounded decision',
     '',
     'Evidence:',
-    evidence.evidenceText,
+    evidence.combinedEvidenceText,
   ].join('\n');
 }
 
-function buildBedrockPrompt(
-  payload: SentimentEvaluationRequest,
-  evidence: SourceEvidence,
+function buildSuggestionBedrockPrompt(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
 ) {
   return [
-    buildLlmPrompt(payload, evidence),
+    buildSuggestionPrompt(payload, evidence),
     '',
     'Return ONLY a valid JSON object. Do not add markdown, code fences, or any explanatory text.',
     'Use this exact schema:',
     '{',
     '  "targetBrand": string,',
-    '  "targetBrandMentionCount": number,',
-    '  "evaluatedSentiment": "Favorable" | "Neutral" | "Unfavorable" | "No brand mentions" | "Needs Review",',
-    '  "brandMentions": Array<{ "brand": string, "mentionCount": number }>,',
+    '  "verdict": "Correct" | "Incorrect" | "Needs Review",',
     '  "evidenceSufficient": boolean,',
     '  "confidence": "high" | "medium" | "low",',
     '  "rationale": string,',
-    '  "evidenceSnippet": string',
+    '  "evidenceSnippet": string,',
+    '  "correctedSuggestion": string',
     '}',
   ].join('\n');
 }
@@ -1150,46 +1050,33 @@ function extractJsonObject(value: string) {
   }
 }
 
-function parseLlmEvaluationPayload(value: unknown) {
+function parseSuggestionLlmPayload(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Failed to parse evaluator response.');
+    throw new Error('Failed to parse suggestion evaluator response.');
   }
 
-  const candidate = value as Partial<LlmEvaluation>;
+  const candidate = value as Partial<LlmSuggestionEvaluation>;
 
   if (
     typeof candidate.targetBrand !== 'string' ||
-    typeof candidate.targetBrandMentionCount !== 'number' ||
-    typeof candidate.evaluatedSentiment !== 'string' ||
-    !Array.isArray(candidate.brandMentions) ||
+    typeof candidate.verdict !== 'string' ||
     typeof candidate.evidenceSufficient !== 'boolean' ||
     typeof candidate.confidence !== 'string' ||
     typeof candidate.rationale !== 'string' ||
-    typeof candidate.evidenceSnippet !== 'string'
+    typeof candidate.evidenceSnippet !== 'string' ||
+    typeof candidate.correctedSuggestion !== 'string'
   ) {
-    throw new Error('Failed to parse evaluator response.');
+    throw new Error('Failed to parse suggestion evaluator response.');
   }
 
-  if (
-    candidate.brandMentions.some(
-      (entry) =>
-        !entry ||
-        typeof entry !== 'object' ||
-        Array.isArray(entry) ||
-        typeof (entry as { brand?: string }).brand !== 'string' ||
-        typeof (entry as { mentionCount?: number }).mentionCount !== 'number',
-    )
-  ) {
-    throw new Error('Failed to parse evaluator response.');
-  }
-  return candidate as LlmEvaluation;
+  return candidate as LlmSuggestionEvaluation;
 }
 
-async function fetchBedrockEvaluation(
-  payload: SentimentEvaluationRequest,
-  evidence: SourceEvidence,
+async function fetchSuggestionBedrockEvaluation(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
   env: ServerEnv,
-): Promise<LlmEvaluationResponse> {
+): Promise<LlmSuggestionEvaluationResponse> {
   const apiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
   const region = getBedrockRegion(env);
 
@@ -1220,7 +1107,7 @@ async function fetchBedrockEvaluation(
             messages: [
               {
                 role: 'user',
-                content: [{ text: buildBedrockPrompt(payload, evidence) }],
+                content: [{ text: buildSuggestionBedrockPrompt(payload, evidence) }],
               },
             ],
             inferenceConfig: {
@@ -1249,7 +1136,7 @@ async function fetchBedrockEvaluation(
           .find((text): text is string => Boolean(text?.trim())) ?? '';
 
       return {
-        evaluation: parseLlmEvaluationPayload(extractJsonObject(outputText)),
+        evaluation: parseSuggestionLlmPayload(extractJsonObject(outputText)),
         provider: 'bedrock',
         model: modelId,
       };
@@ -1261,19 +1148,19 @@ async function fetchBedrockEvaluation(
   throw new Error(lastError || 'Bedrock request failed.');
 }
 
-async function fetchLlmEvaluation(
-  payload: SentimentEvaluationRequest,
-  evidence: SourceEvidence,
+async function fetchSuggestionLlmEvaluation(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
   env: ServerEnv,
-): Promise<LlmEvaluationResponse> {
+): Promise<LlmSuggestionEvaluationResponse> {
   const bedrockApiKey = env.AWS_BEARER_TOKEN_BEDROCK?.trim();
   const bedrockRegion = getBedrockRegion(env);
 
   if (bedrockApiKey && bedrockRegion) {
     try {
-      return await fetchBedrockEvaluation(payload, evidence, env);
+      return await fetchSuggestionBedrockEvaluation(payload, evidence, env);
     } catch {
-      // Fall through to Azure/OpenAI when the configured Bedrock model chain fails.
+      // Fall through to Azure/OpenAI.
     }
   }
 
@@ -1305,7 +1192,7 @@ async function fetchLlmEvaluation(
         content: [
           {
             type: 'input_text',
-            text: buildLlmPrompt(payload, evidence),
+            text: buildSuggestionPrompt(payload, evidence),
           },
         ],
       },
@@ -1313,35 +1200,16 @@ async function fetchLlmEvaluation(
     text: {
       format: {
         type: 'json_schema',
-        name: 'offsite_sentiment_evaluation',
+        name: 'offsite_suggestion_evaluation',
         strict: true,
         schema: {
           type: 'object',
           additionalProperties: false,
           properties: {
             targetBrand: { type: 'string' },
-            targetBrandMentionCount: { type: 'number' },
-            evaluatedSentiment: {
+            verdict: {
               type: 'string',
-              enum: [
-                'Favorable',
-                'Neutral',
-                'Unfavorable',
-                'No brand mentions',
-                'Needs Review',
-              ],
-            },
-            brandMentions: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                properties: {
-                  brand: { type: 'string' },
-                  mentionCount: { type: 'number' },
-                },
-                required: ['brand', 'mentionCount'],
-              },
+              enum: ['Correct', 'Incorrect', 'Needs Review'],
             },
             evidenceSufficient: { type: 'boolean' },
             confidence: {
@@ -1350,16 +1218,16 @@ async function fetchLlmEvaluation(
             },
             rationale: { type: 'string' },
             evidenceSnippet: { type: 'string' },
+            correctedSuggestion: { type: 'string' },
           },
           required: [
             'targetBrand',
-            'targetBrandMentionCount',
-            'evaluatedSentiment',
-            'brandMentions',
+            'verdict',
             'evidenceSufficient',
             'confidence',
             'rationale',
             'evidenceSnippet',
+            'correctedSuggestion',
           ],
         },
       },
@@ -1369,18 +1237,18 @@ async function fetchLlmEvaluation(
   const response = await fetch(
     useAzure ? `${azureBaseUrl}responses` : OPENAI_API_URL,
     {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(useAzure
-        ? {
-            'api-key': apiKey,
-          }
-        : {
-            authorization: `Bearer ${apiKey}`,
-          }),
-    },
-    body: JSON.stringify(requestBody),
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(useAzure
+          ? {
+              'api-key': apiKey,
+            }
+          : {
+              authorization: `Bearer ${apiKey}`,
+            }),
+      },
+      body: JSON.stringify(requestBody),
     },
   );
 
@@ -1395,8 +1263,7 @@ async function fetchLlmEvaluation(
         .flatMap(
           (entry: {
             content?: Array<{ parsed?: unknown; text?: string }>;
-          }) =>
-          entry.content ?? [],
+          }) => entry.content ?? [],
         )
         .find((content: { parsed?: unknown }) => Boolean(content.parsed))?.parsed
     : null;
@@ -1433,132 +1300,78 @@ async function fetchLlmEvaluation(
     })();
 
   return {
-    evaluation: parseLlmEvaluationPayload(parsedOutput),
+    evaluation: parseSuggestionLlmPayload(parsedOutput),
     provider: useAzure ? 'azure' : 'openai',
     model: modelName,
   };
 }
 
-export async function runOffsiteEvaluation(
+export async function runOffsiteSuggestionEvaluation(
   rawPayload: unknown,
   env: ServerEnv = {},
-): Promise<SentimentEvaluationResult> {
+): Promise<SuggestionEvaluationResult> {
   const payload = normalizeRequestPayload(rawPayload);
 
   if (!payload) {
-    throw new Error('Invalid evaluator request payload.');
+    throw new Error('Invalid suggestion evaluator request payload.');
   }
 
-  const evidence = await fetchEvidenceForRequest(payload);
+  const evidence = await fetchEvidenceForSuggestionRequest(payload);
 
   if (
     evidence.status === 'fetch_failed' ||
     evidence.status === 'insufficient_evidence'
   ) {
-    const weakEvidenceScore =
-      evidence.status === 'fetch_failed' ? 12 : 28;
-    const blockedBySource =
-      evidence.status === 'fetch_failed' &&
-      /fetch failed with 403/i.test(evidence.fallbackSnippet);
-    const blockedSourceLabel =
-      evidence.sourceType === 'reddit'
-        ? 'Reddit'
-        : evidence.sourceType === 'youtube'
-          ? 'YouTube'
-          : 'The source';
+    const weakEvidenceScore = evidence.status === 'fetch_failed' ? 12 : 28;
 
     return {
-      evaluatedSentiment: 'Needs Review',
-      sentimentConfidence: weakEvidenceScore,
-      evaluatedSov: 'Needs Review',
-      sovConfidence: weakEvidenceScore,
-      evaluatedTargetBrandSharePct: -1,
+      verdict: 'Needs Review',
+      confidence: weakEvidenceScore,
       rationale:
-        blockedBySource
-          ? `${blockedSourceLabel} blocked the server-side request, so the sentiment could not be independently checked from this deployment.`
-          : evidence.status === 'fetch_failed'
-            ? 'The source content could not be fetched for an independent check.'
-          : 'The fetched content did not provide enough evidence for a reliable judgment.',
+        evidence.status === 'fetch_failed'
+          ? 'The source evidence could not be fetched for an independent suggestion check.'
+          : 'The fetched evidence was too thin to judge whether the suggestion is grounded.',
       evidenceSnippet: evidence.fallbackSnippet,
+      correctedSuggestion: '',
       evaluatedAt: new Date().toISOString(),
-      evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
-      fetch: {
-        status: evidence.status,
-        sourceType: evidence.sourceType,
-        sourceUrl: evidence.sourceUrl,
-        usedTranscript: evidence.usedTranscript,
-        transcriptStatus: evidence.transcriptStatus,
-        evidenceCharacters: evidence.evidenceText.length,
-      },
+      evaluatorVersion: SUGGESTION_EVALUATOR_VERSION,
+      evidenceSources: evidence.sources.map((source) => ({
+        status: source.status,
+        sourceType: source.sourceType,
+        sourceUrl: source.sourceUrl,
+        usedTranscript: source.usedTranscript,
+        transcriptStatus: source.transcriptStatus,
+        evidenceCharacters: source.evidenceText.length,
+      })),
       targetBrand: '',
     };
   }
 
-  const llmResponse = await fetchLlmEvaluation(payload, evidence, env);
+  const llmResponse = await fetchSuggestionLlmEvaluation(payload, evidence, env);
   const llmResult = llmResponse.evaluation;
-  const extractedBrandShares = extractSovBrandShares(payload.extractedSov, llmResult.targetBrand);
-  const evaluatedBrandShares = buildEvaluatedBrandShares({
-    extractedBrandShares,
-    llmResult,
-  });
-  const evaluatedSov = formatEvaluatedSov(evaluatedBrandShares);
-  const evaluatedTargetBrandSharePct = getTargetBrandSharePct(
-    evaluatedBrandShares,
-    llmResult.targetBrand,
-  );
-  const sentimentConfidence = buildConfidenceScores({
-    extractedSentiment: payload.extractedSentiment,
-    llmResult,
-    fetchStatus: evidence.status,
-  });
-  const sovConfidence = buildSovConfidenceScore({
-    extractedBrandShares,
-    evaluatedBrandShares,
-    llmResult,
-    fetchStatus: evidence.status,
-  });
 
   return {
-    evaluatedSentiment: llmResult.evaluatedSentiment,
-    sentimentConfidence,
-    evaluatedSov,
-    sovConfidence,
-    evaluatedTargetBrandSharePct,
+    verdict: llmResult.verdict,
+    confidence: buildSuggestionConfidenceScore({
+      llmResult,
+      fetchStatus: evidence.status,
+    }),
     rationale: trimMultilineText(llmResult.rationale),
     evidenceSnippet:
       trimMultilineText(llmResult.evidenceSnippet) || evidence.fallbackSnippet,
+    correctedSuggestion: trimMultilineText(llmResult.correctedSuggestion),
     evaluatedAt: new Date().toISOString(),
-    evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
+    evaluatorVersion: SUGGESTION_EVALUATOR_VERSION,
     evaluatorProvider: llmResponse.provider,
     evaluatorModel: llmResponse.model,
-    fetch: {
-      status: evidence.status,
-      sourceType: evidence.sourceType,
-      sourceUrl: evidence.sourceUrl,
-      usedTranscript: evidence.usedTranscript,
-      transcriptStatus: evidence.transcriptStatus,
-      evidenceCharacters: evidence.evidenceText.length,
-    },
+    evidenceSources: evidence.sources.map((source) => ({
+      status: source.status,
+      sourceType: source.sourceType,
+      sourceUrl: source.sourceUrl,
+      usedTranscript: source.usedTranscript,
+      transcriptStatus: source.transcriptStatus,
+      evidenceCharacters: source.evidenceText.length,
+    })),
     targetBrand: llmResult.targetBrand,
   };
-}
-
-export async function handleOffsiteEvaluateRequest(
-  request: Request,
-  env: ServerEnv = {},
-) {
-  if (request.method !== 'POST') {
-    return buildJsonResponse({ error: 'Method not allowed.' }, 405);
-  }
-
-  try {
-    const payload = await request.json();
-    const result = await runOffsiteEvaluation(payload, env);
-    return buildJsonResponse(result);
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Unexpected evaluation error.';
-
-    return buildJsonResponse({ error: message }, 500);
-  }
 }

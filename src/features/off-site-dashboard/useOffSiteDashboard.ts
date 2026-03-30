@@ -8,10 +8,16 @@ import {
 import {
   DEFAULT_PAGE_SIZE,
   SENTIMENT_EVALUATOR_VERSION,
+  SUGGESTION_EVALUATOR_VERSION,
   TARGET_OPPORTUNITY_TYPES,
 } from './constants';
 import { downloadRowsAsCsv, downloadRowsAsExcel } from './csv';
-import { SpacecatApiError, evaluateSentimentRow, fetchSiteDashboardData } from './api';
+import {
+  SpacecatApiError,
+  evaluateSentimentRow,
+  evaluateSuggestionRow,
+  fetchSiteDashboardData,
+} from './api';
 import {
   buildSentimentEvaluationRequest,
   buildSentimentRowKey,
@@ -19,10 +25,19 @@ import {
   createStoredSentimentEvaluation,
 } from './evaluation';
 import {
+  buildSuggestionEvaluationRequest,
+  buildSuggestionRowKey,
+  canEvaluateSuggestionItem,
+  createStoredSuggestionEvaluation,
+  isSuggestionEvaluationType,
+} from './suggestionEvaluation';
+import {
   loadDashboardConfig,
   loadSentimentEvaluationStore,
+  loadSuggestionEvaluationStore,
   saveDashboardConfig,
   saveSentimentEvaluationStore,
+  saveSuggestionEvaluationStore,
 } from './storage';
 import {
   createIdleSiteResult,
@@ -41,6 +56,9 @@ import type {
   SentimentEvaluationStoredResult,
   SiteDashboardResult,
   SiteOpportunityPresence,
+  SuggestionEvaluationRequest,
+  SuggestionEvaluationStatus,
+  SuggestionEvaluationStoredResult,
 } from './types';
 
 type OpportunityTypeSortOrder = 'default' | 'asc' | 'desc';
@@ -56,6 +74,9 @@ function buildExportableOpportunityRows(
   evaluationResults: Record<string, SentimentEvaluationStoredResult>,
   evaluationStatuses: Record<string, SentimentEvaluationStatus>,
   evaluationErrors: Record<string, string>,
+  suggestionEvaluationResults: Record<string, SuggestionEvaluationStoredResult>,
+  suggestionEvaluationStatuses: Record<string, SuggestionEvaluationStatus>,
+  suggestionEvaluationErrors: Record<string, string>,
 ) {
   return siteCards.flatMap((siteCard) =>
     siteCard.opportunities.map((opportunity) => {
@@ -72,7 +93,8 @@ function buildExportableOpportunityRows(
         const storedEvaluation = evaluationResults[rowKey];
         const evaluationResult =
           storedEvaluation &&
-          storedEvaluation.extractedSentiment === item.sentiment
+          storedEvaluation.extractedSentiment === item.sentiment &&
+          storedEvaluation.extractedSov === item.sov
             ? storedEvaluation
             : undefined;
 
@@ -83,6 +105,36 @@ function buildExportableOpportunityRows(
           evaluationStatus: evaluationStatuses[rowKey] ?? 'idle',
           evaluationResult,
           evaluationError: evaluationErrors[rowKey],
+        };
+      });
+      const suggestions = opportunity.suggestions.map((suggestion) => {
+        const rowKey = buildSuggestionRowKey({
+          site: siteCard.requestSite,
+          siteId: siteCard.siteId,
+          opportunityType: opportunity.opportunityType,
+          opportunityId: opportunity.opportunityId,
+          suggestionId: suggestion.suggestionId,
+          suggestionText: suggestion.suggestionText,
+        });
+        const storedEvaluation = suggestionEvaluationResults[rowKey];
+        const evaluationResult =
+          storedEvaluation &&
+          storedEvaluation.suggestionText === suggestion.suggestionText &&
+          storedEvaluation.suggestionUrl === suggestion.suggestionUrl
+            ? storedEvaluation
+            : undefined;
+
+        return {
+          suggestionId: suggestion.suggestionId,
+          suggestionText: suggestion.suggestionText,
+          suggestionUrl: suggestion.suggestionUrl,
+          rowKey,
+          canEvaluate:
+            isSuggestionEvaluationType(opportunity.opportunityType) &&
+            canEvaluateSuggestionItem(suggestion.suggestionText),
+          evaluationStatus: suggestionEvaluationStatuses[rowKey] ?? 'idle',
+          evaluationResult,
+          evaluationError: suggestionEvaluationErrors[rowKey],
         };
       });
 
@@ -97,11 +149,7 @@ function buildExportableOpportunityRows(
         siteId: siteCard.siteId,
         opportunityType: opportunity.opportunityType,
         opportunityId: opportunity.opportunityId,
-        suggestions: opportunity.suggestions.map((suggestion) => ({
-          suggestionId: suggestion.suggestionId,
-          suggestionText: suggestion.suggestionText,
-          suggestionUrl: suggestion.suggestionUrl,
-        })),
+        suggestions,
         sentimentItems,
         status:
           siteCard.status === 'error'
@@ -123,13 +171,25 @@ export function useOffSiteDashboard() {
   const [sentimentEvaluationResults, setSentimentEvaluationResults] = useState<
     Record<string, SentimentEvaluationStoredResult>
   >(() => loadSentimentEvaluationStore().results);
+  const [suggestionEvaluationResults, setSuggestionEvaluationResults] = useState<
+    Record<string, SuggestionEvaluationStoredResult>
+  >(() => loadSuggestionEvaluationStore().results);
   const [sentimentEvaluationStatuses, setSentimentEvaluationStatuses] = useState<
     Record<string, SentimentEvaluationStatus>
+  >({});
+  const [suggestionEvaluationStatuses, setSuggestionEvaluationStatuses] = useState<
+    Record<string, SuggestionEvaluationStatus>
   >({});
   const [sentimentEvaluationErrors, setSentimentEvaluationErrors] = useState<
     Record<string, string>
   >({});
+  const [suggestionEvaluationErrors, setSuggestionEvaluationErrors] = useState<
+    Record<string, string>
+  >({});
   const [selectedSentimentRowKeys, setSelectedSentimentRowKeys] = useState<string[]>([]);
+  const [selectedSuggestionRowKeys, setSelectedSuggestionRowKeys] = useState<string[]>(
+    [],
+  );
   const [siteResults, setSiteResults] = useState<Record<string, SiteDashboardResult>>(
     {},
   );
@@ -156,6 +216,13 @@ export function useOffSiteDashboard() {
       results: sentimentEvaluationResults,
     });
   }, [sentimentEvaluationResults]);
+
+  useEffect(() => {
+    saveSuggestionEvaluationStore({
+      evaluatorVersion: SUGGESTION_EVALUATOR_VERSION,
+      results: suggestionEvaluationResults,
+    });
+  }, [suggestionEvaluationResults]);
 
   useEffect(() => {
     setSiteResults((previousResults) => {
@@ -293,8 +360,11 @@ export function useOffSiteDashboard() {
       }, {}),
     );
     setSelectedSentimentRowKeys([]);
+    setSelectedSuggestionRowKeys([]);
     setSentimentEvaluationStatuses({});
     setSentimentEvaluationErrors({});
+    setSuggestionEvaluationStatuses({});
+    setSuggestionEvaluationErrors({});
     setPage(1);
   }, [configuredSites]);
 
@@ -336,11 +406,17 @@ export function useOffSiteDashboard() {
         sentimentEvaluationResults,
         sentimentEvaluationStatuses,
         sentimentEvaluationErrors,
+        suggestionEvaluationResults,
+        suggestionEvaluationStatuses,
+        suggestionEvaluationErrors,
       ),
     [
       sentimentEvaluationErrors,
       sentimentEvaluationResults,
       sentimentEvaluationStatuses,
+      suggestionEvaluationErrors,
+      suggestionEvaluationResults,
+      suggestionEvaluationStatuses,
       siteCards,
     ],
   );
@@ -355,6 +431,7 @@ export function useOffSiteDashboard() {
             opportunityType: row.opportunityType,
             opportunityId: row.opportunityId,
             item: item.item,
+            extractedSov: item.sov,
             extractedSentiment: item.sentiment,
           });
 
@@ -369,11 +446,43 @@ export function useOffSiteDashboard() {
     );
   }, [allOpportunityRows]);
 
+  const suggestionEvaluationRequestMap = useMemo(() => {
+    return allOpportunityRows.reduce<Map<string, SuggestionEvaluationRequest>>(
+      (nextMap, row) => {
+        row.suggestions.forEach((suggestion) => {
+          const request = buildSuggestionEvaluationRequest({
+            site: row.site,
+            siteId: row.siteId,
+            opportunityType: row.opportunityType,
+            opportunityId: row.opportunityId,
+            suggestionId: suggestion.suggestionId,
+            suggestionText: suggestion.suggestionText ?? '',
+            suggestionUrl: suggestion.suggestionUrl,
+            evidenceItems: row.sentimentItems.map((item) => item.item),
+          });
+
+          if (request && suggestion.rowKey) {
+            nextMap.set(suggestion.rowKey, request);
+          }
+        });
+
+        return nextMap;
+      },
+      new Map<string, SuggestionEvaluationRequest>(),
+    );
+  }, [allOpportunityRows]);
+
   useEffect(() => {
     setSelectedSentimentRowKeys((currentKeys) =>
       currentKeys.filter((rowKey) => sentimentEvaluationRequestMap.has(rowKey)),
     );
   }, [sentimentEvaluationRequestMap]);
+
+  useEffect(() => {
+    setSelectedSuggestionRowKeys((currentKeys) =>
+      currentKeys.filter((rowKey) => suggestionEvaluationRequestMap.has(rowKey)),
+    );
+  }, [suggestionEvaluationRequestMap]);
 
   const filteredOpportunityRows = useMemo(() => {
     const nextRows = allOpportunityRows.filter((row) => {
@@ -460,8 +569,14 @@ export function useOffSiteDashboard() {
   const isEvaluatingSentiment = Object.values(sentimentEvaluationStatuses).some(
     (status) => status === 'running',
   );
+  const isEvaluatingSuggestions = Object.values(suggestionEvaluationStatuses).some(
+    (status) => status === 'running',
+  );
   const selectedSentimentRowsCount = selectedSentimentRowKeys.filter((rowKey) =>
     sentimentEvaluationRequestMap.has(rowKey),
+  ).length;
+  const selectedSuggestionRowsCount = selectedSuggestionRowKeys.filter((rowKey) =>
+    suggestionEvaluationRequestMap.has(rowKey),
   ).length;
   const selectedVisibleSentimentRowKeys = pagedOpportunityRows.flatMap((row) =>
     row.sentimentItems
@@ -473,7 +588,18 @@ export function useOffSiteDashboard() {
       )
       .map((item) => item.rowKey as string),
   );
+  const selectedVisibleSuggestionRowKeys = pagedOpportunityRows.flatMap((row) =>
+    row.suggestions
+      .filter(
+        (suggestion) =>
+          suggestion.canEvaluate &&
+          suggestion.rowKey &&
+          selectedSuggestionRowKeys.includes(suggestion.rowKey),
+      )
+      .map((suggestion) => suggestion.rowKey as string),
+  );
   const selectedVisibleSentimentRowsCount = selectedVisibleSentimentRowKeys.length;
+  const selectedVisibleSuggestionRowsCount = selectedVisibleSuggestionRowKeys.length;
 
   const exportRows = useCallback(() => {
     downloadRowsAsCsv(exportableRows);
@@ -506,6 +632,31 @@ export function useOffSiteDashboard() {
       });
     },
     [sentimentEvaluationRequestMap],
+  );
+
+  const toggleSuggestionRowSelection = useCallback((rowKey: string) => {
+    setSelectedSuggestionRowKeys((currentKeys) =>
+      currentKeys.includes(rowKey)
+        ? currentKeys.filter((currentKey) => currentKey !== rowKey)
+        : [...currentKeys, rowKey],
+    );
+  }, []);
+
+  const setSuggestionRowSelections = useCallback(
+    (rowKeys: string[], selected: boolean) => {
+      setSelectedSuggestionRowKeys((currentKeys) => {
+        const validRowKeys = rowKeys.filter((rowKey) =>
+          suggestionEvaluationRequestMap.has(rowKey),
+        );
+
+        if (selected) {
+          return Array.from(new Set([...currentKeys, ...validRowKeys]));
+        }
+
+        return currentKeys.filter((rowKey) => !validRowKeys.includes(rowKey));
+      });
+    },
+    [suggestionEvaluationRequestMap],
   );
 
   const runSentimentEvaluation = useCallback(
@@ -569,6 +720,67 @@ export function useOffSiteDashboard() {
     [sentimentEvaluationRequestMap],
   );
 
+  const runSuggestionEvaluation = useCallback(
+    async (rowKeys: string[]) => {
+      const uniqueRowKeys = Array.from(new Set(rowKeys)).filter((rowKey) =>
+        suggestionEvaluationRequestMap.has(rowKey),
+      );
+
+      if (uniqueRowKeys.length === 0) {
+        return;
+      }
+
+      setSuggestionEvaluationStatuses((currentStatuses) => {
+        const nextStatuses = { ...currentStatuses };
+        uniqueRowKeys.forEach((rowKey) => {
+          nextStatuses[rowKey] = 'running';
+        });
+        return nextStatuses;
+      });
+      setSuggestionEvaluationErrors((currentErrors) => {
+        const nextErrors = { ...currentErrors };
+        uniqueRowKeys.forEach((rowKey) => {
+          delete nextErrors[rowKey];
+        });
+        return nextErrors;
+      });
+
+      for (const rowKey of uniqueRowKeys) {
+        const request = suggestionEvaluationRequestMap.get(rowKey);
+
+        if (!request) {
+          continue;
+        }
+
+        try {
+          const result = await evaluateSuggestionRow(request);
+
+          setSuggestionEvaluationResults((currentResults) => ({
+            ...currentResults,
+            [rowKey]: createStoredSuggestionEvaluation(rowKey, request, result),
+          }));
+          setSuggestionEvaluationStatuses((currentStatuses) => ({
+            ...currentStatuses,
+            [rowKey]: 'success',
+          }));
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Suggestion evaluation failed.';
+
+          setSuggestionEvaluationStatuses((currentStatuses) => ({
+            ...currentStatuses,
+            [rowKey]: 'error',
+          }));
+          setSuggestionEvaluationErrors((currentErrors) => ({
+            ...currentErrors,
+            [rowKey]: message,
+          }));
+        }
+      }
+    },
+    [suggestionEvaluationRequestMap],
+  );
+
   return {
     config,
     siteCards,
@@ -582,12 +794,17 @@ export function useOffSiteDashboard() {
     totalPages,
     isRefreshing,
     isEvaluatingSentiment,
+    isEvaluatingSuggestions,
     canRefresh,
     hasExportRows: exportableRows.length > 0,
     selectedSentimentRowKeys,
     selectedSentimentRowsCount,
     selectedVisibleSentimentRowKeys,
     selectedVisibleSentimentRowsCount,
+    selectedSuggestionRowKeys,
+    selectedSuggestionRowsCount,
+    selectedVisibleSuggestionRowKeys,
+    selectedVisibleSuggestionRowsCount,
     pagedOpportunityRows,
     filteredRows,
     filteredOpportunityRows,
@@ -627,7 +844,10 @@ export function useOffSiteDashboard() {
     exportExcel,
     toggleSentimentRowSelection,
     setSentimentRowSelections,
+    toggleSuggestionRowSelection,
+    setSuggestionRowSelections,
     evaluateSentimentRows: runSentimentEvaluation,
+    evaluateSuggestionRows: runSuggestionEvaluation,
     setPage,
     setPageSize,
   };

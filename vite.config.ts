@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { runOffsiteEvaluation } from './server/offsite-evaluate';
+import { runOffsiteSuggestionEvaluation } from './server/offsite-evaluate-suggestion';
 
 const ALLOWED_VITE_HOSTS = ['.netlify.app'];
 
@@ -27,7 +28,15 @@ function evaluationDevMiddleware(env: Record<string, string>) {
       };
     }) {
       server.middlewares.use((req, res, next) => {
-        if (req.url !== '/api/offsite-evaluate' || req.method !== 'POST') {
+        if (
+          req.url !== '/api/offsite-evaluate' &&
+          req.url !== '/api/offsite-evaluate-suggestion'
+        ) {
+          next();
+          return;
+        }
+
+        if (req.method !== 'POST') {
           next();
           return;
         }
@@ -43,7 +52,7 @@ function evaluationDevMiddleware(env: Record<string, string>) {
           try {
             const rawBody = Buffer.concat(chunks).toString('utf-8');
             const payload = rawBody ? JSON.parse(rawBody) : {};
-            const result = await runOffsiteEvaluation(payload, {
+            const sharedEnv = {
               AWS_BEARER_TOKEN_BEDROCK: env.AWS_BEARER_TOKEN_BEDROCK,
               AWS_REGION: env.AWS_REGION,
               BEDROCK_REGION: env.BEDROCK_REGION,
@@ -54,7 +63,11 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               AZURE_OPENAI_ENDPOINT: env.AZURE_OPENAI_ENDPOINT,
               AZURE_OPENAI_KEY: env.AZURE_OPENAI_KEY,
               AZURE_OPENAI_DEPLOYMENT: env.AZURE_OPENAI_DEPLOYMENT,
-            });
+            };
+            const result =
+              req.url === '/api/offsite-evaluate-suggestion'
+                ? await runOffsiteSuggestionEvaluation(payload, sharedEnv)
+                : await runOffsiteEvaluation(payload, sharedEnv);
 
             res.statusCode = 200;
             res.setHeader('content-type', 'application/json; charset=utf-8');

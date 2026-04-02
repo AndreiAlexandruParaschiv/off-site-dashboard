@@ -1,9 +1,9 @@
-import { SUGGESTION_EVALUATOR_VERSION } from '../src/features/off-site-dashboard/constants';
+import { SUGGESTION_EVALUATOR_VERSION } from '../src/features/off-site-dashboard/constants.js';
 import type {
   SuggestionEvaluationRequest,
   SuggestionEvaluationResult,
   SuggestionEvaluationVerdict,
-} from '../src/features/off-site-dashboard/types';
+} from '../src/features/off-site-dashboard/types.js';
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';

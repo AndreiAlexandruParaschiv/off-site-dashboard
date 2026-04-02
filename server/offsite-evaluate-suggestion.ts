@@ -3591,3 +3591,34 @@ export async function runOffsiteSuggestionEvaluation(
     targetBrand: llmResult.targetBrand,
   });
 }
+
+function buildJsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+    },
+  });
+}
+
+export async function handleOffsiteSuggestionEvaluateRequest(
+  request: Request,
+  env: ServerEnv = {},
+) {
+  if (request.method !== 'POST') {
+    return buildJsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+
+  try {
+    const payload = await request.json();
+    const result = await runOffsiteSuggestionEvaluation(payload, env);
+    return buildJsonResponse(result);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Unexpected suggestion evaluation error.';
+
+    return buildJsonResponse({ error: message }, 500);
+  }
+}

@@ -1672,9 +1672,10 @@ export function OffSiteDashboard() {
     suggestionEvaluationSummary.incorrect +
     evaluationSummary.review +
     sovEvaluationSummary.review;
+  const isManagedConnection = dashboard.spacecatProxyConfig.configured;
   const currentModeLabel = dashboard.spacecatProxyConfig.configured
-    ? 'Server relay secured'
-    : 'Browser key mode';
+    ? 'Managed relay'
+    : 'Manual connection';
   const activeFilterLabel = `${dashboard.selectedTypes.length} type${dashboard.selectedTypes.length === 1 ? '' : 's'} · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
 
   return (
@@ -1788,56 +1789,58 @@ export function OffSiteDashboard() {
           <section className="panel panel-settings panel-settings-compact panel-tone-warm">
             <div className="panel-header">
               <div>
-                <h2>Connection Setup</h2>
+                <h2>Workspace Setup</h2>
                 <p>
-                  Local configuration stays in this browser. Use this panel to aim the
-                  workspace at Spacecat and define the site set.
+                  Define the site set for this workspace. Connection details stay out
+                  of the operating surface when the server handles them for you.
                 </p>
               </div>
             </div>
 
-            <div className="settings-grid">
-              <label className="field">
-                <span>API base URL</span>
-                <input
-                  className="text-input"
-                  type="text"
-                  disabled={dashboard.spacecatProxyConfig.configured}
-                  value={
-                    dashboard.spacecatProxyConfig.configured
-                      ? dashboard.spacecatProxyConfig.apiBaseUrl
-                      : dashboard.config.apiBaseUrl
-                  }
-                  onChange={(event) => dashboard.setApiBaseUrl(event.target.value)}
-                  placeholder="https://spacecat.experiencecloud.live/api/v1"
-                />
-                <small className="field-note">
-                  {dashboard.spacecatProxyConfig.configured
-                    ? 'Using the server-side Spacecat proxy base URL.'
-                    : 'Browser requests use this Spacecat API base URL.'}
-                </small>
-              </label>
+            {isManagedConnection ? (
+              <div className="managed-connection-note">
+                <span className="managed-connection-pill">Managed connection active</span>
+                <p>
+                  Authentication and endpoint routing are handled server-side for this
+                  deployment.
+                </p>
+              </div>
+            ) : null}
 
-              <label className="field">
-                <span>API key</span>
-                <input
-                  className="text-input"
-                  disabled={dashboard.spacecatProxyConfig.configured}
-                  type="password"
-                  value={dashboard.config.apiKey}
-                  onChange={(event) => dashboard.setApiKey(event.target.value)}
-                  placeholder={
-                    dashboard.spacecatProxyConfig.configured
-                      ? 'Server-side proxy enabled'
-                      : 'Paste your API Key'
-                  }
-                />
-                <small className="field-note">
-                  {dashboard.spacecatProxyConfig.configured
-                    ? 'Server-side Spacecat proxy is enabled. Browser API key entry is not required and the secret stays on the server.'
-                    : 'API key is manual input only and is not persisted in localStorage.'}
-                </small>
-              </label>
+            <div
+              className={`settings-grid ${isManagedConnection ? 'settings-grid-managed' : ''}`}
+            >
+              {!isManagedConnection ? (
+                <>
+                  <label className="field">
+                    <span>Endpoint</span>
+                    <input
+                      className="text-input"
+                      type="text"
+                      value={dashboard.config.apiBaseUrl}
+                      onChange={(event) => dashboard.setApiBaseUrl(event.target.value)}
+                      placeholder="https://api.example.com/v1"
+                    />
+                    <small className="field-note">
+                      Requests use this endpoint for site lookup and opportunity data.
+                    </small>
+                  </label>
+
+                  <label className="field">
+                    <span>Access token</span>
+                    <input
+                      className="text-input"
+                      type="password"
+                      value={dashboard.config.apiKey}
+                      onChange={(event) => dashboard.setApiKey(event.target.value)}
+                      placeholder="Paste your access token"
+                    />
+                    <small className="field-note">
+                      Token entry is manual and is not persisted in localStorage.
+                    </small>
+                  </label>
+                </>
+              ) : null}
 
               <label className="field field-site-urls">
                 <span>Site URLs</span>

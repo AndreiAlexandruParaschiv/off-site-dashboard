@@ -20,28 +20,8 @@ const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
   'Cited URLs',
   'Prompt Gap',
 ]);
-const HOSTED_EVALUATION_TYPES = new Set<string>(['Cited URLs']);
-
-function isLocalDevelopmentHost() {
-  if (typeof window === 'undefined') {
-    return true;
-  }
-
-  const hostname = window.location.hostname;
-
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '0.0.0.0' ||
-    hostname === '[::1]'
-  );
-}
 
 function getAllowedEvaluationOpportunityTypes() {
-  if (!isLocalDevelopmentHost()) {
-    return HOSTED_EVALUATION_TYPES;
-  }
-
   return SENTIMENT_OPPORTUNITY_TYPES;
 }
 
@@ -2082,11 +2062,6 @@ export function OffSiteDashboard() {
                 {visibleEvaluationCount} URL entr
                 {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
               </p>
-              {!isLocalDevelopmentHost() && (
-                <p className="panel-summary">
-                  Hosted deployments evaluate Cited URLs only.
-                </p>
-              )}
               <p className="panel-summary">
                 {evaluationSummary.evaluated === 0
                   ? 'No evaluation results yet on this page.'

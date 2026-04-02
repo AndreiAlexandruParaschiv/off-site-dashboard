@@ -16,6 +16,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/spacecat"
+  to = "/.netlify/functions/spacecat"
+  status = 200
+
+[[redirects]]
+  from = "/api/spacecat-config"
+  to = "/.netlify/functions/spacecat-config"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

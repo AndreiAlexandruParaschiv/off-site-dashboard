@@ -10,6 +10,8 @@ export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
 
 export const DEFAULT_API_BASE_URL =
   'https://spacecat.experiencecloud.live/api/v1';
+export const SPACECAT_PROXY_CONFIG_API_PATH = '/api/spacecat-config';
+export const SPACECAT_PROXY_API_PATH = '/api/spacecat';
 
 export const DEFAULT_CONFIG: DashboardConfig = {
   apiBaseUrl: DEFAULT_API_BASE_URL,
@@ -23,7 +25,7 @@ export const SENTIMENT_EVALUATION_STORAGE_KEY =
 export const SUGGESTION_EVALUATION_STORAGE_KEY =
   'off-site-dashboard.suggestion-evaluations.v1';
 export const SENTIMENT_EVALUATOR_VERSION = 'offsite-sentiment-evaluator.v6';
-export const SUGGESTION_EVALUATOR_VERSION = 'offsite-suggestion-evaluator.v1';
+export const SUGGESTION_EVALUATOR_VERSION = 'offsite-suggestion-evaluator.v15';
 export const EVALUATOR_API_PATH = '/api/offsite-evaluate';
 export const SUGGESTION_EVALUATOR_API_PATH = '/api/offsite-evaluate-suggestion';
 

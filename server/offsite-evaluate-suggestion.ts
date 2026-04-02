@@ -7,6 +7,11 @@ import type {
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
+const DEFAULT_BRIGHTDATA_WEB_UNLOCKER_ZONE = 'web_unlocker1';
+const DEFAULT_BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID = 'gd_lk56epmy2i5g7lzu0k';
+const DEFAULT_BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID = 'gd_lk9q0ew71spt1mxywf';
+const DEFAULT_BRIGHTDATA_REDDIT_POST_DATASET_ID = 'gd_lvz8ah06191smkebj4';
+const DEFAULT_BRIGHTDATA_REDDIT_COMMENT_DATASET_ID = 'gd_lvzdpsdlw09j6t702';
 const BEDROCK_MODEL_FALLBACKS = [
   'us.anthropic.claude-opus-4-6-v1',
   'us.anthropic.claude-sonnet-4-6',
@@ -18,6 +23,7 @@ const REQUEST_USER_AGENT =
   'Mozilla/5.0 (compatible; OffSiteDashboardSuggestionEvaluator/1.0; +https://vercel.com)';
 const MAX_EVIDENCE_CHARACTERS = 14000;
 const MIN_EVIDENCE_CHARACTERS = 180;
+const MAX_WIKIPEDIA_SOURCE_COUNT = 8;
 
 type ServerEnv = {
   AWS_BEARER_TOKEN_BEDROCK?: string;
@@ -25,6 +31,12 @@ type ServerEnv = {
   BEDROCK_REGION?: string;
   BEDROCK_MODEL_ID?: string;
   BEDROCK_MODEL?: string;
+  BRIGHTDATA_API_KEY?: string;
+  BRIGHTDATA_WEB_UNLOCKER_ZONE?: string;
+  BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?: string;
+  BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?: string;
+  BRIGHTDATA_REDDIT_POST_DATASET_ID?: string;
+  BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?: string;
   OPENAI_API_KEY?: string;
   OPENAI_EVALUATOR_MODEL?: string;
   AZURE_OPENAI_ENDPOINT?: string;
@@ -45,6 +57,9 @@ type SourceEvidence = {
   status: 'success' | 'partial' | 'insufficient_evidence' | 'fetch_failed';
   evidenceText: string;
   fallbackSnippet: string;
+  maintenanceScope?: 'section' | 'article' | 'unknown';
+  maintenanceSection?: string;
+  maintenanceWarningText?: string;
 };
 
 type SuggestionEvidenceBundle = {
@@ -68,6 +83,78 @@ type LlmSuggestionEvaluationResponse = {
   evaluation: LlmSuggestionEvaluation;
   provider: 'bedrock' | 'azure' | 'openai';
   model: string;
+};
+
+type WikipediaMaintenanceContext = {
+  scope: 'section' | 'article' | 'unknown';
+  sectionName?: string;
+  warningText?: string;
+};
+
+type WikipediaQualityStatusContext = {
+  hasGoodArticle?: boolean;
+  hasFeaturedArticle?: boolean;
+};
+
+type WikipediaDeterministicContext = {
+  citationCount?: number;
+  avgCitations?: number;
+  citationsRank?: number;
+  citationsRankOf?: number;
+  secondPlaceCitations?: number;
+  citationsLeadOverSecondPlace?: number;
+  citationsLeadAboveAverage?: number;
+  sectionCount?: number;
+  avgSections?: number;
+  sectionsRank?: number;
+  sectionsRankOf?: number;
+  imageCount?: number;
+  avgImages?: number;
+  imagesRank?: number;
+  imagesRankOf?: number;
+  secondPlaceImages?: number;
+  imagesLeadOverSecondPlace?: number;
+  categoryCount?: number;
+  avgCategories?: number;
+  categoriesRank?: number;
+  categoriesRankOf?: number;
+  categoriesComparison?: string;
+  hasInfobox?: boolean;
+  hasNavbox?: boolean;
+  hasSeeAlso?: boolean;
+  hasExternalLinks?: boolean;
+  competitorsAnalyzed?: number;
+  competitorsWithInfobox?: { count: number; total: number; percentage: number };
+  competitorsWithNavigationBox?: { count: number; total: number; percentage: number };
+  competitorsWithSeeAlso?: { count: number; total: number; percentage: number };
+  competitorsWithExternalLinks?: { count: number; total: number; percentage: number };
+  infoboxFieldCount?: number;
+  infoboxFields?: string[];
+  commonCompetitorInfoboxFields?: string[];
+  missingCommonInfoboxFields?: string[];
+  lastEdited?: string;
+  editCount30Days?: number;
+  hasGoodArticle?: boolean;
+  hasFeaturedArticle?: boolean;
+};
+
+type WikipediaFetchedMetricEntry = {
+  title?: string;
+  sourceUrl: string;
+  categoryCount?: number;
+  sectionCount?: number;
+  imageCount?: number;
+  wordCount?: number;
+};
+
+type WikipediaFetchedCategoryComparison = {
+  categoryCount?: number;
+  avgCategories?: number;
+  categoriesRank?: number;
+  categoriesRankOf?: number;
+  categoriesComparison?: string;
+  leaderName?: string;
+  leaderCount?: number;
 };
 
 function trimMultilineText(value: string) {
@@ -131,6 +218,169 @@ function clampEvidenceText(value: string) {
   return value.slice(0, MAX_EVIDENCE_CHARACTERS).trim();
 }
 
+function parseNumberFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+): number | undefined {
+  const entry = evidenceItems.find((item) => item.startsWith(`${label}:`));
+
+  if (!entry) {
+    return undefined;
+  }
+
+  const rawValue = entry.split(':').slice(1).join(':').trim();
+  const parsedValue = Number.parseFloat(rawValue);
+  return Number.isFinite(parsedValue) ? parsedValue : undefined;
+}
+
+function parseBooleanFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+): boolean | undefined {
+  const entry = evidenceItems.find((item) => item.startsWith(`${label}:`));
+
+  if (!entry) {
+    return undefined;
+  }
+
+  const rawValue = entry.split(':').slice(1).join(':').trim().toLowerCase();
+
+  if (rawValue === 'true') {
+    return true;
+  }
+
+  if (rawValue === 'false') {
+    return false;
+  }
+
+  return undefined;
+}
+
+function parseStringFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+): string | undefined {
+  const entry = evidenceItems.find((item) => item.startsWith(`${label}:`));
+  const rawValue = entry?.split(':').slice(1).join(':').trim();
+  return rawValue || undefined;
+}
+
+function parseRankFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+): { rank: number; of: number } | undefined {
+  const rawValue = parseStringFromEvidenceItem(evidenceItems, label);
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const match = rawValue.match(/^#(\d+)\s+of\s+(\d+)$/i);
+
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    rank: Number.parseInt(match[1], 10),
+    of: Number.parseInt(match[2], 10),
+  };
+}
+
+function parseCompetitorPrevalenceFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+) {
+  const rawValue = parseStringFromEvidenceItem(evidenceItems, label);
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const match = rawValue.match(/^(\d+)\s+of\s+(\d+)\s+\(([\d.]+)%\)$/i);
+
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    count: Number.parseInt(match[1], 10),
+    total: Number.parseInt(match[2], 10),
+    percentage: Number.parseFloat(match[3]),
+  };
+}
+
+function parseListFromEvidenceItem(
+  evidenceItems: string[],
+  label: string,
+): string[] | undefined {
+  const rawValue = parseStringFromEvidenceItem(evidenceItems, label);
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  if (rawValue.toLowerCase() === 'none') {
+    return [];
+  }
+
+  return rawValue
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function extractLastWikipediaHeadingFromHtml(html: string) {
+  const headingMatches = Array.from(
+    html.matchAll(
+      /<(?:h[1-6])\b[^>]*>([\s\S]*?)<\/(?:h[1-6])>|<span[^>]*class="mw-headline"[^>]*>([\s\S]*?)<\/span>/gi,
+    ),
+  );
+  const lastHeading =
+    headingMatches.at(-1)?.[1] ?? headingMatches.at(-1)?.[2] ?? '';
+  return stripHtmlTags(lastHeading);
+}
+
+function extractWikipediaMaintenanceContextFromHtml(html: string): WikipediaMaintenanceContext {
+  const normalizedHtml = html.replace(/\r?\n/g, ' ');
+  const sectionMarker = 'This section needs to be updated';
+  const articleMarker = 'This article needs to be updated';
+  const sectionMatch = normalizedHtml.match(
+    /This section needs to be\s*(?:<[^>]+>\s*)?updated/i,
+  );
+  const articleMatch = normalizedHtml.match(/This article needs to be updated/i);
+  const sectionIndex = sectionMatch?.index ?? -1;
+  const articleIndex = articleMatch?.index ?? -1;
+
+  if (sectionIndex === -1 && articleIndex === -1) {
+    return {
+      scope: 'unknown',
+    };
+  }
+
+  if (sectionIndex !== -1 && (articleIndex === -1 || sectionIndex < articleIndex)) {
+    const htmlBeforeWarning = normalizedHtml.slice(0, sectionIndex);
+    const warningTextSlice = normalizedHtml.slice(sectionIndex, sectionIndex + 600);
+    const warningText = trimMultilineText(stripHtmlTags(warningTextSlice))
+      .match(/This section needs to be updated\.[\s\S]*?(?:\([^)]+\))?/i)?.[0];
+
+    return {
+      scope: 'section',
+      sectionName: extractLastWikipediaHeadingFromHtml(htmlBeforeWarning) || undefined,
+      warningText: trimMultilineText(warningText ?? sectionMarker),
+    };
+  }
+
+  const warningTextSlice = normalizedHtml.slice(articleIndex, articleIndex + 600);
+  const warningText = trimMultilineText(stripHtmlTags(warningTextSlice))
+    .match(/This article needs to be updated\.[\s\S]*?(?:\([^)]+\))?/i)?.[0];
+
+  return {
+    scope: 'article',
+    warningText: trimMultilineText(warningText ?? articleMarker),
+  };
+}
+
 function normalizeAzureOpenAiBaseUrl(value?: string) {
   const trimmedValue = value?.trim();
 
@@ -161,6 +411,42 @@ function getBedrockRegion(env: ServerEnv) {
 
 function getPreferredBedrockModel(env: ServerEnv) {
   return env.BEDROCK_MODEL_ID ?? env.BEDROCK_MODEL;
+}
+
+function getBrightDataApiKey(env: ServerEnv) {
+  return env.BRIGHTDATA_API_KEY?.trim() || '';
+}
+
+function getBrightDataUnlockerZone(env: ServerEnv) {
+  return env.BRIGHTDATA_WEB_UNLOCKER_ZONE?.trim() || DEFAULT_BRIGHTDATA_WEB_UNLOCKER_ZONE;
+}
+
+function getBrightDataYoutubeVideoDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID
+  );
+}
+
+function getBrightDataYoutubeCommentDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID
+  );
+}
+
+function getBrightDataRedditPostDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_REDDIT_POST_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_REDDIT_POST_DATASET_ID
+  );
+}
+
+function getBrightDataRedditCommentDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_REDDIT_COMMENT_DATASET_ID
+  );
 }
 
 function getBedrockModelCandidates(preferredModel?: string) {
@@ -206,7 +492,131 @@ function normalizeRequestPayload(value: unknown): SuggestionEvaluationRequest | 
     evidenceItems: candidate.evidenceItems.filter(
       (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0,
     ),
+    sentimentRows: Array.isArray(candidate.sentimentRows)
+      ? candidate.sentimentRows
+          .filter(
+            (
+              entry,
+            ): entry is {
+              item: string;
+              sov: string;
+              sentiment: string;
+            } =>
+              Boolean(entry) &&
+              typeof entry === 'object' &&
+              !Array.isArray(entry) &&
+              typeof (entry as { item?: unknown }).item === 'string' &&
+              typeof (entry as { sov?: unknown }).sov === 'string' &&
+              typeof (entry as { sentiment?: unknown }).sentiment === 'string',
+          )
+          .map((entry) => ({
+            item: entry.item.trim(),
+            sov: entry.sov.trim(),
+            sentiment: entry.sentiment.trim(),
+          }))
+      : [],
   };
+}
+
+function extractUrlCandidatesFromText(value: string) {
+  return Array.from(
+    new Set(
+      Array.from(
+        value.matchAll(
+          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s),\]]*)?/gi,
+        ),
+      )
+        .map((match) => normalizeAbsoluteUrl(match[0] ?? ''))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function normalizeSentimentBucket(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+
+  if (normalizedValue.includes('favorable')) {
+    return 'Favorable';
+  }
+
+  if (normalizedValue.includes('unfavorable')) {
+    return 'Unfavorable';
+  }
+
+  if (normalizedValue.includes('neutral')) {
+    return 'Neutral';
+  }
+
+  if (normalizedValue.includes('no brand')) {
+    return 'No brand mentions';
+  }
+
+  if (normalizedValue.includes('review')) {
+    return 'Needs Review';
+  }
+
+  return 'Unknown';
+}
+
+function buildSentimentRowSummary(rows: SuggestionEvaluationRequest['sentimentRows']) {
+  const buckets = rows.reduce<
+    Map<
+      string,
+      {
+        urlCount: number;
+        totalTimesCited: number;
+        knownTimesCitedCount: number;
+      }
+    >
+  >((summary, row) => {
+    const sentimentBucket = normalizeSentimentBucket(row.sentiment);
+    const currentValue = summary.get(sentimentBucket) ?? {
+      urlCount: 0,
+      totalTimesCited: 0,
+      knownTimesCitedCount: 0,
+    };
+
+    currentValue.urlCount += 1;
+
+    if (typeof row.timesCited === 'number' && Number.isFinite(row.timesCited)) {
+      currentValue.totalTimesCited += row.timesCited;
+      currentValue.knownTimesCitedCount += 1;
+    }
+
+    summary.set(sentimentBucket, currentValue);
+    return summary;
+  }, new Map());
+
+  return Array.from(buckets.entries()).map(([sentimentBucket, bucket]) => {
+    const citationSuffix =
+      bucket.knownTimesCitedCount > 0
+        ? `, ${bucket.totalTimesCited} citations (times cited)`
+        : '';
+
+    return `${sentimentBucket}: ${bucket.urlCount} URL${bucket.urlCount === 1 ? '' : 's'}${citationSuffix}`;
+  });
+}
+
+function buildLocalSuggestionContext(payload: SuggestionEvaluationRequest) {
+  const evidenceItemLines = payload.evidenceItems
+    .slice(0, payload.opportunityType === 'Wikipedia' ? 20 : 8)
+    .map((item, index) => `Evidence item ${index + 1}: ${item}`);
+  const summaryLines = buildSentimentRowSummary(payload.sentimentRows).map(
+    (line) => `Summary: ${line}`,
+  );
+  const rowLines = payload.sentimentRows
+    .slice(0, 8)
+    .map(
+      (row, index) =>
+        `Row ${index + 1}: URL=${row.item || 'Unknown'} | Extracted SOV=${row.sov || 'Unknown'} | Extracted Sentiment=${row.sentiment || 'Unknown'}${typeof row.timesCited === 'number' ? ` | Times Cited=${row.timesCited}` : ''}`,
+    );
+  const sourceHints = extractUrlCandidatesFromText(payload.suggestionText)
+    .slice(0, 8)
+    .map((url) => `Mentioned source: ${url}`);
+
+  return trimMultilineText(
+    [...evidenceItemLines, ...summaryLines, ...sourceHints, ...rowLines].join('\n'),
+  );
 }
 
 async function fetchText(url: string) {
@@ -224,6 +634,456 @@ async function fetchText(url: string) {
   }
 
   return response.text();
+}
+
+async function fetchBrightDataUnlockerBody(
+  targetUrl: string,
+  env: ServerEnv,
+  dataFormat: 'markdown' | 'raw' = 'markdown',
+) {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch('https://api.brightdata.com/request', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      zone: getBrightDataUnlockerZone(env),
+      url: targetUrl,
+      format: 'json',
+      method: 'GET',
+      data_format: dataFormat,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data unlocker failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    status_code?: number;
+    body?: string;
+  };
+
+  if (typeof payload.status_code === 'number' && payload.status_code >= 400) {
+    throw new Error(`Bright Data unlocker target failed with ${payload.status_code}`);
+  }
+
+  if (typeof payload.body !== 'string' || !payload.body.trim()) {
+    throw new Error('Bright Data unlocker returned an empty body.');
+  }
+
+  return payload.body;
+}
+
+async function fetchBrightDataYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeVideoDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            country: '',
+            transcription_language: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const firstResult = payload[0];
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube scrape returned no results.');
+  }
+
+  const title = trimMultilineText(String(firstResult.title ?? ''));
+  const description = trimMultilineText(String(firstResult.description ?? ''));
+  const transcript = trimMultilineText(
+    String(firstResult.formatted_transcript ?? firstResult.transcript ?? ''),
+  );
+  const channelName = trimMultilineText(String(firstResult.youtuber ?? ''));
+  const channelUrl = trimMultilineText(String(firstResult.channel_url ?? ''));
+  let comments: string[] = [];
+
+  try {
+    comments = await fetchBrightDataYoutubeCommentTexts(itemUrl, env);
+  } catch {
+    comments = [];
+  }
+
+  const evidenceText = clampEvidenceText(
+    trimMultilineText(
+      [
+        title ? `Title: ${title}` : '',
+        description ? `Description: ${description}` : '',
+        channelName ? `Channel: ${channelName}` : '',
+        channelUrl ? `Channel URL: ${channelUrl}` : '',
+        transcript ? `Transcript:\n${transcript}` : '',
+        comments.length > 0 ? `Comments:\n${comments.join('\n')}` : '',
+      ].join('\n\n'),
+    ),
+  );
+  const usedTranscript = transcript.length >= MIN_EVIDENCE_CHARACTERS;
+
+  return {
+    sourceType: 'youtube',
+    sourceUrl: itemUrl,
+    usedTranscript,
+    transcriptStatus: transcript
+      ? usedTranscript
+        ? 'available_and_used'
+        : 'available_but_not_used'
+      : 'not_available',
+    status:
+      evidenceText.length < MIN_EVIDENCE_CHARACTERS
+        ? 'insufficient_evidence'
+        : usedTranscript
+          ? 'success'
+          : 'partial',
+    evidenceText,
+    fallbackSnippet:
+      title ||
+      description ||
+      comments[0] ||
+      'Bright Data YouTube evidence could not be extracted.',
+  };
+}
+
+function extractBrightDataCommentText(entry: Record<string, unknown>) {
+  const textCandidates = [
+    entry.comment,
+    entry.comment_text,
+    entry.text,
+    entry.content,
+    entry.comment_content,
+  ];
+
+  for (const candidate of textCandidates) {
+    const normalizedCandidate = trimMultilineText(String(candidate ?? ''));
+
+    if (normalizedCandidate) {
+      return normalizedCandidate;
+    }
+  }
+
+  return '';
+}
+
+function collectBrightDataCommentTexts(entries: unknown, limit = 20) {
+  const comments: string[] = [];
+
+  const visitEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return;
+    }
+
+    const normalizedEntry = entry as Record<string, unknown>;
+    const commentText = extractBrightDataCommentText(normalizedEntry);
+
+    if (commentText) {
+      comments.push(commentText);
+    }
+
+    if (comments.length >= limit) {
+      return;
+    }
+
+    for (const nestedKey of ['replies', 'comments']) {
+      const nestedEntries = normalizedEntry[nestedKey];
+
+      if (Array.isArray(nestedEntries)) {
+        for (const nestedEntry of nestedEntries) {
+          if (comments.length >= limit) {
+            break;
+          }
+
+          visitEntry(nestedEntry);
+        }
+      }
+    }
+  };
+
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (comments.length >= limit) {
+        break;
+      }
+
+      visitEntry(entry);
+    }
+  } else if (entries && typeof entries === 'object') {
+    const normalizedEntries = entries as Record<string, unknown>;
+    const commentsArray = normalizedEntries.comments;
+
+    if (Array.isArray(commentsArray)) {
+      for (const entry of commentsArray) {
+        if (comments.length >= limit) {
+          break;
+        }
+
+        visitEntry(entry);
+      }
+    } else {
+      visitEntry(entries);
+    }
+  }
+
+  return comments.slice(0, limit);
+}
+
+async function fetchBrightDataYoutubeCommentTexts(
+  itemUrl: string,
+  env: ServerEnv,
+) {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeCommentDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            sort_by: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      errorText || `Bright Data YouTube comments scrape failed with ${response.status}`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  return collectBrightDataCommentTexts(payload);
+}
+
+async function fetchBrightDataRedditEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataRedditPostDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [{ url: itemUrl }],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data Reddit scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  const firstResult = Array.isArray(payload) ? payload[0] : payload;
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data Reddit scrape returned no results.');
+  }
+
+  return buildBrightDataRedditEvidence(itemUrl, firstResult);
+}
+
+function collectBrightDataRedditComments(entries: unknown, limit = 12) {
+  const comments: string[] = [];
+
+  const visitEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return;
+    }
+
+    const commentText = trimMultilineText(
+      String((entry as { comment?: unknown }).comment ?? ''),
+    );
+
+    if (commentText) {
+      comments.push(commentText);
+    }
+
+    if (comments.length >= limit) {
+      return;
+    }
+
+    const replies = (entry as { replies?: unknown }).replies;
+
+    if (Array.isArray(replies)) {
+      for (const reply of replies) {
+        if (comments.length >= limit) {
+          break;
+        }
+
+        visitEntry(reply);
+      }
+    }
+  };
+
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (comments.length >= limit) {
+        break;
+      }
+
+      visitEntry(entry);
+    }
+  }
+
+  return comments.slice(0, limit);
+}
+
+function buildBrightDataRedditEvidence(
+  itemUrl: string,
+  firstResult: Record<string, unknown>,
+): SourceEvidence {
+  const title = trimMultilineText(String(firstResult.title ?? ''));
+  const description = trimMultilineText(String(firstResult.description ?? ''));
+  const community = trimMultilineText(String(firstResult.community_name ?? ''));
+  const communityDescription = trimMultilineText(
+    String(firstResult.community_description ?? ''),
+  );
+  const comments = collectBrightDataRedditComments(firstResult.comments);
+  const evidenceText = clampEvidenceText(
+    trimMultilineText(
+      [
+        title ? `Post title: ${title}` : '',
+        description ? `Post body:\n${description}` : '',
+        community ? `Community: ${community}` : '',
+        communityDescription
+          ? `Community description:\n${communityDescription}`
+          : '',
+        comments.length > 0 ? `Comments:\n${comments.join('\n')}` : '',
+      ].join('\n\n'),
+    ),
+  );
+
+  return {
+    sourceType: 'reddit',
+    sourceUrl: itemUrl,
+    usedTranscript: false,
+    transcriptStatus: 'not_applicable',
+    status:
+      evidenceText.length >= MIN_EVIDENCE_CHARACTERS
+        ? 'success'
+        : 'insufficient_evidence',
+    evidenceText,
+    fallbackSnippet:
+      title || description || 'Bright Data Reddit evidence could not be extracted.',
+  };
+}
+
+function isRedditCommentUrl(itemUrl: string) {
+  return /\/comment\/[a-z0-9]+/i.test(itemUrl);
+}
+
+async function fetchBrightDataRedditCommentEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataRedditCommentDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            days_back: 365,
+            load_all_replies: true,
+            comment_limit: '',
+            sort_by: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      errorText || `Bright Data Reddit comment scrape failed with ${response.status}`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  const firstResult = Array.isArray(payload) ? payload[0] : payload;
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data Reddit comment scrape returned no results.');
+  }
+
+  return buildBrightDataRedditEvidence(itemUrl, firstResult);
 }
 
 function extractMetaTagValue(html: string, matcher: RegExp) {
@@ -342,6 +1202,33 @@ function normalizeWikipediaTitle(value: string) {
     .trim();
 }
 
+function normalizeComparableText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function extractWikipediaTitleFromUrl(value: string) {
+  try {
+    const normalizedValue = normalizeAbsoluteUrl(value);
+
+    if (!normalizedValue) {
+      return '';
+    }
+
+    const parsedUrl = new URL(normalizedValue);
+
+    if (!parsedUrl.hostname.includes('wikipedia.org')) {
+      return '';
+    }
+
+    return normalizeWikipediaTitle(parsedUrl.pathname.replace(/^\/wiki\//i, ''));
+  } catch {
+    return '';
+  }
+}
+
 function buildWikipediaSearchTerms(site: string) {
   try {
     const normalizedSite = normalizeAbsoluteUrl(site);
@@ -365,6 +1252,84 @@ function buildWikipediaSearchTerms(site: string) {
   } catch {
     return [];
   }
+}
+
+function scoreWikipediaTitle(title: string, site: string) {
+  const normalizedTitle = normalizeComparableText(title);
+  const searchTerms = buildWikipediaSearchTerms(site);
+  let score = 0;
+
+  for (const searchTerm of searchTerms) {
+    const normalizedSearchTerm = normalizeComparableText(searchTerm);
+
+    if (!normalizedSearchTerm) {
+      continue;
+    }
+
+    if (normalizedTitle === normalizedSearchTerm) {
+      score += 8;
+      continue;
+    }
+
+    if (normalizedTitle.includes(normalizedSearchTerm)) {
+      score += 5;
+      continue;
+    }
+
+    const normalizedSearchTokens = normalizedSearchTerm.split(' ').filter(Boolean);
+
+    if (
+      normalizedSearchTokens.length > 1 &&
+      normalizedSearchTokens.every((token) => normalizedTitle.includes(token))
+    ) {
+      score += 3;
+    }
+  }
+
+  return score;
+}
+
+function collectWikipediaTitlesFromPayload(payload: SuggestionEvaluationRequest) {
+  const orderedTitles: string[] = [];
+  const seenTitles = new Set<string>();
+  const appendTitle = (title?: string) => {
+    const normalizedTitle = normalizeWikipediaTitle(title ?? '');
+
+    if (!normalizedTitle || seenTitles.has(normalizedTitle)) {
+      return;
+    }
+
+    seenTitles.add(normalizedTitle);
+    orderedTitles.push(normalizedTitle);
+  };
+  const appendTitlesFromSource = (source?: string) => {
+    if (!source) {
+      return;
+    }
+
+    appendTitle(extractWikipediaTitleFromUrl(source));
+
+    for (const candidateUrl of extractUrlCandidatesFromText(source)) {
+      appendTitle(extractWikipediaTitleFromUrl(candidateUrl));
+    }
+  };
+
+  payload.evidenceItems
+    .filter((item) => /^Wikipedia URL:/i.test(item))
+    .forEach(appendTitlesFromSource);
+
+  payload.evidenceItems
+    .filter((item) => /^Wikipedia competitor:/i.test(item))
+    .forEach(appendTitlesFromSource);
+
+  [
+    payload.suggestionUrl ?? '',
+    payload.suggestionText,
+    ...payload.evidenceItems,
+    ...payload.sentimentRows.map((row) => row.item),
+  ].forEach(appendTitlesFromSource);
+
+  return orderedTitles;
 }
 
 async function searchWikipediaTitles(searchTerm: string) {
@@ -434,6 +1399,9 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
       page?.fullurl?.trim() ||
       page?.canonicalurl?.trim() ||
       `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`;
+    let liveCategoryCount: number | undefined;
+    let liveSectionCount: number | undefined;
+    let liveImageCount: number | undefined;
 
     if (!page || page.missing || !extract) {
       return {
@@ -444,11 +1412,108 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
         status: 'insufficient_evidence',
         evidenceText: '',
         fallbackSnippet: `Wikipedia page "${title}" could not be loaded.`,
+        maintenanceScope: 'unknown',
       };
     }
 
+    let maintenanceContext: WikipediaMaintenanceContext = {
+      scope: 'unknown',
+    };
+
+    try {
+      const rawHtml = await fetchText(sourceUrl);
+      maintenanceContext = extractWikipediaMaintenanceContextFromHtml(rawHtml);
+    } catch {
+      // Keep the article extract even if the live page probe fails.
+    }
+
+    try {
+      const categoriesAndImagesPayload = await fetchText(
+        `https://en.wikipedia.org/w/api.php?action=query&prop=categories|images&redirects=1&cllimit=max&imlimit=max&clshow=!hidden&titles=${encodeURIComponent(
+          title,
+        )}&format=json`,
+      );
+      const parsedCategoriesAndImagesPayload = JSON.parse(categoriesAndImagesPayload) as {
+        query?: {
+          pages?: Record<
+            string,
+            {
+              categories?: unknown[];
+              images?: unknown[];
+            }
+          >;
+        };
+      };
+      const mediaWikiPage = Object.values(
+        parsedCategoriesAndImagesPayload.query?.pages ?? {},
+      )[0];
+      if (Array.isArray(mediaWikiPage?.categories)) {
+        liveCategoryCount = mediaWikiPage.categories.length;
+      }
+      if (Array.isArray(mediaWikiPage?.images)) {
+        liveImageCount = mediaWikiPage.images.length;
+      }
+    } catch {
+      // Keep the extract even if structured metric fetch fails.
+    }
+
+    try {
+      const sectionsPayload = await fetchText(
+        `https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(
+          title,
+        )}&prop=sections&format=json`,
+      );
+      const parsedSectionsPayload = JSON.parse(sectionsPayload) as {
+        parse?: {
+          sections?: Array<{
+            toclevel?: string | number;
+            level?: string | number;
+          }>;
+        };
+      };
+      const sections = parsedSectionsPayload.parse?.sections ?? [];
+      const topLevelSections = sections.filter((section) => {
+        const tocLevel = Number(section.toclevel ?? '');
+        const level = Number(section.level ?? '');
+        return tocLevel === 1 || level === 2;
+      });
+      if (topLevelSections.length > 0) {
+        liveSectionCount = topLevelSections.length;
+      } else if (sections.length > 0) {
+        liveSectionCount = sections.length;
+      }
+    } catch {
+      // Keep the extract even if structured metric fetch fails.
+    }
+
+    const liveWordCount = extract.split(/\s+/).filter(Boolean).length;
+
     const evidenceText = clampEvidenceText(
-      trimMultilineText([`Wikipedia title: ${title}`, `Extract:\n${extract}`].join('\n\n')),
+      trimMultilineText(
+        [
+          `Wikipedia title: ${title}`,
+          typeof liveCategoryCount === 'number'
+            ? `Live category count: ${liveCategoryCount}`
+            : '',
+          typeof liveSectionCount === 'number'
+            ? `Live top-level section count: ${liveSectionCount}`
+            : '',
+          typeof liveImageCount === 'number' ? `Live image count: ${liveImageCount}` : '',
+          liveWordCount > 0 ? `Live word count: ${liveWordCount}` : '',
+          maintenanceContext.scope === 'section'
+            ? `Maintenance warning scope: section-level`
+            : maintenanceContext.scope === 'article'
+              ? `Maintenance warning scope: article-level`
+              : '',
+          maintenanceContext.sectionName
+            ? `Maintenance warning section: ${maintenanceContext.sectionName}`
+            : '',
+          maintenanceContext.warningText
+            ? `Maintenance warning text: ${maintenanceContext.warningText}`
+            : '',
+          `Extract:\n${extract}`,
+        ].join('\n\n'),
+      ),
     );
 
     return {
@@ -460,6 +1525,9 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
         evidenceText.length >= MIN_EVIDENCE_CHARACTERS ? 'success' : 'partial',
       evidenceText,
       fallbackSnippet: title,
+      maintenanceScope: maintenanceContext.scope,
+      maintenanceSection: maintenanceContext.sectionName,
+      maintenanceWarningText: maintenanceContext.warningText,
     };
   } catch {
     return {
@@ -472,11 +1540,23 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
       status: 'fetch_failed',
       evidenceText: '',
       fallbackSnippet: 'Failed to fetch Wikipedia page content.',
+      maintenanceScope: 'unknown',
     };
   }
 }
 
-async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      return await fetchBrightDataYoutubeEvidence(itemUrl, env);
+    } catch {
+      // Fall through to direct fetch if Bright Data is unavailable for this item.
+    }
+  }
+
   try {
     const html = await fetchText(itemUrl);
     const title =
@@ -623,7 +1703,41 @@ function buildRedditHtmlUrls(itemUrl: string) {
   }
 }
 
-async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchRedditEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      return isRedditCommentUrl(itemUrl)
+        ? await fetchBrightDataRedditCommentEvidence(itemUrl, env)
+        : await fetchBrightDataRedditEvidence(itemUrl, env);
+    } catch {
+      // Fall back to Unlocker and then the legacy Reddit fetch path.
+    }
+  }
+
+  if (getBrightDataApiKey(env)) {
+    try {
+      const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
+      const pageText = clampEvidenceText(trimMultilineText(brightDataBody));
+
+      if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
+        return {
+          sourceType: 'reddit',
+          sourceUrl: itemUrl,
+          usedTranscript: false,
+          transcriptStatus: 'not_applicable',
+          status: 'success',
+          evidenceText: pageText,
+          fallbackSnippet: pageText.slice(0, 280),
+        };
+      }
+    } catch {
+      // Fall back to the existing Reddit fetch path.
+    }
+  }
+
   const jsonUrls = buildRedditJsonUrls(itemUrl);
   let lastFetchError = '';
 
@@ -727,7 +1841,31 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
   };
 }
 
-async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchWebEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
+      const pageText = clampEvidenceText(trimMultilineText(brightDataBody));
+
+      if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
+        return {
+          sourceType: 'web',
+          sourceUrl: itemUrl,
+          usedTranscript: false,
+          transcriptStatus: 'not_applicable',
+          status: 'success',
+          evidenceText: pageText,
+          fallbackSnippet: pageText.slice(0, 280),
+        };
+      }
+    } catch {
+      // Fall back to direct fetch.
+    }
+  }
+
   try {
     const html = await fetchText(itemUrl);
     const title =
@@ -774,36 +1912,16 @@ async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
 
 async function fetchEvidenceForSuggestionRequest(
   payload: SuggestionEvaluationRequest,
+  env: ServerEnv,
 ): Promise<SuggestionEvidenceBundle> {
   if (payload.opportunityType === 'Wikipedia') {
-    const wikipediaTitles = new Set<string>();
-    const normalizedSuggestionUrl = payload.suggestionUrl
-      ? normalizeAbsoluteUrl(payload.suggestionUrl)
-      : '';
-
-    if (normalizedSuggestionUrl) {
-      try {
-        const parsedSuggestionUrl = new URL(normalizedSuggestionUrl);
-
-        if (parsedSuggestionUrl.hostname.includes('wikipedia.org')) {
-          const suggestionTitle = normalizeWikipediaTitle(
-            parsedSuggestionUrl.pathname.replace(/^\/wiki\//i, ''),
-          );
-
-          if (suggestionTitle) {
-            wikipediaTitles.add(suggestionTitle);
-          }
-        }
-      } catch {
-        // Ignore malformed suggestion URLs and fall back to search terms.
-      }
-    }
+    const wikipediaTitles = new Set<string>(collectWikipediaTitlesFromPayload(payload));
 
     if (wikipediaTitles.size === 0) {
       const searchTerms = buildWikipediaSearchTerms(payload.site);
 
       for (const searchTerm of searchTerms) {
-        const titles = await searchWikipediaTitles(searchTerm);
+      const titles = await searchWikipediaTitles(searchTerm);
         titles.forEach((title) => wikipediaTitles.add(title));
 
         if (wikipediaTitles.size > 0) {
@@ -816,7 +1934,7 @@ async function fetchEvidenceForSuggestionRequest(
       wikipediaTitles.size > 0
         ? await Promise.all(
             Array.from(wikipediaTitles)
-              .slice(0, 2)
+              .slice(0, MAX_WIKIPEDIA_SOURCE_COUNT)
               .map((title) => fetchWikipediaArticleEvidence(title)),
           )
         : [
@@ -861,27 +1979,42 @@ async function fetchEvidenceForSuggestionRequest(
     };
   }
 
+  const suggestionTextUrls = extractUrlCandidatesFromText(payload.suggestionText);
   const candidateUrls = Array.from(
     new Set(
-      [
-        payload.suggestionUrl ? normalizeAbsoluteUrl(payload.suggestionUrl) : '',
-        ...payload.evidenceItems.map(normalizeAbsoluteUrl),
-        payload.evidenceItems.length === 0 ? normalizeAbsoluteUrl(payload.site) : '',
-      ].filter(Boolean),
+      (
+        payload.opportunityType === 'Cited URLs'
+          ? [
+              ...payload.evidenceItems.map(normalizeAbsoluteUrl),
+              ...payload.sentimentRows.map((row) => normalizeAbsoluteUrl(row.item)),
+              ...suggestionTextUrls,
+              payload.suggestionUrl ? normalizeAbsoluteUrl(payload.suggestionUrl) : '',
+            ]
+          : [
+              payload.suggestionUrl ? normalizeAbsoluteUrl(payload.suggestionUrl) : '',
+              ...payload.evidenceItems.map(normalizeAbsoluteUrl),
+              ...payload.sentimentRows.map((row) => normalizeAbsoluteUrl(row.item)),
+              ...suggestionTextUrls,
+            ]
+      ).filter(Boolean),
     ),
-  ).slice(0, 3);
+  ).slice(0, payload.opportunityType === 'Cited URLs' ? 5 : 3);
+
+  if (candidateUrls.length === 0) {
+    candidateUrls.push(normalizeAbsoluteUrl(payload.site));
+  }
 
   const sources = await Promise.all(
     candidateUrls.map((url) => {
       if (payload.opportunityType === 'YouTube') {
-        return fetchYoutubeEvidence(url);
+        return fetchYoutubeEvidence(url, env);
       }
 
       if (payload.opportunityType === 'Reddit') {
-        return fetchRedditEvidence(url);
+        return fetchRedditEvidence(url, env);
       }
 
-      return fetchWebEvidence(url);
+      return fetchWebEvidence(url, env);
     }),
   );
 
@@ -969,6 +2102,10 @@ function buildSuggestionConfidenceScore(input: {
     confidenceScore += 4;
   }
 
+  if (input.llmResult.verdict === 'Incorrect') {
+    confidenceScore = 100 - confidenceScore;
+  }
+
   return clampConfidenceScore(confidenceScore);
 }
 
@@ -976,10 +2113,18 @@ function buildSuggestionPrompt(
   payload: SuggestionEvaluationRequest,
   evidence: SuggestionEvidenceBundle,
 ) {
+  const localSuggestionContext = buildLocalSuggestionContext(payload);
+
   return [
     'You are an expert in off-site SEO, GEO, AEO, Reddit, YouTube, Cited URLs, and Wikipedia visibility.',
     'Judge whether the suggestion is grounded in the provided evidence or appears hallucinated / unsupported.',
     'Use only the evidence provided below.',
+    'Wikipedia opportunities do not have extracted Sentiment & SOV rows. For Wikipedia, use the current payload evidence items and fetched Wikipedia pages as the local source of truth.',
+    'Distinguish article-level maintenance warnings from section-level warnings. If the evidence says "This section needs to be updated", do not describe the whole article as outdated. Name the affected section when the evidence provides it.',
+    'For Cited URLs suggestions, use the local extracted Sentiment & SOV rows to verify which third-party URLs are part of the extracted opportunity context.',
+    'For count-based claims, use the local extracted rows and their Times Cited values as the source of truth for URL counts and citation totals.',
+    'Do not mark a suggestion incorrect just because fetched third-party pages do not expose citation totals; citation counts may come from the originating extracted dataset.',
+    'Use fetched third-party pages primarily to verify whether those sources do or do not mention the target brand and whether the recommendation is directionally justified.',
     '',
     `Site URL: ${payload.site}`,
     `Site ID: ${payload.siteId ?? 'Unknown'}`,
@@ -996,9 +2141,1045 @@ function buildSuggestionPrompt(
     '- correctedSuggestion if the original suggestion is incorrect; otherwise return an empty string',
     '- evidenceSufficient = false if the fetched evidence is too weak to make a grounded decision',
     '',
-    'Evidence:',
+    'Local extracted opportunity context:',
+    localSuggestionContext || 'None',
+    '',
+    'Fetched source evidence:',
     evidence.combinedEvidenceText,
   ].join('\n');
+}
+
+function collectWikipediaMaintenanceContext(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
+): WikipediaMaintenanceContext {
+  const sourceContext = evidence.sources.find(
+    (source) => source.maintenanceScope && source.maintenanceScope !== 'unknown',
+  );
+
+  if (sourceContext) {
+    return {
+      scope: sourceContext.maintenanceScope ?? 'unknown',
+      sectionName: sourceContext.maintenanceSection,
+      warningText: sourceContext.maintenanceWarningText,
+    };
+  }
+
+  const payloadContext: WikipediaMaintenanceContext = {
+    scope: 'unknown',
+  };
+
+  for (const item of payload.evidenceItems) {
+    if (/^Wikipedia maintenance scope:/i.test(item)) {
+      const value = item.split(':').slice(1).join(':').trim().toLowerCase();
+      payloadContext.scope =
+        value === 'section-level'
+          ? 'section'
+          : value === 'article-level'
+            ? 'article'
+            : 'unknown';
+      continue;
+    }
+
+    if (/^Wikipedia maintenance section:/i.test(item)) {
+      payloadContext.sectionName = item.split(':').slice(1).join(':').trim();
+      continue;
+    }
+
+    if (/^Wikipedia maintenance /i.test(item)) {
+      const warningText = item.split(':').slice(1).join(':').trim();
+      payloadContext.warningText = warningText || payloadContext.warningText;
+
+      if (/^This section needs to be updated/i.test(warningText)) {
+        payloadContext.scope = 'section';
+      } else if (/^This article needs to be updated/i.test(warningText)) {
+        payloadContext.scope = 'article';
+      }
+    }
+  }
+
+  return payloadContext;
+}
+
+function buildSectionSpecificWikipediaSuggestion(
+  originalSuggestion: string,
+  maintenanceContext: WikipediaMaintenanceContext,
+) {
+  const sectionLabel = maintenanceContext.sectionName
+    ? `${maintenanceContext.sectionName} section`
+    : 'affected section';
+  const rewrittenSuggestion = originalSuggestion
+    .replace(
+      /Wikipedia has flagged this article as containing outdated information/gi,
+      `Wikipedia has flagged the ${sectionLabel} as containing outdated information`,
+    )
+    .replace(/\bthis article\b/gi, `the ${sectionLabel}`)
+    .replace(
+      /Review all sections, especially those related to recent events, company developments, or product launches/gi,
+      `Review the ${sectionLabel}, especially any material related to recent events, company developments, or product launches`,
+    );
+
+  if (rewrittenSuggestion !== originalSuggestion) {
+    return rewrittenSuggestion;
+  }
+
+  return trimMultilineText(
+    [
+      `Wikipedia has flagged the ${sectionLabel} as containing outdated information.`,
+      'Review that section, especially the material related to recent events, company developments, or product launches, and update it with current, verifiable information from independent sources.',
+    ].join(' '),
+  );
+}
+
+function applyWikipediaMaintenanceOverride(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
+  llmResult: LlmSuggestionEvaluation,
+): LlmSuggestionEvaluation {
+  if (payload.opportunityType !== 'Wikipedia') {
+    return llmResult;
+  }
+
+  const maintenanceContext = collectWikipediaMaintenanceContext(payload, evidence);
+  const broadArticleClaim =
+    /\bthis article\b/i.test(payload.suggestionText) &&
+    /\boutdated|update/i.test(payload.suggestionText);
+
+  if (maintenanceContext.scope !== 'section' || !broadArticleClaim) {
+    return llmResult;
+  }
+
+  const sectionLabel = maintenanceContext.sectionName
+    ? `${maintenanceContext.sectionName} section`
+    : 'affected section';
+  const warningText =
+    maintenanceContext.warningText ?? 'This section needs to be updated.';
+
+  return {
+    ...llmResult,
+    verdict: 'Incorrect',
+    evidenceSufficient: true,
+    confidence: maintenanceContext.sectionName ? 'high' : 'medium',
+    rationale: trimMultilineText(
+      [
+        `The suggestion overstates the maintenance issue. Wikipedia's warning applies to the ${sectionLabel}, not the entire article.`,
+        `The underlying warning text is: ${warningText}`,
+      ].join(' '),
+    ),
+    evidenceSnippet: trimMultilineText(
+      `Maintenance warning applies to the ${sectionLabel}: ${warningText}`,
+    ),
+    correctedSuggestion: buildSectionSpecificWikipediaSuggestion(
+      payload.suggestionText,
+      maintenanceContext,
+    ),
+  };
+}
+
+function collectWikipediaQualityStatusContext(
+  payload: SuggestionEvaluationRequest,
+): WikipediaQualityStatusContext {
+  const context: WikipediaQualityStatusContext = {};
+
+  for (const item of payload.evidenceItems) {
+    if (/^Wikipedia has Good Article status:/i.test(item)) {
+      const value = item.split(':').slice(1).join(':').trim().toLowerCase();
+      context.hasGoodArticle = value === 'true';
+      continue;
+    }
+
+    if (/^Wikipedia has Featured Article status:/i.test(item)) {
+      const value = item.split(':').slice(1).join(':').trim().toLowerCase();
+      context.hasFeaturedArticle = value === 'true';
+    }
+  }
+
+  return context;
+}
+
+function collectWikipediaDeterministicContext(
+  payload: SuggestionEvaluationRequest,
+): WikipediaDeterministicContext {
+  const citationsRank = parseRankFromEvidenceItem(
+    payload.evidenceItems,
+    'Wikipedia citations rank',
+  );
+  const sectionsRank = parseRankFromEvidenceItem(
+    payload.evidenceItems,
+    'Wikipedia sections rank',
+  );
+  const imagesRank = parseRankFromEvidenceItem(
+    payload.evidenceItems,
+    'Wikipedia images rank',
+  );
+  const categoriesRank = parseRankFromEvidenceItem(
+    payload.evidenceItems,
+    'Wikipedia categories rank',
+  );
+
+  return {
+    citationCount: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia citation count',
+    ),
+    avgCitations: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia industry average citations',
+    ),
+    citationsRank: citationsRank?.rank,
+    citationsRankOf: citationsRank?.of,
+    secondPlaceCitations: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia second place citations',
+    ),
+    citationsLeadOverSecondPlace: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia citations lead over second place',
+    ),
+    citationsLeadAboveAverage: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia citations lead above average',
+    ),
+    sectionCount: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia section count',
+    ),
+    avgSections: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia industry average sections',
+    ),
+    sectionsRank: sectionsRank?.rank,
+    sectionsRankOf: sectionsRank?.of,
+    imageCount: parseNumberFromEvidenceItem(payload.evidenceItems, 'Wikipedia image count'),
+    avgImages: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia industry average images',
+    ),
+    imagesRank: imagesRank?.rank,
+    imagesRankOf: imagesRank?.of,
+    secondPlaceImages: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia second place images',
+    ),
+    imagesLeadOverSecondPlace: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia images lead over second place',
+    ),
+    categoryCount: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia category count',
+    ),
+    avgCategories: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia industry average categories',
+    ),
+    categoriesRank: categoriesRank?.rank,
+    categoriesRankOf: categoriesRank?.of,
+    categoriesComparison: parseStringFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia categories comparison',
+    ),
+    hasInfobox: parseBooleanFromEvidenceItem(payload.evidenceItems, 'Wikipedia has infobox'),
+    hasNavbox: parseBooleanFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia has navigation box',
+    ),
+    hasSeeAlso: parseBooleanFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia has See also section',
+    ),
+    hasExternalLinks: parseBooleanFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia has External links section',
+    ),
+    competitorsAnalyzed: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia competitors analyzed',
+    ),
+    competitorsWithInfobox: parseCompetitorPrevalenceFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia competitors with infobox',
+    ),
+    competitorsWithNavigationBox: parseCompetitorPrevalenceFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia competitors with navigation box',
+    ),
+    competitorsWithSeeAlso: parseCompetitorPrevalenceFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia competitors with See also section',
+    ),
+    competitorsWithExternalLinks: parseCompetitorPrevalenceFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia competitors with External links section',
+    ),
+    infoboxFieldCount: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia infobox field count',
+    ),
+    infoboxFields: parseListFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia infobox fields',
+    ),
+    commonCompetitorInfoboxFields: parseListFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia common competitor infobox fields',
+    ),
+    missingCommonInfoboxFields: parseListFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia missing common infobox fields',
+    ),
+    lastEdited: parseStringFromEvidenceItem(payload.evidenceItems, 'Wikipedia last edited'),
+    editCount30Days: parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia edits in last 30 days',
+    ),
+    hasGoodArticle: parseBooleanFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia has Good Article status',
+    ),
+    hasFeaturedArticle: parseBooleanFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia has Featured Article status',
+    ),
+  };
+}
+
+function parseNumberFromSourceEvidenceText(
+  evidenceText: string,
+  label: string,
+): number | undefined {
+  const line = evidenceText
+    .split('\n')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${label}:`));
+
+  if (!line) {
+    return undefined;
+  }
+
+  const rawValue = line.split(':').slice(1).join(':').trim();
+  const parsedValue = Number.parseFloat(rawValue);
+  return Number.isFinite(parsedValue) ? parsedValue : undefined;
+}
+
+function collectWikipediaFetchedMetricEntries(
+  evidence: SuggestionEvidenceBundle,
+): WikipediaFetchedMetricEntry[] {
+  return evidence.sources
+    .filter((source) => source.sourceUrl.includes('wikipedia.org'))
+    .map((source) => {
+      const titleLine = source.evidenceText
+        .split('\n')
+        .map((entry) => entry.trim())
+        .find((entry) => entry.startsWith('Wikipedia title:'));
+      const title = titleLine?.split(':').slice(1).join(':').trim() || undefined;
+
+      return {
+        title,
+        sourceUrl: source.sourceUrl,
+        categoryCount: parseNumberFromSourceEvidenceText(
+          source.evidenceText,
+          'Live category count',
+        ),
+        sectionCount: parseNumberFromSourceEvidenceText(
+          source.evidenceText,
+          'Live top-level section count',
+        ),
+        imageCount: parseNumberFromSourceEvidenceText(
+          source.evidenceText,
+          'Live image count',
+        ),
+        wordCount: parseNumberFromSourceEvidenceText(
+          source.evidenceText,
+          'Live word count',
+        ),
+      };
+    });
+}
+
+function collectWikipediaFetchedCategoryComparison(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
+): WikipediaFetchedCategoryComparison | null {
+  const mainWikipediaTitle = extractWikipediaTitleFromUrl(
+    parseStringFromEvidenceItem(payload.evidenceItems, 'Wikipedia URL') ?? '',
+  );
+  const fetchedEntries = collectWikipediaFetchedMetricEntries(evidence)
+    .filter(
+      (entry): entry is WikipediaFetchedMetricEntry & { title: string; categoryCount: number } =>
+        typeof entry.title === 'string' && typeof entry.categoryCount === 'number',
+    );
+
+  if (fetchedEntries.length === 0) {
+    return null;
+  }
+
+  const mainEntry =
+    fetchedEntries.find(
+      (entry) =>
+        mainWikipediaTitle &&
+        normalizeWikipediaTitle(entry.title) === normalizeWikipediaTitle(mainWikipediaTitle),
+    ) ?? fetchedEntries[0];
+  const rankedEntries = [...fetchedEntries].sort(
+    (leftEntry, rightEntry) => rightEntry.categoryCount - leftEntry.categoryCount,
+  );
+  const distinctHigherValues = new Set(
+    rankedEntries
+      .filter((entry) => entry.categoryCount > mainEntry.categoryCount)
+      .map((entry) => entry.categoryCount),
+  );
+  const average =
+    rankedEntries.reduce((sum, entry) => sum + entry.categoryCount, 0) / rankedEntries.length;
+
+  return {
+    categoryCount: mainEntry.categoryCount,
+    avgCategories: average,
+    categoriesRank: distinctHigherValues.size + 1,
+    categoriesRankOf: rankedEntries.length,
+    categoriesComparison: rankedEntries
+      .map((entry) => `${entry.title}=${entry.categoryCount}`)
+      .join(', '),
+    leaderName: rankedEntries[0]?.title,
+    leaderCount: rankedEntries[0]?.categoryCount,
+  };
+}
+
+function extractSuggestionIdToken(value?: string) {
+  return (value ?? '').trim().toUpperCase();
+}
+
+function buildDeterministicSuggestionResult(input: {
+  verdict: SuggestionEvaluationVerdict;
+  confidence: LlmSuggestionEvaluation['confidence'];
+  rationale: string;
+  evidenceSnippet: string;
+  correctedSuggestion?: string;
+}): LlmSuggestionEvaluation {
+  return {
+    targetBrand: '',
+    verdict: input.verdict,
+    evidenceSufficient: input.verdict !== 'Needs Review',
+    confidence: input.confidence,
+    rationale: trimMultilineText(input.rationale),
+    evidenceSnippet: trimMultilineText(input.evidenceSnippet),
+    correctedSuggestion: trimMultilineText(input.correctedSuggestion ?? ''),
+  };
+}
+
+function buildStructuredAssessmentRationale(input: {
+  correctPoints?: string[];
+  inaccuratePoints?: string[];
+  finalDecision: string;
+}) {
+  const sections: string[] = [];
+
+  if (input.correctPoints && input.correctPoints.length > 0) {
+    sections.push(
+      ['What\'s correct:', ...input.correctPoints.map((point) => `- ${point}`)].join('\n'),
+    );
+  }
+
+  if (input.inaccuratePoints && input.inaccuratePoints.length > 0) {
+    sections.push(
+      [
+        "What's inaccurate or unsupported:",
+        ...input.inaccuratePoints.map((point) => `- ${point}`),
+      ].join('\n'),
+    );
+  }
+
+  sections.push(['Final decision:', `- ${input.finalDecision}`].join('\n'));
+
+  return sections.join('\n\n');
+}
+
+function collectSuggestionSourceMismatchEvidenceItems(
+  payload: SuggestionEvaluationRequest,
+) {
+  return payload.evidenceItems.filter(
+    (item) =>
+      /^Suggestion source mismatch:/i.test(item) ||
+      /^Embedded opportunity payload suggestion text:/i.test(item) ||
+      /^Suggestions endpoint suggestion text:/i.test(item) ||
+      /^Embedded opportunity payload suggestion URL:/i.test(item) ||
+      /^Suggestions endpoint suggestion URL:/i.test(item),
+  );
+}
+
+function appendSuggestionSourceMismatchEvidence(
+  payload: SuggestionEvaluationRequest,
+  result: SuggestionEvaluationResult,
+): SuggestionEvaluationResult {
+  const mismatchEvidenceItems = collectSuggestionSourceMismatchEvidenceItems(payload);
+
+  if (mismatchEvidenceItems.length === 0) {
+    return result;
+  }
+
+  const mismatchSummary =
+    mismatchEvidenceItems.find((item) => /^Suggestion source mismatch:/i.test(item)) ??
+    'Suggestion source mismatch: Embedded opportunity payload and /suggestions endpoint disagree.';
+
+  return {
+    ...result,
+    rationale: trimMultilineText([result.rationale, mismatchSummary].join(' ')),
+    evidenceSnippet: trimMultilineText(
+      [result.evidenceSnippet, ...mismatchEvidenceItems].filter(Boolean).join('\n'),
+    ),
+  };
+}
+
+function applyWikipediaQualityStatusOverride(
+  payload: SuggestionEvaluationRequest,
+  llmResult: LlmSuggestionEvaluation,
+): LlmSuggestionEvaluation {
+  if (payload.opportunityType !== 'Wikipedia') {
+    return llmResult;
+  }
+
+  const qualityStatusContext = collectWikipediaQualityStatusContext(payload);
+
+  if (
+    typeof qualityStatusContext.hasGoodArticle !== 'boolean' ||
+    typeof qualityStatusContext.hasFeaturedArticle !== 'boolean'
+  ) {
+    return llmResult;
+  }
+
+  const articleLacksQualityStatus =
+    qualityStatusContext.hasGoodArticle === false &&
+    qualityStatusContext.hasFeaturedArticle === false;
+  const suggestionClaimsNoQualityStatus =
+    /does not currently have featured article or good article status/i.test(
+      payload.suggestionText,
+    ) ||
+    /consider working toward these quality ratings/i.test(payload.suggestionText);
+
+  if (!articleLacksQualityStatus || !suggestionClaimsNoQualityStatus) {
+    return llmResult;
+  }
+
+  return {
+    ...llmResult,
+    verdict: 'Correct',
+    evidenceSufficient: true,
+    confidence: 'high',
+    rationale: trimMultilineText(
+      'The suggestion is grounded in the Wikipedia analysis payload. The article does not have Featured Article or Good Article status, so the recommendation is factually supported.',
+    ),
+    evidenceSnippet:
+      'Wikipedia has Featured Article status: false; Wikipedia has Good Article status: false',
+    correctedSuggestion: '',
+  };
+}
+
+function extractSuggestionMetric(
+  suggestionText: string,
+  pattern: RegExp,
+): number | undefined {
+  const match = suggestionText.match(pattern);
+
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const parsedValue = Number.parseFloat(match[1]);
+  return Number.isFinite(parsedValue) ? parsedValue : undefined;
+}
+
+function matchesRoundedMetric(actualValue?: number, expectedValue?: number) {
+  if (typeof actualValue !== 'number' || typeof expectedValue !== 'number') {
+    return false;
+  }
+
+  return Math.abs(actualValue - expectedValue) < 0.15;
+}
+
+function evaluateWikipediaSuggestionDeterministically(
+  payload: SuggestionEvaluationRequest,
+  evidence: SuggestionEvidenceBundle,
+): LlmSuggestionEvaluation | null {
+  if (payload.opportunityType !== 'Wikipedia') {
+    return null;
+  }
+
+  const suggestionId = extractSuggestionIdToken(payload.suggestionId);
+  const context = collectWikipediaDeterministicContext(payload);
+  const maintenanceContext = collectWikipediaMaintenanceContext(payload, evidence);
+  const suggestionText = payload.suggestionText;
+
+  if (suggestionId === 'ARTICLE_MAINTENANCE_OUTDATED') {
+    if (maintenanceContext.scope === 'section') {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Incorrect',
+        confidence: maintenanceContext.sectionName ? 'high' : 'medium',
+        rationale: `The suggestion overstates the maintenance issue. Wikipedia's warning applies to the ${maintenanceContext.sectionName ?? 'affected section'}, not the entire article.`,
+        evidenceSnippet: `Maintenance warning applies to the ${maintenanceContext.sectionName ?? 'affected section'}: ${maintenanceContext.warningText ?? 'This section needs to be updated.'}`,
+      });
+    }
+
+    if (maintenanceContext.scope === 'article') {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Correct',
+        confidence: 'high',
+        rationale:
+          "The suggestion is grounded. Wikipedia's maintenance warning applies to the article itself.",
+        evidenceSnippet:
+          maintenanceContext.warningText ??
+          'Wikipedia article-level maintenance warning is present.',
+      });
+    }
+
+    return buildDeterministicSuggestionResult({
+      verdict: 'Needs Review',
+      confidence: 'low',
+      rationale:
+        'The maintenance warning could not be scoped confidently from the current page evidence.',
+      evidenceSnippet:
+        maintenanceContext.warningText ?? 'No maintenance warning was confirmed on the live page.',
+    });
+  }
+
+  if (suggestionId === 'ARTICLE_QUALITY_STATUS') {
+    if (
+      context.hasGoodArticle === false &&
+      context.hasFeaturedArticle === false
+    ) {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Correct',
+        confidence: 'high',
+        rationale:
+          'The suggestion matches the Wikipedia analysis payload. The article does not have Featured Article or Good Article status.',
+        evidenceSnippet:
+          'Wikipedia has Featured Article status: false; Wikipedia has Good Article status: false',
+      });
+    }
+
+    if (
+      context.hasGoodArticle === true ||
+      context.hasFeaturedArticle === true
+    ) {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Incorrect',
+        confidence: 'high',
+        rationale:
+          'The suggestion is contradicted by the Wikipedia analysis payload, which indicates the article already has an elevated quality status.',
+        evidenceSnippet: `Wikipedia has Featured Article status: ${context.hasFeaturedArticle}; Wikipedia has Good Article status: ${context.hasGoodArticle}`,
+      });
+    }
+
+    return null;
+  }
+
+  if (suggestionId === 'REFERENCES_LEADER') {
+    const references = extractSuggestionMetric(suggestionText, /(\d+(?:\.\d+)?)\s+references/i);
+    const rankMatch = suggestionText.match(/#(\d+)\s+of\s+(\d+)/i);
+    const leadOverSecond = extractSuggestionMetric(
+      suggestionText,
+      /(\d+(?:\.\d+)?)\s+references ahead of the second-place company/i,
+    );
+    const average = extractSuggestionMetric(
+      suggestionText,
+      /industry average:\s*(\d+(?:\.\d+)?)\s+references/i,
+    );
+    const leadAboveAverage = extractSuggestionMetric(
+      suggestionText,
+      /your lead:\s*(\d+(?:\.\d+)?)\s+references above average/i,
+    );
+    const isMatch =
+      matchesRoundedMetric(references, context.citationCount) &&
+      (rankMatch
+        ? Number.parseInt(rankMatch[1], 10) === context.citationsRank &&
+          Number.parseInt(rankMatch[2], 10) === context.citationsRankOf
+        : true) &&
+      matchesRoundedMetric(leadOverSecond, context.citationsLeadOverSecondPlace) &&
+      matchesRoundedMetric(average, context.avgCitations) &&
+      matchesRoundedMetric(leadAboveAverage, context.citationsLeadAboveAverage);
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The reference leadership claim matches the structured Wikipedia analysis metrics for citation count, rank, gap to second place, and lead above average.'
+        : 'The reference leadership claim does not match the structured Wikipedia analysis metrics for citations, ranking, or the reported gap.',
+      evidenceSnippet: `Wikipedia citation count: ${context.citationCount}; Wikipedia citations rank: #${context.citationsRank} of ${context.citationsRankOf}; Wikipedia citations lead over second place: ${context.citationsLeadOverSecondPlace}; Wikipedia industry average citations: ${context.avgCitations}`,
+    });
+  }
+
+  if (suggestionId === 'SECTIONS_LEADER') {
+    const sections = extractSuggestionMetric(suggestionText, /(\d+(?:\.\d+)?)\s+sections/i);
+    const rankMatch = suggestionText.match(/#(\d+)\s+of\s+(\d+)/i);
+    const average = extractSuggestionMetric(
+      suggestionText,
+      /industry average:\s*(\d+(?:\.\d+)?)\s+sections/i,
+    );
+    const isMatch =
+      matchesRoundedMetric(sections, context.sectionCount) &&
+      (rankMatch
+        ? Number.parseInt(rankMatch[1], 10) === context.sectionsRank &&
+          Number.parseInt(rankMatch[2], 10) === context.sectionsRankOf
+        : true) &&
+      matchesRoundedMetric(average, context.avgSections);
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The sections leadership claim matches the structured Wikipedia analysis metrics for section count, ranking, and industry average.'
+        : 'The sections leadership claim does not match the structured Wikipedia analysis metrics.',
+      evidenceSnippet: `Wikipedia section count: ${context.sectionCount}; Wikipedia sections rank: #${context.sectionsRank} of ${context.sectionsRankOf}; Wikipedia industry average sections: ${context.avgSections}`,
+    });
+  }
+
+  if (suggestionId === 'IMAGES_LEADER') {
+    const images = extractSuggestionMetric(suggestionText, /(\d+(?:\.\d+)?)\s+images/i);
+    const rankMatch = suggestionText.match(/#(\d+)\s+of\s+(\d+)/i);
+    const leadOverSecond = extractSuggestionMetric(
+      suggestionText,
+      /(\d+(?:\.\d+)?)\s+images ahead of the second-place company/i,
+    );
+    const average = extractSuggestionMetric(
+      suggestionText,
+      /industry average:\s*(\d+(?:\.\d+)?)\s+images/i,
+    );
+    const isMatch =
+      matchesRoundedMetric(images, context.imageCount) &&
+      (rankMatch
+        ? Number.parseInt(rankMatch[1], 10) === context.imagesRank &&
+          Number.parseInt(rankMatch[2], 10) === context.imagesRankOf
+        : true) &&
+      matchesRoundedMetric(leadOverSecond, context.imagesLeadOverSecondPlace) &&
+      matchesRoundedMetric(average, context.avgImages);
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The image leadership claim matches the structured Wikipedia analysis metrics for image count, ranking, and gap to second place.'
+        : 'The image leadership claim does not match the structured Wikipedia analysis metrics.',
+      evidenceSnippet: `Wikipedia image count: ${context.imageCount}; Wikipedia images rank: #${context.imagesRank} of ${context.imagesRankOf}; Wikipedia images lead over second place: ${context.imagesLeadOverSecondPlace}; Wikipedia industry average images: ${context.avgImages}`,
+    });
+  }
+
+  if (suggestionId === 'CATEGORIES_ABOVE_AVERAGE') {
+    const categories = extractSuggestionMetric(suggestionText, /(\d+(?:\.\d+)?)\s+categories/i);
+    const rankMatch = suggestionText.match(/rank\s*#(\d+)\s+out of\s+(\d+)/i);
+    const average = extractSuggestionMetric(
+      suggestionText,
+      /industry average of\s*(\d+(?:\.\d+)?)/i,
+    );
+    const claimsAboveAverage = /above average/i.test(suggestionText);
+    const fetchedCategoryComparison = collectWikipediaFetchedCategoryComparison(
+      payload,
+      evidence,
+    );
+    const isBelowAverage =
+      typeof context.categoryCount === 'number' &&
+      typeof context.avgCategories === 'number' &&
+      context.categoryCount < context.avgCategories;
+    const payloadAndLiveAgree =
+      fetchedCategoryComparison
+        ? matchesRoundedMetric(
+            fetchedCategoryComparison.categoryCount,
+            context.categoryCount,
+          ) &&
+          matchesRoundedMetric(
+            fetchedCategoryComparison.avgCategories,
+            context.avgCategories,
+          ) &&
+          (typeof context.categoriesRank === 'number' &&
+          typeof fetchedCategoryComparison.categoriesRank === 'number'
+            ? context.categoriesRank === fetchedCategoryComparison.categoriesRank
+            : true)
+        : true;
+    const numericMatch =
+      matchesRoundedMetric(categories, context.categoryCount) &&
+      (rankMatch
+        ? Number.parseInt(rankMatch[1], 10) === context.categoriesRank &&
+          Number.parseInt(rankMatch[2], 10) === context.categoriesRankOf
+        : true) &&
+      matchesRoundedMetric(average, context.avgCategories);
+    const isMatch =
+      numericMatch && !(claimsAboveAverage && isBelowAverage) && payloadAndLiveAgree;
+    const expectedRank =
+      typeof context.categoriesRank === 'number' &&
+      typeof context.categoriesRankOf === 'number'
+        ? `#${context.categoriesRank} of ${context.categoriesRankOf}`
+        : 'unknown';
+    const reportedRank = rankMatch ? `#${rankMatch[1]} of ${rankMatch[2]}` : 'not stated';
+    const categoryLeadersMatch = suggestionText.match(
+      /\*\*Industry Leader:\*\*\s*([^.]+)/i,
+    );
+    const categoryLeaders = categoryLeadersMatch?.[1]?.trim() || '';
+
+    return buildDeterministicSuggestionResult({
+      verdict: payloadAndLiveAgree ? (isMatch ? 'Correct' : 'Incorrect') : 'Needs Review',
+      confidence: payloadAndLiveAgree ? 'high' : 'medium',
+      rationale: isMatch
+        ? 'The category suggestion aligns with the structured Wikipedia analysis metrics.'
+        : trimMultilineText(
+            [
+              payloadAndLiveAgree
+                ? 'The category suggestion conflicts with the structured Wikipedia analysis metrics.'
+                : 'The category suggestion conflicts with the current payload metrics, and the live competitor-page fetches do not cleanly corroborate the same comparison snapshot.',
+              typeof context.categoryCount === 'number' &&
+              typeof context.avgCategories === 'number'
+                ? `The article has ${context.categoryCount} categories while the industry average is ${context.avgCategories}, so it is below average rather than above average.`
+                : '',
+              rankMatch &&
+              typeof context.categoriesRank === 'number' &&
+              typeof context.categoriesRankOf === 'number' &&
+              reportedRank !== expectedRank
+                ? `The suggestion says the article ranks ${reportedRank}, but the payload ranks it ${expectedRank}.`
+                : '',
+              categoryLeaders && context.categoriesComparison
+                ? `The industry-leader wording was checked against the comparison set: ${context.categoriesComparison}.`
+                : '',
+              fetchedCategoryComparison?.categoriesComparison
+                ? `The live Wikipedia fetch comparison was: ${fetchedCategoryComparison.categoriesComparison}.`
+                : '',
+            ].join(' '),
+          ),
+      evidenceSnippet: trimMultilineText(
+        [
+          `Wikipedia category count: ${context.categoryCount}`,
+          `Wikipedia categories rank: ${expectedRank}`,
+          `Wikipedia industry average categories: ${context.avgCategories}`,
+          context.categoriesComparison
+            ? `Wikipedia categories comparison: ${context.categoriesComparison}`
+            : '',
+          fetchedCategoryComparison?.categoriesComparison
+            ? `Live fetched categories comparison: ${fetchedCategoryComparison.categoriesComparison}`
+            : '',
+        ].filter(Boolean).join('; '),
+      ),
+    });
+  }
+
+  if (suggestionId === 'EXTERNAL_LINKS_ABOVE_AVERAGE') {
+    const percentage = extractSuggestionMetric(
+      suggestionText,
+      /(\d+(?:\.\d+)?)%\s+of your competitors also have this section/i,
+    );
+    const isMatch =
+      context.hasExternalLinks === true &&
+      matchesRoundedMetric(
+        percentage,
+        context.competitorsWithExternalLinks?.percentage,
+      );
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The suggestion matches the payload evidence: the article has an External links section and the competitor prevalence matches.'
+        : 'The suggestion does not match the payload evidence for the External links section or competitor prevalence.',
+      evidenceSnippet: `Wikipedia has External links section: ${context.hasExternalLinks}; Wikipedia competitors with External links section: ${context.competitorsWithExternalLinks?.count} of ${context.competitorsWithExternalLinks?.total} (${context.competitorsWithExternalLinks?.percentage}%)`,
+    });
+  }
+
+  if (suggestionId === 'NAVBOX_ABOVE_AVERAGE') {
+    const percentage = extractSuggestionMetric(
+      suggestionText,
+      /(\d+(?:\.\d+)?)%\s+of your competitors also have navigation boxes/i,
+    );
+    const isMatch =
+      context.hasNavbox === true &&
+      matchesRoundedMetric(
+        percentage,
+        context.competitorsWithNavigationBox?.percentage,
+      );
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The suggestion matches the payload evidence: the article has a navigation box and the competitor prevalence matches.'
+        : 'The suggestion does not match the payload evidence for navigation box presence or competitor prevalence.',
+      evidenceSnippet: `Wikipedia has navigation box: ${context.hasNavbox}; Wikipedia competitors with navigation box: ${context.competitorsWithNavigationBox?.count} of ${context.competitorsWithNavigationBox?.total} (${context.competitorsWithNavigationBox?.percentage}%)`,
+    });
+  }
+
+  if (suggestionId === 'SEE_ALSO_MISSING') {
+    const isMatch =
+      context.hasSeeAlso === false &&
+      context.competitorsWithSeeAlso?.count === context.competitorsWithSeeAlso?.total;
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The suggestion matches the payload evidence: the article is missing a See also section and every competitor analyzed has one.'
+        : 'The suggestion does not match the payload evidence for the See also section or competitor prevalence.',
+      evidenceSnippet: `Wikipedia has See also section: ${context.hasSeeAlso}; Wikipedia competitors with See also section: ${context.competitorsWithSeeAlso?.count} of ${context.competitorsWithSeeAlso?.total} (${context.competitorsWithSeeAlso?.percentage}%)`,
+    });
+  }
+
+  if (suggestionId === 'INFOBOX_COMPLETE') {
+    const hasInfobox = context.hasInfobox === true;
+    const infoboxFields = context.infoboxFields ?? [];
+    const commonCompetitorInfoboxFields =
+      context.commonCompetitorInfoboxFields ?? [];
+    const missingCommonInfoboxFields =
+      context.missingCommonInfoboxFields ?? [];
+    const hasCompetitorBenchmark =
+      commonCompetitorInfoboxFields.length > 0 &&
+      typeof context.competitorsAnalyzed === 'number' &&
+      context.competitorsAnalyzed > 1;
+    const usesAbsoluteCompleteness =
+      /\bcomplete infobox\b/i.test(suggestionText) ||
+      /no missing fields were identified compared to competitors/i.test(suggestionText);
+    const correctPoints: string[] = [];
+    const inaccuratePoints: string[] = [];
+
+    if (hasInfobox) {
+      correctPoints.push(
+        'The structured Wikipedia analysis confirms that the Land Rover page has an infobox.',
+      );
+    }
+
+    if (infoboxFields.length > 0) {
+      correctPoints.push(
+        `The current payload lists these infobox fields: ${infoboxFields.join(', ')}.`,
+      );
+    }
+
+    if (hasCompetitorBenchmark && missingCommonInfoboxFields.length === 0) {
+      correctPoints.push(
+        'Against the current competitor comparison set, no common competitor infobox fields were flagged as missing.',
+      );
+    }
+
+    if (!hasInfobox) {
+      inaccuratePoints.push(
+        'The evidence does not support the suggestion\'s basic premise because infobox presence is not confirmed.',
+      );
+    }
+
+    if (!hasCompetitorBenchmark) {
+      inaccuratePoints.push(
+        'The current evidence does not expose a stable competitor-field benchmark, so "complete compared to competitors" cannot be verified confidently.',
+      );
+    }
+
+    if (missingCommonInfoboxFields.length > 0) {
+      inaccuratePoints.push(
+        `The comparison set still flags these common competitor fields as missing: ${missingCommonInfoboxFields.join(', ')}.`,
+      );
+    }
+
+    if (
+      hasInfobox &&
+      hasCompetitorBenchmark &&
+      missingCommonInfoboxFields.length === 0 &&
+      usesAbsoluteCompleteness
+    ) {
+      inaccuratePoints.push(
+        'The phrase "complete infobox" is stronger than the evidence alone. The current payload only proves that no common competitor fields were missing in this comparison set, not that the infobox satisfies a universal Wikipedia standard.',
+      );
+    }
+
+    const evidenceSnippet = trimMultilineText(
+      [
+        `Wikipedia has infobox: ${context.hasInfobox}`,
+        infoboxFields.length > 0
+          ? `Wikipedia infobox fields: ${infoboxFields.join(', ')}`
+          : '',
+        commonCompetitorInfoboxFields.length > 0
+          ? `Wikipedia common competitor infobox fields: ${commonCompetitorInfoboxFields.join(', ')}`
+          : '',
+        `Wikipedia missing common infobox fields: ${
+          missingCommonInfoboxFields.length > 0
+            ? missingCommonInfoboxFields.join(', ')
+            : 'none'
+        }`,
+      ]
+        .filter(Boolean)
+        .join('; '),
+    );
+
+    if (!hasInfobox) {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Incorrect',
+        confidence: 'high',
+        rationale: buildStructuredAssessmentRationale({
+          correctPoints,
+          inaccuratePoints,
+          finalDecision:
+            'The suggestion is not supported because the current evidence does not confirm the underlying infobox premise.',
+        }),
+        evidenceSnippet,
+      });
+    }
+
+    if (!hasCompetitorBenchmark) {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Needs Review',
+        confidence: 'low',
+        rationale: buildStructuredAssessmentRationale({
+          correctPoints,
+          inaccuratePoints,
+          finalDecision:
+            'The infobox is present, but the current evidence is too thin to certify the stronger comparative claim.',
+        }),
+        evidenceSnippet,
+      });
+    }
+
+    if (missingCommonInfoboxFields.length > 0) {
+      return buildDeterministicSuggestionResult({
+        verdict: 'Incorrect',
+        confidence: 'high',
+        rationale: buildStructuredAssessmentRationale({
+          correctPoints,
+          inaccuratePoints,
+          finalDecision:
+            'The suggestion is contradicted by the comparison set because common competitor infobox fields are still missing.',
+        }),
+        evidenceSnippet,
+      });
+    }
+
+    return buildDeterministicSuggestionResult({
+      verdict: usesAbsoluteCompleteness ? 'Needs Review' : 'Correct',
+      confidence: usesAbsoluteCompleteness ? 'medium' : 'high',
+      rationale: buildStructuredAssessmentRationale({
+        correctPoints,
+        inaccuratePoints,
+        finalDecision: usesAbsoluteCompleteness
+          ? 'Mostly supported, but slightly overstated. The infobox is present and covers the current competitor comparison set, yet "complete infobox" is stronger than the evidence proves.'
+          : 'Supported. The infobox is present and no common competitor infobox fields were flagged as missing in the current comparison set.',
+      }),
+      evidenceSnippet,
+    });
+  }
+
+  if (suggestionId === 'ARTICLE_MAINTENANCE_STALE') {
+    const lastEdited = parseStringFromEvidenceItem(payload.evidenceItems, 'Wikipedia last edited');
+    const edits = parseNumberFromEvidenceItem(
+      payload.evidenceItems,
+      'Wikipedia edits in last 30 days',
+    );
+    const textDate = suggestionText.match(/last edited on ([0-9TZ:\-\.]+)/i)?.[1];
+    const textEdits = extractSuggestionMetric(
+      suggestionText,
+      /with\s+(\d+(?:\.\d+)?)\s+edits?\s+in the last 30 days/i,
+    );
+    const isMatch =
+      (!!textDate ? textDate === lastEdited : true) &&
+      matchesRoundedMetric(textEdits, edits);
+
+    return buildDeterministicSuggestionResult({
+      verdict: isMatch ? 'Correct' : 'Incorrect',
+      confidence: 'high',
+      rationale: isMatch
+        ? 'The staleness suggestion matches the payload evidence for the latest edit timestamp and recent edit count.'
+        : 'The staleness suggestion does not match the payload evidence for the latest edit timestamp or recent edit count.',
+      evidenceSnippet: `Wikipedia last edited: ${lastEdited}; Wikipedia edits in last 30 days: ${edits}`,
+    });
+  }
+
+  return null;
 }
 
 function buildSuggestionBedrockPrompt(
@@ -1316,7 +3497,39 @@ export async function runOffsiteSuggestionEvaluation(
     throw new Error('Invalid suggestion evaluator request payload.');
   }
 
-  const evidence = await fetchEvidenceForSuggestionRequest(payload);
+  const evidence = await fetchEvidenceForSuggestionRequest(payload, env);
+  const deterministicWikipediaResult = evaluateWikipediaSuggestionDeterministically(
+    payload,
+    evidence,
+  );
+
+  if (deterministicWikipediaResult) {
+    return appendSuggestionSourceMismatchEvidence(payload, {
+      verdict: deterministicWikipediaResult.verdict,
+      confidence: buildSuggestionConfidenceScore({
+        llmResult: deterministicWikipediaResult,
+        fetchStatus: 'success',
+      }),
+      rationale: trimMultilineText(deterministicWikipediaResult.rationale),
+      evidenceSnippet:
+        trimMultilineText(deterministicWikipediaResult.evidenceSnippet) ||
+        evidence.fallbackSnippet,
+      correctedSuggestion: trimMultilineText(
+        deterministicWikipediaResult.correctedSuggestion,
+      ),
+      evaluatedAt: new Date().toISOString(),
+      evaluatorVersion: SUGGESTION_EVALUATOR_VERSION,
+      evidenceSources: evidence.sources.map((source) => ({
+        status: source.status,
+        sourceType: source.sourceType,
+        sourceUrl: source.sourceUrl,
+        usedTranscript: source.usedTranscript,
+        transcriptStatus: source.transcriptStatus,
+        evidenceCharacters: source.evidenceText.length,
+      })),
+      targetBrand: deterministicWikipediaResult.targetBrand,
+    });
+  }
 
   if (
     evidence.status === 'fetch_failed' ||
@@ -1324,7 +3537,7 @@ export async function runOffsiteSuggestionEvaluation(
   ) {
     const weakEvidenceScore = evidence.status === 'fetch_failed' ? 12 : 28;
 
-    return {
+    return appendSuggestionSourceMismatchEvidence(payload, {
       verdict: 'Needs Review',
       confidence: weakEvidenceScore,
       rationale:
@@ -1344,13 +3557,16 @@ export async function runOffsiteSuggestionEvaluation(
         evidenceCharacters: source.evidenceText.length,
       })),
       targetBrand: '',
-    };
+    });
   }
 
   const llmResponse = await fetchSuggestionLlmEvaluation(payload, evidence, env);
-  const llmResult = llmResponse.evaluation;
+  const llmResult = applyWikipediaQualityStatusOverride(
+    payload,
+    applyWikipediaMaintenanceOverride(payload, evidence, llmResponse.evaluation),
+  );
 
-  return {
+  return appendSuggestionSourceMismatchEvidence(payload, {
     verdict: llmResult.verdict,
     confidence: buildSuggestionConfidenceScore({
       llmResult,
@@ -1373,5 +3589,5 @@ export async function runOffsiteSuggestionEvaluation(
       evidenceCharacters: source.evidenceText.length,
     })),
     targetBrand: llmResult.targetBrand,
-  };
+  });
 }

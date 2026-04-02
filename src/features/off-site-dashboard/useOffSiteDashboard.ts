@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react';
 import {
+  DEFAULT_API_BASE_URL,
   DEFAULT_PAGE_SIZE,
   SENTIMENT_EVALUATOR_VERSION,
   SUGGESTION_EVALUATOR_VERSION,
@@ -16,6 +17,7 @@ import {
   SpacecatApiError,
   evaluateSentimentRow,
   evaluateSuggestionRow,
+  fetchSpacecatProxyConfig,
   fetchSiteDashboardData,
 } from './api';
 import {
@@ -26,6 +28,7 @@ import {
 } from './evaluation';
 import {
   buildSuggestionEvaluationRequest,
+  buildSuggestionEvaluationRequestFingerprint,
   buildSuggestionRowKey,
   canEvaluateSuggestionItem,
   createStoredSuggestionEvaluation,
@@ -40,9 +43,11 @@ import {
   saveSuggestionEvaluationStore,
 } from './storage';
 import {
+  countSuggestions,
   createIdleSiteResult,
   flattenSiteRows,
   getOpportunityTypeSummary,
+  isCurrentSuggestionStatus,
   normalizeApiBaseUrl,
   normalizeSiteInput,
   normalizeSiteList,
@@ -56,6 +61,7 @@ import type {
   SentimentEvaluationStoredResult,
   SiteDashboardResult,
   SiteOpportunityPresence,
+  SpacecatProxyConfig,
   SuggestionEvaluationRequest,
   SuggestionEvaluationStatus,
   SuggestionEvaluationStoredResult,
@@ -69,6 +75,18 @@ function updateSelection<T extends string>(values: T[], value: T) {
     : [...values, value];
 }
 
+function buildSuggestionEvidenceItems(
+  suggestion: { evidenceItems?: string[] },
+  sentimentItems: Array<{ item: string }>,
+) {
+  return Array.from(
+    new Set([
+      ...(suggestion.evidenceItems ?? []).map((item) => item.trim()).filter(Boolean),
+      ...sentimentItems.map((item) => item.item.trim()).filter(Boolean),
+    ]),
+  );
+}
+
 function buildExportableOpportunityRows(
   siteCards: SiteDashboardResult[],
   evaluationResults: Record<string, SentimentEvaluationStoredResult>,
@@ -78,6 +96,17 @@ function buildExportableOpportunityRows(
   suggestionEvaluationStatuses: Record<string, SuggestionEvaluationStatus>,
   suggestionEvaluationErrors: Record<string, string>,
 ) {
+  const buildSuggestionEvidenceItems = (
+    suggestion: { evidenceItems?: string[] },
+    sentimentItems: Array<{ item: string }>,
+  ) =>
+    Array.from(
+      new Set([
+        ...(suggestion.evidenceItems ?? []).map((item) => item.trim()).filter(Boolean),
+        ...sentimentItems.map((item) => item.item.trim()).filter(Boolean),
+      ]),
+    );
+
   return siteCards.flatMap((siteCard) =>
     siteCard.opportunities.map((opportunity) => {
       const hasExportContent =
@@ -107,7 +136,28 @@ function buildExportableOpportunityRows(
           evaluationError: evaluationErrors[rowKey],
         };
       });
-      const suggestions = opportunity.suggestions.map((suggestion) => {
+      const suggestions = opportunity.suggestions
+        .filter((suggestion) => isCurrentSuggestionStatus(suggestion.status))
+        .map((suggestion) => {
+        const currentRequest = buildSuggestionEvaluationRequest({
+          site: siteCard.requestSite,
+          siteId: siteCard.siteId,
+          opportunityType: opportunity.opportunityType,
+          opportunityId: opportunity.opportunityId,
+          suggestionId: suggestion.suggestionId,
+          suggestionText: suggestion.suggestionText,
+          suggestionUrl: suggestion.suggestionUrl,
+          evidenceItems: buildSuggestionEvidenceItems(
+            suggestion,
+            opportunity.sentimentItems,
+          ),
+          sentimentRows: opportunity.sentimentItems.map((item) => ({
+            item: item.item,
+            sov: item.sov,
+            sentiment: item.sentiment,
+            timesCited: item.timesCited,
+          })),
+        });
         const rowKey = buildSuggestionRowKey({
           site: siteCard.requestSite,
           siteId: siteCard.siteId,
@@ -118,9 +168,10 @@ function buildExportableOpportunityRows(
         });
         const storedEvaluation = suggestionEvaluationResults[rowKey];
         const evaluationResult =
+          currentRequest &&
           storedEvaluation &&
-          storedEvaluation.suggestionText === suggestion.suggestionText &&
-          storedEvaluation.suggestionUrl === suggestion.suggestionUrl
+          storedEvaluation.requestFingerprint ===
+            buildSuggestionEvaluationRequestFingerprint(currentRequest)
             ? storedEvaluation
             : undefined;
 
@@ -128,8 +179,11 @@ function buildExportableOpportunityRows(
           suggestionId: suggestion.suggestionId,
           suggestionText: suggestion.suggestionText,
           suggestionUrl: suggestion.suggestionUrl,
+          status: suggestion.status,
+          evidenceItems: suggestion.evidenceItems,
           rowKey,
           canEvaluate:
+            Boolean(currentRequest) &&
             isSuggestionEvaluationType(opportunity.opportunityType) &&
             canEvaluateSuggestionItem(suggestion.suggestionText),
           evaluationStatus: suggestionEvaluationStatuses[rowKey] ?? 'idle',
@@ -200,6 +254,25 @@ export function useOffSiteDashboard() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [didAutoRefresh, setDidAutoRefresh] = useState(false);
+  const [spacecatProxyConfig, setSpacecatProxyConfig] =
+    useState<SpacecatProxyConfig>({
+      configured: false,
+      apiBaseUrl: DEFAULT_API_BASE_URL,
+    });
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    void fetchSpacecatProxyConfig().then((nextConfig) => {
+      if (!isCancelled) {
+        setSpacecatProxyConfig(nextConfig);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const configuredSites = useMemo(
     () => normalizeSiteList(config.siteInputText),
@@ -253,9 +326,17 @@ export function useOffSiteDashboard() {
   const refreshSite = useCallback(
     async (site: string) => {
       const normalizedSite = normalizeSiteInput(site);
-      const normalizedApiBaseUrl = normalizeApiBaseUrl(config.apiBaseUrl);
+      const normalizedApiBaseUrl = normalizeApiBaseUrl(
+        spacecatProxyConfig.configured
+          ? spacecatProxyConfig.apiBaseUrl
+          : config.apiBaseUrl,
+      );
 
-      if (!normalizedSite || !normalizedApiBaseUrl || !config.apiKey.trim()) {
+      if (
+        !normalizedSite ||
+        !normalizedApiBaseUrl ||
+        (!spacecatProxyConfig.configured && !config.apiKey.trim())
+      ) {
         return;
       }
 
@@ -275,6 +356,7 @@ export function useOffSiteDashboard() {
         const result = await fetchSiteDashboardData({
           apiBaseUrl: normalizedApiBaseUrl,
           apiKey: config.apiKey,
+          proxyConfig: spacecatProxyConfig,
           siteInput: normalizedSite,
         });
 
@@ -314,22 +396,35 @@ export function useOffSiteDashboard() {
         });
       }
     },
-    [config.apiBaseUrl, config.apiKey],
+    [config.apiBaseUrl, config.apiKey, spacecatProxyConfig],
   );
 
   const refreshAll = useCallback(async () => {
-    if (!config.apiKey.trim() || !config.apiBaseUrl.trim()) {
+    const effectiveApiBaseUrl = normalizeApiBaseUrl(
+      spacecatProxyConfig.configured
+        ? spacecatProxyConfig.apiBaseUrl
+        : config.apiBaseUrl,
+    );
+
+    if (
+      !effectiveApiBaseUrl.trim() ||
+      (!spacecatProxyConfig.configured && !config.apiKey.trim())
+    ) {
       return;
     }
 
     await Promise.all(configuredSites.map((site) => refreshSite(site)));
-  }, [config.apiBaseUrl, config.apiKey, configuredSites, refreshSite]);
+  }, [config.apiBaseUrl, config.apiKey, configuredSites, refreshSite, spacecatProxyConfig]);
 
   useEffect(() => {
     if (
       didAutoRefresh ||
-      !config.apiKey.trim() ||
-      !config.apiBaseUrl.trim() ||
+      (!spacecatProxyConfig.configured && !config.apiKey.trim()) ||
+      !normalizeApiBaseUrl(
+        spacecatProxyConfig.configured
+          ? spacecatProxyConfig.apiBaseUrl
+          : config.apiBaseUrl,
+      ).trim() ||
       configuredSites.length === 0
     ) {
       return;
@@ -343,6 +438,7 @@ export function useOffSiteDashboard() {
     configuredSites.length,
     didAutoRefresh,
     refreshAll,
+    spacecatProxyConfig,
   ]);
 
   const resetFilters = useCallback(() => {
@@ -458,7 +554,13 @@ export function useOffSiteDashboard() {
             suggestionId: suggestion.suggestionId,
             suggestionText: suggestion.suggestionText ?? '',
             suggestionUrl: suggestion.suggestionUrl,
-            evidenceItems: row.sentimentItems.map((item) => item.item),
+            evidenceItems: buildSuggestionEvidenceItems(suggestion, row.sentimentItems),
+            sentimentRows: row.sentimentItems.map((item) => ({
+              item: item.item,
+              sov: item.sov,
+              sentiment: item.sentiment,
+              timesCited: item.timesCited,
+            })),
           });
 
           if (request && suggestion.rowKey) {
@@ -540,12 +642,7 @@ export function useOffSiteDashboard() {
     );
     const suggestionCount = siteCards.reduce(
       (count, siteCard) =>
-        count +
-        siteCard.opportunities.reduce(
-          (siteSuggestionCount, opportunity) =>
-            siteSuggestionCount + opportunity.suggestions.length,
-          0,
-        ),
+        count + countSuggestions(siteCard.opportunities),
       0,
     );
 
@@ -559,9 +656,14 @@ export function useOffSiteDashboard() {
   }, [allRows, selectedSites, siteCards]);
 
   const isRefreshing = siteCards.some((siteCard) => siteCard.status === 'loading');
+  const effectiveApiBaseUrl = normalizeApiBaseUrl(
+    spacecatProxyConfig.configured
+      ? spacecatProxyConfig.apiBaseUrl
+      : config.apiBaseUrl,
+  );
   const canRefresh =
-    Boolean(config.apiKey.trim()) &&
-    Boolean(config.apiBaseUrl.trim()) &&
+    Boolean(effectiveApiBaseUrl.trim()) &&
+    (Boolean(config.apiKey.trim()) || Boolean(spacecatProxyConfig.configured)) &&
     configuredSites.length > 0;
 
   const exportableRows = allOpportunityRows;
@@ -783,6 +885,7 @@ export function useOffSiteDashboard() {
 
   return {
     config,
+    spacecatProxyConfig,
     siteCards,
     sitePresenceRows,
     configuredSites,

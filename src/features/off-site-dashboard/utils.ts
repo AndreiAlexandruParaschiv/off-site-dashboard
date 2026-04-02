@@ -6,6 +6,7 @@ import type {
   OpportunityRecord,
   SentimentItemRecord,
   SiteDashboardResult,
+  SuggestionRecordStatus,
   SuggestionRecord,
 } from './types';
 
@@ -45,6 +46,68 @@ interface NormalizedSuggestionPayload {
   sentimentItems: SentimentItemRecord[];
 }
 
+export function normalizeSuggestionStatus(rawValue: unknown): SuggestionRecordStatus {
+  const normalizedValue = String(rawValue ?? '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .toUpperCase();
+
+  if (normalizedValue === 'NEW') {
+    return 'NEW';
+  }
+
+  if (normalizedValue === 'PENDING_VALIDATION') {
+    return 'PENDING_VALIDATION';
+  }
+
+  if (normalizedValue === 'OUTDATED') {
+    return 'OUTDATED';
+  }
+
+  if (normalizedValue === 'IGNORED') {
+    return 'IGNORED';
+  }
+
+  if (normalizedValue === 'FIXED') {
+    return 'FIXED';
+  }
+
+  return 'UNKNOWN';
+}
+
+export function isCurrentSuggestionStatus(status?: SuggestionRecordStatus) {
+  return (
+    status === undefined ||
+    status === 'UNKNOWN' ||
+    status === 'NEW' ||
+    status === 'PENDING_VALIDATION'
+  );
+}
+
+function getNumberValue(record: Record<string, unknown>, keys: readonly string[]) {
+  for (const key of keys) {
+    const rawValue = record[key];
+
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+
+    if (typeof rawValue === 'string' && rawValue.trim()) {
+      const parsedValue = Number.parseFloat(rawValue.trim().replace(/,/g, ''));
+
+      if (Number.isFinite(parsedValue)) {
+        return parsedValue;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function formatMetricValue(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -59,6 +122,38 @@ function normalizeUrlParts(value: string) {
   url.search = '';
   url.hash = '';
   return url;
+}
+
+function normalizeAbsoluteUrl(value?: string) {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  return `https://${trimmedValue.replace(/^\/+/, '')}`;
+}
+
+function extractUrlCandidatesFromText(value?: string) {
+  if (!value) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      Array.from(
+        value.matchAll(
+          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s),\]]*)?/gi,
+        ),
+      )
+        .map((match) => normalizeAbsoluteUrl(match[0] ?? ''))
+        .filter(Boolean),
+    ),
+  );
 }
 
 function stripTrailingSlash(value: string) {
@@ -800,6 +895,13 @@ function extractSentimentItemsFromSuggestionValue(
       (header) =>
         header === 'sentiment' || header.includes('brand sentiment'),
     );
+    const timesCitedIndex = normalizedHeaders.findIndex(
+      (header) =>
+        header === 'times cited' ||
+        header.includes('times cited') ||
+        header === 'citations' ||
+        header.includes('citation'),
+    );
 
     if (sovIndex === -1 || sentimentIndex === -1) {
       return [];
@@ -832,6 +934,14 @@ function extractSentimentItemsFromSuggestionValue(
         });
         const sov = normalizeMarkdownCellValue(row[sovIndex] ?? '');
         const sentiment = normalizeMarkdownCellValue(row[sentimentIndex] ?? '');
+        const timesCitedRaw =
+          timesCitedIndex !== -1
+            ? normalizeMarkdownCellValue(row[timesCitedIndex] ?? '')
+            : '';
+        const timesCitedMatch = timesCitedRaw.match(/\d[\d,]*/);
+        const timesCited = timesCitedMatch
+          ? Number.parseInt(timesCitedMatch[0].replace(/,/g, ''), 10)
+          : undefined;
 
         if (!item && !sov && !sentiment) {
           return null;
@@ -841,6 +951,9 @@ function extractSentimentItemsFromSuggestionValue(
           item,
           sov,
           sentiment,
+          ...(typeof timesCited === 'number' && Number.isFinite(timesCited)
+            ? { timesCited }
+            : {}),
         } satisfies SentimentItemRecord;
       })
       .filter((value): value is SentimentItemRecord => value !== null);
@@ -873,6 +986,7 @@ function extractStrategicRecommendationSuggestions(
           {
             suggestionId,
             suggestionText: plainSection,
+            status: 'UNKNOWN',
           },
         ]
       : [];
@@ -922,6 +1036,7 @@ function extractStrategicRecommendationSuggestions(
       const normalizedSuggestion: SuggestionRecord = {
         suggestionId: `${suggestionId}-rec-${recommendationIndex + 1}`,
         suggestionText,
+        status: 'UNKNOWN',
       };
       const recommendationUrl = extractRecommendationUrl(detailsElement);
 
@@ -958,17 +1073,28 @@ function normalizeSuggestion(
     extractFirstUrl(record.data);
   const rawSuggestionId = getStringValue(record, ['suggestionId', 'id', 'uuid']);
   const suggestionId = rawSuggestionId ?? `suggestion-${index + 1}`;
+  const suggestionStatus = normalizeSuggestionStatus(record.status);
   const suggestionValue = getSuggestionValue(record);
+  const fallbackSuggestionText =
+    !suggestionText && suggestionValue
+      ? createPlainTextFromHtmlFragment(suggestionValue)
+      : '';
+  const evidenceItems = Array.from(
+    new Set(
+      [
+        suggestionUrl ? normalizeAbsoluteUrl(suggestionUrl) : '',
+        ...extractUrlCandidatesFromText(suggestionText),
+        ...extractUrlCandidatesFromText(fallbackSuggestionText ?? ''),
+        ...extractUrlCandidatesFromText(suggestionValue ?? ''),
+      ].filter(Boolean),
+    ),
+  );
   const sentimentItems =
     opportunityType &&
     SENTIMENT_TABLE_TYPES.has(opportunityType) &&
     suggestionValue
       ? extractSentimentItemsFromSuggestionValue(suggestionValue)
       : [];
-  const fallbackSuggestionText =
-    !suggestionText && suggestionValue
-      ? createPlainTextFromHtmlFragment(suggestionValue)
-      : '';
 
   if (
     opportunityType &&
@@ -1000,16 +1126,438 @@ function normalizeSuggestion(
   const normalizedSuggestion: SuggestionRecord = {
     suggestionId,
     suggestionText: suggestionText || fallbackSuggestionText,
+    status: suggestionStatus,
   };
 
   if (suggestionUrl) {
     normalizedSuggestion.suggestionUrl = suggestionUrl;
   }
 
+  if (evidenceItems.length > 0) {
+    normalizedSuggestion.evidenceItems = evidenceItems;
+  }
+
   return {
     suggestions: [normalizedSuggestion],
     sentimentItems,
   };
+}
+
+function getOpportunitySuggestionRecords(record: Record<string, unknown>) {
+  const directSuggestions = getArrayValue(record, SUGGESTION_KEYS).filter(isRecord);
+
+  if (directSuggestions.length > 0) {
+    return directSuggestions;
+  }
+
+  const nestedData = record.data;
+
+  if (isRecord(nestedData)) {
+    const nestedSuggestions = getArrayValue(nestedData, SUGGESTION_KEYS).filter(isRecord);
+
+    if (nestedSuggestions.length > 0) {
+      return nestedSuggestions;
+    }
+
+    const nestedFullAnalysis = nestedData.fullAnalysis;
+
+    if (isRecord(nestedFullAnalysis)) {
+      const analysisSuggestions = getArrayValue(
+        nestedFullAnalysis,
+        SUGGESTION_KEYS,
+      ).filter(isRecord);
+
+      if (analysisSuggestions.length > 0) {
+        return analysisSuggestions;
+      }
+    }
+  }
+
+  return [] as Record<string, unknown>[];
+}
+
+function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>) {
+  const evidenceItems: string[] = [];
+  const nestedData = record.data;
+
+  if (!isRecord(nestedData)) {
+    return evidenceItems;
+  }
+
+  const fullAnalysis = nestedData.fullAnalysis;
+
+  if (!isRecord(fullAnalysis)) {
+    return evidenceItems;
+  }
+
+  const wikipediaUrl = getStringValue(fullAnalysis, ['wikipediaUrl', 'url']);
+  const company = getStringValue(fullAnalysis, ['company', 'name']);
+  const citationCount = getNumberValue(fullAnalysis, ['citationCount']);
+  const avgCitations = getNumberValue(fullAnalysis, ['avgCitations']);
+  const sectionCount = getNumberValue(fullAnalysis, ['sectionCount']);
+  const avgSections = getNumberValue(fullAnalysis, ['avgSections']);
+  const imageCount = getNumberValue(fullAnalysis, ['imageCount']);
+  const avgImages = getNumberValue(fullAnalysis, ['avgImages']);
+  const categoryCount = getNumberValue(fullAnalysis, ['categoryCount']);
+  const avgCategories = getNumberValue(fullAnalysis, ['avgCategories']);
+  const wordCount = getNumberValue(fullAnalysis, ['contentLengthWords']);
+  const lastEdited = getStringValue(fullAnalysis, ['lastEdited']);
+  const editCount30Days = getNumberValue(fullAnalysis, ['editCount30Days']);
+  const hasGoodArticle = fullAnalysis.hasGoodArticle;
+  const hasFeaturedArticle = fullAnalysis.hasFeaturedArticle;
+  const hasInfobox = fullAnalysis.hasInfobox;
+  const hasNavbox = fullAnalysis.hasNavbox;
+  const hasSeeAlso = fullAnalysis.hasSeeAlso;
+  const hasExternalLinks = fullAnalysis.hasExternalLinks;
+  const infoboxFields =
+    isRecord(fullAnalysis.infoboxFields) ? fullAnalysis.infoboxFields : null;
+
+  if (wikipediaUrl) {
+    evidenceItems.push(`Wikipedia URL: ${normalizeAbsoluteUrl(wikipediaUrl)}`);
+  }
+
+  if (company) {
+    evidenceItems.push(`Wikipedia company: ${company}`);
+  }
+
+  if (typeof citationCount === 'number') {
+    evidenceItems.push(`Wikipedia citation count: ${citationCount}`);
+  }
+
+  if (typeof avgCitations === 'number') {
+    evidenceItems.push(`Wikipedia industry average citations: ${avgCitations}`);
+  }
+
+  if (typeof sectionCount === 'number') {
+    evidenceItems.push(`Wikipedia section count: ${sectionCount}`);
+  }
+
+  if (typeof avgSections === 'number') {
+    evidenceItems.push(`Wikipedia industry average sections: ${avgSections}`);
+  }
+
+  if (typeof imageCount === 'number') {
+    evidenceItems.push(`Wikipedia image count: ${imageCount}`);
+  }
+
+  if (typeof avgImages === 'number') {
+    evidenceItems.push(`Wikipedia industry average images: ${avgImages}`);
+  }
+
+  if (typeof categoryCount === 'number') {
+    evidenceItems.push(`Wikipedia category count: ${categoryCount}`);
+  }
+
+  if (typeof avgCategories === 'number') {
+    evidenceItems.push(`Wikipedia industry average categories: ${avgCategories}`);
+  }
+
+  if (typeof wordCount === 'number') {
+    evidenceItems.push(`Wikipedia word count: ${wordCount}`);
+  }
+
+  if (lastEdited) {
+    evidenceItems.push(`Wikipedia last edited: ${lastEdited}`);
+  }
+
+  if (typeof editCount30Days === 'number') {
+    evidenceItems.push(`Wikipedia edits in last 30 days: ${editCount30Days}`);
+  }
+
+  if (typeof hasInfobox === 'boolean') {
+    evidenceItems.push(`Wikipedia has infobox: ${hasInfobox}`);
+  }
+
+  if (typeof hasNavbox === 'boolean') {
+    evidenceItems.push(`Wikipedia has navigation box: ${hasNavbox}`);
+  }
+
+  if (typeof hasSeeAlso === 'boolean') {
+    evidenceItems.push(`Wikipedia has See also section: ${hasSeeAlso}`);
+  }
+
+  if (typeof hasExternalLinks === 'boolean') {
+    evidenceItems.push(`Wikipedia has External links section: ${hasExternalLinks}`);
+  }
+
+  if (typeof hasGoodArticle === 'boolean') {
+    evidenceItems.push(`Wikipedia has Good Article status: ${hasGoodArticle}`);
+  }
+
+  if (typeof hasFeaturedArticle === 'boolean') {
+    evidenceItems.push(`Wikipedia has Featured Article status: ${hasFeaturedArticle}`);
+  }
+
+  const maintenanceWarnings = getArrayValue(fullAnalysis, ['maintenanceWarnings'])
+    .filter(isRecord)
+    .flatMap((warning) => {
+      const warningType = getStringValue(warning, ['type']) ?? 'warning';
+      const warningText = getStringValue(warning, ['text']) ?? '';
+      const normalizedWarningText = warningText.toLowerCase();
+      const maintenanceScope = normalizedWarningText.startsWith('this section')
+        ? 'section-level'
+        : normalizedWarningText.startsWith('this article')
+          ? 'article-level'
+          : '';
+
+      return warningText
+        ? [
+            `Wikipedia maintenance ${warningType}: ${warningText}`,
+            maintenanceScope
+              ? `Wikipedia maintenance scope: ${maintenanceScope}`
+              : '',
+          ].filter(Boolean)
+        : [];
+    })
+    .filter(Boolean);
+
+  evidenceItems.push(...maintenanceWarnings);
+
+  const others = getArrayValue(fullAnalysis, ['others']).filter(isRecord);
+
+  const buildBooleanPrevalenceEvidence = (
+    label: string,
+    selfValue: unknown,
+    competitorKey: string,
+  ) => {
+    if (typeof selfValue === 'boolean') {
+      evidenceItems.push(`Wikipedia ${label}: ${selfValue}`);
+    }
+
+    const competitorCount = others.length;
+
+    if (competitorCount === 0) {
+      return;
+    }
+
+    const matchingCompetitorCount = others.filter(
+      (competitor) => typeof competitor[competitorKey] === 'boolean' && competitor[competitorKey] === true,
+    ).length;
+    const percentage = (matchingCompetitorCount / competitorCount) * 100;
+
+    evidenceItems.push(
+      `Wikipedia competitors with ${label}: ${matchingCompetitorCount} of ${competitorCount} (${formatMetricValue(
+        percentage,
+      )}%)`,
+    );
+  };
+
+  buildBooleanPrevalenceEvidence('infobox', hasInfobox, 'hasInfobox');
+  buildBooleanPrevalenceEvidence('navigation box', hasNavbox, 'hasNavbox');
+  buildBooleanPrevalenceEvidence('See also section', hasSeeAlso, 'hasSeeAlso');
+  buildBooleanPrevalenceEvidence(
+    'External links section',
+    hasExternalLinks,
+    'hasExternalLinks',
+  );
+
+  if (others.length > 0) {
+    evidenceItems.push(`Wikipedia competitors analyzed: ${others.length + 1}`);
+  }
+
+  if (infoboxFields) {
+    const infoboxFieldNames = Object.keys(infoboxFields).map((fieldName) => fieldName.trim());
+
+    evidenceItems.push(`Wikipedia infobox field count: ${infoboxFieldNames.length}`);
+
+    if (infoboxFieldNames.length > 0) {
+      evidenceItems.push(
+        `Wikipedia infobox fields: ${infoboxFieldNames.join(', ')}`,
+      );
+    }
+
+    const competitorInfoboxFieldCounts = new Map<string, number>();
+
+    others.forEach((competitor) => {
+      if (!isRecord(competitor.infoboxFields)) {
+        return;
+      }
+
+      Object.keys(competitor.infoboxFields).forEach((fieldName) => {
+        const normalizedFieldName = fieldName.trim();
+        competitorInfoboxFieldCounts.set(
+          normalizedFieldName,
+          (competitorInfoboxFieldCounts.get(normalizedFieldName) ?? 0) + 1,
+        );
+      });
+    });
+
+    const competitorThreshold = Math.max(1, Math.ceil(others.length / 2));
+    const commonCompetitorFields = Array.from(competitorInfoboxFieldCounts.entries())
+      .filter(([, count]) => count >= competitorThreshold)
+      .map(([fieldName]) => fieldName)
+      .sort((leftField, rightField) => leftField.localeCompare(rightField));
+    const missingCommonFields = commonCompetitorFields.filter(
+      (fieldName) => !infoboxFieldNames.includes(fieldName),
+    );
+
+    evidenceItems.push(
+      `Wikipedia common competitor infobox fields: ${
+        commonCompetitorFields.length > 0
+          ? commonCompetitorFields.join(', ')
+          : 'none'
+      }`,
+    );
+    evidenceItems.push(
+      `Wikipedia missing common infobox fields: ${
+        missingCommonFields.length > 0 ? missingCommonFields.join(', ') : 'none'
+      }`,
+    );
+  }
+
+  const companyLabel = company ?? 'Company';
+  const buildMetricRankingEvidence = (
+    label: string,
+    selfValue: number | undefined,
+    competitorKey: readonly string[],
+    averageValue?: number,
+  ) => {
+    if (typeof selfValue !== 'number') {
+      return;
+    }
+
+    const rankedValues = [
+      { name: companyLabel, value: selfValue },
+      ...others
+        .map((competitor) => ({
+          name: getStringValue(competitor, ['name']) ?? 'Unknown',
+          value: getNumberValue(competitor, competitorKey),
+        }))
+        .filter(
+          (entry): entry is { name: string; value: number } =>
+            typeof entry.value === 'number',
+        ),
+    ].sort((leftEntry, rightEntry) => rightEntry.value - leftEntry.value);
+
+    if (rankedValues.length === 0) {
+      return;
+    }
+
+    // Match dense ranking semantics: rank is 1 + distinct higher values.
+    const rank =
+      new Set(
+        rankedValues
+          .filter((entry) => entry.value > selfValue)
+          .map((entry) => entry.value),
+      ).size + 1;
+    evidenceItems.push(
+      `Wikipedia ${label} rank: #${rank} of ${rankedValues.length}`,
+    );
+
+    if (rank === 1 && rankedValues.length > 1) {
+      const secondPlace = rankedValues[1];
+      evidenceItems.push(`Wikipedia second place ${label}: ${secondPlace.value}`);
+      evidenceItems.push(
+        `Wikipedia ${label} lead over second place: ${formatMetricValue(
+          selfValue - secondPlace.value,
+        )}`,
+      );
+    }
+
+    if (typeof averageValue === 'number') {
+      evidenceItems.push(
+        `Wikipedia ${label} lead above average: ${formatMetricValue(
+          selfValue - averageValue,
+        )}`,
+      );
+    }
+
+    evidenceItems.push(
+      `Wikipedia ${label} comparison: ${rankedValues
+        .map((entry) => `${entry.name}=${formatMetricValue(entry.value)}`)
+        .join(', ')}`,
+    );
+  };
+
+  buildMetricRankingEvidence(
+    'citations',
+    citationCount,
+    ['citationCount'],
+    avgCitations,
+  );
+  buildMetricRankingEvidence(
+    'sections',
+    sectionCount,
+    ['sectionCount'],
+    avgSections,
+  );
+  buildMetricRankingEvidence(
+    'images',
+    imageCount,
+    ['imageCount'],
+    avgImages,
+  );
+  buildMetricRankingEvidence(
+    'categories',
+    categoryCount,
+    ['categoryCount'],
+    avgCategories,
+  );
+
+  const competitorWordCounts = others
+    .map((competitor) => getNumberValue(competitor, ['contentLengthWords']))
+    .filter((value): value is number => typeof value === 'number');
+  const avgWords =
+    typeof wordCount === 'number' && competitorWordCounts.length > 0
+      ? (wordCount + competitorWordCounts.reduce((sum, value) => sum + value, 0)) /
+        (competitorWordCounts.length + 1)
+      : undefined;
+
+  buildMetricRankingEvidence(
+    'word count',
+    wordCount,
+    ['contentLengthWords'],
+    avgWords,
+  );
+
+  others.forEach((competitor) => {
+    const competitorName = getStringValue(competitor, ['name']) ?? 'Unknown';
+    const competitorUrl = getStringValue(competitor, ['url']) ?? '';
+    const competitorCitationCount = getNumberValue(competitor, ['citationCount']);
+    const competitorSectionCount = getNumberValue(competitor, ['sectionCount']);
+    const competitorImageCount = getNumberValue(competitor, ['imageCount']);
+    const competitorCategoryCount = getNumberValue(competitor, ['categoryCount']);
+    const competitorWordCount = getNumberValue(competitor, ['contentLengthWords']);
+    const competitorHasInfobox = competitor.hasInfobox;
+    const competitorHasLeadImage = competitor.hasLeadImage;
+    const competitorHasNavbox = competitor.hasNavbox;
+    const competitorHasExternalLinks = competitor.hasExternalLinks;
+    const competitorHasSeeAlso = competitor.hasSeeAlso;
+    const parts = [
+      `Wikipedia competitor: ${competitorName}`,
+      competitorUrl ? `URL=${normalizeAbsoluteUrl(competitorUrl)}` : '',
+      typeof competitorCitationCount === 'number'
+        ? `citations=${competitorCitationCount}`
+        : '',
+      typeof competitorSectionCount === 'number'
+        ? `sections=${competitorSectionCount}`
+        : '',
+      typeof competitorCategoryCount === 'number'
+        ? `categories=${competitorCategoryCount}`
+        : '',
+      typeof competitorWordCount === 'number' ? `words=${competitorWordCount}` : '',
+      typeof competitorImageCount === 'number' ? `images=${competitorImageCount}` : '',
+      typeof competitorHasInfobox === 'boolean'
+        ? `infobox=${competitorHasInfobox}`
+        : '',
+      typeof competitorHasLeadImage === 'boolean'
+        ? `leadImage=${competitorHasLeadImage}`
+        : '',
+      typeof competitorHasNavbox === 'boolean' ? `navbox=${competitorHasNavbox}` : '',
+      typeof competitorHasExternalLinks === 'boolean'
+        ? `externalLinks=${competitorHasExternalLinks}`
+        : '',
+      typeof competitorHasSeeAlso === 'boolean'
+        ? `seeAlso=${competitorHasSeeAlso}`
+        : '',
+    ].filter(Boolean);
+
+    if (parts.length > 0) {
+      evidenceItems.push(parts.join(' | '));
+    }
+  });
+
+  return Array.from(new Set(evidenceItems));
 }
 
 function normalizeOpportunity(record: Record<string, unknown>, index: number) {
@@ -1029,12 +1577,7 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const opportunityId =
     getStringValue(record, ['opportunityId', 'id', 'uuid']) ??
     `opportunity-${index + 1}`;
-  const rawSuggestions = getArrayValue(record, [
-    'suggestions',
-    'items',
-    'recommendations',
-    'suggestionItems',
-  ]);
+  const rawSuggestions = getOpportunitySuggestionRecords(record);
   const normalizedSuggestionPayloads = rawSuggestions
     .filter(isRecord)
     .map((suggestion, suggestionIndex) =>
@@ -1053,13 +1596,26 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const sentimentItems = normalizedSuggestionPayloads.flatMap(
     (payload) => payload.sentimentItems,
   );
+  const opportunityEvidenceItems =
+    opportunityType === 'Wikipedia'
+      ? buildWikipediaOpportunityEvidenceItems(record)
+      : [];
+  const suggestionsWithOpportunityEvidence = suggestions.map((suggestion) => ({
+    ...suggestion,
+    evidenceItems: Array.from(
+      new Set([
+        ...(suggestion.evidenceItems ?? []),
+        ...opportunityEvidenceItems,
+      ]),
+    ),
+  }));
 
   const normalizedOpportunity: OpportunityRecord = {
     opportunityId,
     opportunityType,
     opportunityStatus,
     rawType: rawType || opportunityType,
-    suggestions,
+    suggestions: suggestionsWithOpportunityEvidence,
     sentimentItems,
   };
 
@@ -1152,7 +1708,11 @@ export function createIdleSiteResult(requestSite: string): SiteDashboardResult {
 
 export function countSuggestions(opportunities: OpportunityRecord[]) {
   return opportunities.reduce(
-    (count, opportunity) => count + opportunity.suggestions.length,
+    (count, opportunity) =>
+      count +
+      opportunity.suggestions.filter((suggestion) =>
+        isCurrentSuggestionStatus(suggestion.status),
+      ).length,
     0,
   );
 }
@@ -1210,6 +1770,10 @@ export function flattenSiteRows(siteResults: SiteDashboardResult[]) {
       }
 
       opportunity.suggestions.forEach((suggestion) => {
+        if (!isCurrentSuggestionStatus(suggestion.status)) {
+          return;
+        }
+
         rows.push({
           id: [
             siteResult.requestSite,

@@ -18,6 +18,10 @@ function normalizeComparableSuggestionValue(value: string) {
   return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function normalizeFingerprintValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export function isSuggestionEvaluationType(
   value?: CanonicalOpportunityType,
 ): value is CanonicalOpportunityType {
@@ -53,6 +57,7 @@ export function createStoredSuggestionEvaluation(
 ): SuggestionEvaluationStoredResult {
   return {
     rowKey,
+    requestFingerprint: buildSuggestionEvaluationRequestFingerprint(request),
     suggestionText: request.suggestionText,
     suggestionUrl: request.suggestionUrl,
     ...result,
@@ -92,6 +97,7 @@ export function normalizeSuggestionEvaluationStore(
 
           if (
             typeof candidate.rowKey !== 'string' ||
+            typeof candidate.requestFingerprint !== 'string' ||
             typeof candidate.suggestionText !== 'string' ||
             typeof candidate.verdict !== 'string' ||
             typeof candidate.confidence !== 'number' ||
@@ -116,6 +122,42 @@ export function normalizeSuggestionEvaluationStore(
   };
 }
 
+export function buildSuggestionEvaluationRequestFingerprint(
+  request: SuggestionEvaluationRequest,
+) {
+  const normalizedEvidenceItems = request.evidenceItems
+    .map((item) => normalizeFingerprintValue(item))
+    .filter(Boolean)
+    .sort((leftValue, rightValue) => leftValue.localeCompare(rightValue));
+  const normalizedSentimentRows = request.sentimentRows
+    .map((row) => ({
+      item: normalizeFingerprintValue(row.item),
+      sov: normalizeFingerprintValue(row.sov),
+      sentiment: normalizeFingerprintValue(row.sentiment),
+      timesCited:
+        typeof row.timesCited === 'number' && Number.isFinite(row.timesCited)
+          ? row.timesCited
+          : null,
+    }))
+    .sort((leftRow, rightRow) =>
+      `${leftRow.item}::${leftRow.sov}::${leftRow.sentiment}::${leftRow.timesCited}`.localeCompare(
+        `${rightRow.item}::${rightRow.sov}::${rightRow.sentiment}::${rightRow.timesCited}`,
+      ),
+    );
+
+  return JSON.stringify({
+    site: normalizeFingerprintValue(request.site).toLowerCase(),
+    siteId: normalizeFingerprintValue(request.siteId ?? '').toLowerCase(),
+    opportunityType: request.opportunityType,
+    opportunityId: normalizeFingerprintValue(request.opportunityId).toLowerCase(),
+    suggestionId: normalizeFingerprintValue(request.suggestionId ?? '').toLowerCase(),
+    suggestionText: normalizeComparableSuggestionValue(request.suggestionText),
+    suggestionUrl: normalizeFingerprintValue(request.suggestionUrl ?? ''),
+    evidenceItems: normalizedEvidenceItems,
+    sentimentRows: normalizedSentimentRows,
+  });
+}
+
 export function buildSuggestionEvaluationRequest(input: {
   site: string;
   siteId?: string;
@@ -125,6 +167,12 @@ export function buildSuggestionEvaluationRequest(input: {
   suggestionText: string;
   suggestionUrl?: string;
   evidenceItems: string[];
+  sentimentRows: Array<{
+    item: string;
+    sov: string;
+    sentiment: string;
+    timesCited?: number;
+  }>;
 }): SuggestionEvaluationRequest | null {
   const opportunityId = input.opportunityId?.trim();
   const suggestionText = input.suggestionText.trim();
@@ -147,5 +195,16 @@ export function buildSuggestionEvaluationRequest(input: {
     suggestionText,
     suggestionUrl: input.suggestionUrl?.trim() || undefined,
     evidenceItems: input.evidenceItems,
+    sentimentRows: input.sentimentRows
+      .map((row) => ({
+        item: row.item.trim(),
+        sov: row.sov.trim(),
+        sentiment: row.sentiment.trim(),
+        timesCited:
+          typeof row.timesCited === 'number' && Number.isFinite(row.timesCited)
+            ? row.timesCited
+            : undefined,
+      }))
+      .filter((row) => row.item || row.sov || row.sentiment),
   };
 }

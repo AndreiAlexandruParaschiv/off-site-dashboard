@@ -8,13 +8,21 @@ import {
   normalizeSuggestionCollection,
   normalizeSiteInput,
 } from './utils';
-import { EVALUATOR_API_PATH, SUGGESTION_EVALUATOR_API_PATH } from './constants';
+import {
+  DEFAULT_API_BASE_URL,
+  EVALUATOR_API_PATH,
+  SPACECAT_PROXY_API_PATH,
+  SPACECAT_PROXY_CONFIG_API_PATH,
+  SUGGESTION_EVALUATOR_API_PATH,
+} from './constants';
 import type {
   FetchSiteParams,
   FetchSiteSuccessResult,
   OpportunityRecord,
   SentimentEvaluationRequest,
   SentimentEvaluationResult,
+  SpacecatProxyConfig,
+  SuggestionRecord,
   SuggestionEvaluationRequest,
   SuggestionEvaluationResult,
 } from './types';
@@ -67,18 +75,30 @@ export class SpacecatApiError extends Error {
 async function requestJson<T>(
   url: string,
   apiKey: string,
+  proxyConfig?: SpacecatProxyConfig,
   attempt = 0,
 ): Promise<T> {
   try {
     const trimmedApiKey = apiKey.trim();
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        ...API_HEADERS,
-        Authorization: `Bearer ${trimmedApiKey}`,
-        'x-api-key': trimmedApiKey,
+    const useProxy = proxyConfig?.configured === true;
+    const response = await fetch(
+      useProxy
+        ? `${SPACECAT_PROXY_API_PATH}?target=${encodeURIComponent(url)}`
+        : url,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: useProxy
+          ? {
+              ...API_HEADERS,
+            }
+          : {
+              ...API_HEADERS,
+              Authorization: `Bearer ${trimmedApiKey}`,
+              'x-api-key': trimmedApiKey,
+            },
       },
-    });
+    );
 
     if (response.status === 429) {
       const retryAfterHeader = response.headers.get('Retry-After');
@@ -89,7 +109,7 @@ async function requestJson<T>(
 
       if (attempt < 1) {
         await sleep(waitSeconds * 1000);
-        return requestJson<T>(url, apiKey, attempt + 1);
+        return requestJson<T>(url, apiKey, proxyConfig, attempt + 1);
       }
 
       throw new SpacecatApiError(
@@ -169,10 +189,154 @@ function buildApiUrl(baseUrl: string, path: string) {
   return `${normalizeApiBaseUrl(baseUrl)}/${path.replace(/^\/+/, '')}`;
 }
 
+function normalizeComparableSuggestionValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function buildSuggestionLookupKey(
+  suggestion: Pick<SuggestionRecord, 'suggestionId' | 'suggestionText'>,
+) {
+  return (
+    suggestion.suggestionId?.trim().toLowerCase() ||
+    normalizeComparableSuggestionValue(suggestion.suggestionText)
+  );
+}
+
+function truncateSuggestionEvidenceValue(value: string, maxLength = 220) {
+  const normalizedValue = value.replace(/\s+/g, ' ').trim();
+
+  if (normalizedValue.length <= maxLength) {
+    return normalizedValue;
+  }
+
+  return `${normalizedValue.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function collectEmbeddedSuggestionEvidenceItems(opportunity: OpportunityRecord) {
+  return Array.from(
+    new Set(
+      opportunity.suggestions.flatMap((suggestion) =>
+        (suggestion.evidenceItems ?? [])
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    ),
+  );
+}
+
+function buildSuggestionSourceMismatchEvidenceItems(
+  embeddedSuggestion: SuggestionRecord | undefined,
+  fetchedSuggestion: SuggestionRecord,
+) {
+  if (!embeddedSuggestion) {
+    return [] as string[];
+  }
+
+  const embeddedText = embeddedSuggestion.suggestionText.trim();
+  const fetchedText = fetchedSuggestion.suggestionText.trim();
+  const embeddedUrl = embeddedSuggestion.suggestionUrl?.trim() ?? '';
+  const fetchedUrl = fetchedSuggestion.suggestionUrl?.trim() ?? '';
+  const textMismatch =
+    normalizeComparableSuggestionValue(embeddedText) !==
+    normalizeComparableSuggestionValue(fetchedText);
+  const urlMismatch =
+    Boolean(embeddedUrl || fetchedUrl) &&
+    normalizeComparableSuggestionValue(embeddedUrl) !==
+      normalizeComparableSuggestionValue(fetchedUrl);
+
+  if (!textMismatch && !urlMismatch) {
+    return [] as string[];
+  }
+
+  const suggestionLabel =
+    fetchedSuggestion.suggestionId?.trim() ||
+    embeddedSuggestion.suggestionId?.trim() ||
+    truncateSuggestionEvidenceValue(fetchedText || embeddedText, 80);
+
+  const mismatchEvidenceItems = [
+    `Suggestion source mismatch: Embedded opportunity payload and /suggestions endpoint disagree for ${suggestionLabel}. Evaluator uses the /suggestions endpoint because it matches the LLMO UI.`,
+  ];
+
+  if (textMismatch) {
+    mismatchEvidenceItems.push(
+      `Embedded opportunity payload suggestion text: ${truncateSuggestionEvidenceValue(
+        embeddedText,
+      )}`,
+    );
+    mismatchEvidenceItems.push(
+      `Suggestions endpoint suggestion text: ${truncateSuggestionEvidenceValue(
+        fetchedText,
+      )}`,
+    );
+  }
+
+  if (urlMismatch) {
+    mismatchEvidenceItems.push(
+      `Embedded opportunity payload suggestion URL: ${embeddedUrl || 'None'}`,
+    );
+    mismatchEvidenceItems.push(
+      `Suggestions endpoint suggestion URL: ${fetchedUrl || 'None'}`,
+    );
+  }
+
+  return mismatchEvidenceItems;
+}
+
+function mergeFetchedSuggestionsIntoOpportunity(
+  opportunity: OpportunityRecord,
+  fetchedCollection: ReturnType<typeof normalizeSuggestionCollection>,
+) {
+  const shouldUseFetchedCollection =
+    fetchedCollection.suggestions.length > 0 || fetchedCollection.sentimentItems.length > 0;
+
+  if (!shouldUseFetchedCollection) {
+    return opportunity;
+  }
+
+  const embeddedEvidenceItems = collectEmbeddedSuggestionEvidenceItems(opportunity);
+  const embeddedSuggestionsByKey = new Map(
+    opportunity.suggestions.map((suggestion) => [
+      buildSuggestionLookupKey(suggestion),
+      suggestion,
+    ]),
+  );
+
+  const mergedSuggestions = fetchedCollection.suggestions.map((suggestion) => {
+    const embeddedSuggestion = embeddedSuggestionsByKey.get(
+      buildSuggestionLookupKey(suggestion),
+    );
+    const mismatchEvidenceItems = buildSuggestionSourceMismatchEvidenceItems(
+      embeddedSuggestion,
+      suggestion,
+    );
+
+    return {
+      ...suggestion,
+      evidenceItems: Array.from(
+        new Set([
+          ...mismatchEvidenceItems,
+          ...(suggestion.evidenceItems ?? []),
+          ...embeddedEvidenceItems,
+        ]),
+      ),
+    };
+  });
+
+  return {
+    ...opportunity,
+    suggestions: mergedSuggestions,
+    sentimentItems:
+      fetchedCollection.sentimentItems.length > 0
+        ? fetchedCollection.sentimentItems
+        : opportunity.sentimentItems,
+  };
+}
+
 async function resolveSiteByDirectLookup(
   normalizedApiBaseUrl: string,
   apiKey: string,
   lookupCandidates: string[],
+  proxyConfig?: SpacecatProxyConfig,
 ) {
   for (const candidate of lookupCandidates) {
     const encodedCandidate = encodeBase64PathValue(candidate);
@@ -182,7 +346,11 @@ async function resolveSiteByDirectLookup(
     );
 
     try {
-      const lookupResponse = await requestJson<unknown>(lookupUrl, apiKey);
+      const lookupResponse = await requestJson<unknown>(
+        lookupUrl,
+        apiKey,
+        proxyConfig,
+      );
       const resolvedSite = extractSiteId(lookupResponse, candidate);
 
       if (resolvedSite) {
@@ -204,11 +372,13 @@ async function resolveSiteByEnumeratingAllSites(
   normalizedApiBaseUrl: string,
   apiKey: string,
   lookupCandidates: string[],
+  proxyConfig?: SpacecatProxyConfig,
 ) {
   try {
     const lookupResponse = await requestJson<unknown>(
       buildApiUrl(normalizedApiBaseUrl, 'sites'),
       apiKey,
+      proxyConfig,
     );
 
     for (const candidate of lookupCandidates) {
@@ -236,7 +406,16 @@ async function fetchSuggestionsForOpportunity(
   apiKey: string,
   siteId: string,
   opportunity: OpportunityRecord,
+  proxyConfig?: SpacecatProxyConfig,
 ) {
+  const shouldFetchSuggestionEndpoint =
+    opportunity.opportunityType === 'Wikipedia' ||
+    (opportunity.suggestions.length === 0 && opportunity.sentimentItems.length === 0);
+
+  if (!shouldFetchSuggestionEndpoint) {
+    return opportunity;
+  }
+
   try {
     const suggestionsUrl = buildApiUrl(
       normalizedApiBaseUrl,
@@ -244,17 +423,16 @@ async function fetchSuggestionsForOpportunity(
         opportunity.opportunityId,
       )}/suggestions`,
     );
-    const suggestionsPayload = await requestJson<unknown>(suggestionsUrl, apiKey);
+    const suggestionsPayload = await requestJson<unknown>(
+      suggestionsUrl,
+      apiKey,
+      proxyConfig,
+    );
     const normalizedSuggestions = normalizeSuggestionCollection(
       suggestionsPayload,
       opportunity.opportunityType,
     );
-
-    return {
-      ...opportunity,
-      suggestions: normalizedSuggestions.suggestions,
-      sentimentItems: normalizedSuggestions.sentimentItems,
-    };
+    return mergeFetchedSuggestionsIntoOpportunity(opportunity, normalizedSuggestions);
   } catch (error) {
     if (
       error instanceof SpacecatApiError &&
@@ -273,8 +451,11 @@ export async function fetchSiteDashboardData({
   apiBaseUrl,
   apiKey,
   siteInput,
+  proxyConfig,
 }: FetchSiteParams): Promise<FetchSiteSuccessResult> {
-  const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl);
+  const normalizedApiBaseUrl = normalizeApiBaseUrl(
+    proxyConfig?.configured ? proxyConfig.apiBaseUrl : apiBaseUrl,
+  );
   const normalizedSiteInput = normalizeSiteInput(siteInput);
   const lookupCandidates = buildLookupCandidates(normalizedSiteInput);
 
@@ -282,7 +463,7 @@ export async function fetchSiteDashboardData({
     throw new SpacecatApiError('API base URL is required.');
   }
 
-  if (!apiKey.trim()) {
+  if (!proxyConfig?.configured && !apiKey.trim()) {
     throw new SpacecatApiError('API key is required.');
   }
 
@@ -297,6 +478,7 @@ export async function fetchSiteDashboardData({
     normalizedApiBaseUrl,
     apiKey,
     lookupCandidates,
+    proxyConfig,
   );
   const enumeratedLookupMatch =
     directLookupMatch ??
@@ -304,6 +486,7 @@ export async function fetchSiteDashboardData({
       normalizedApiBaseUrl,
       apiKey,
       lookupCandidates,
+      proxyConfig,
     ));
 
   if (enumeratedLookupMatch) {
@@ -322,7 +505,11 @@ export async function fetchSiteDashboardData({
     normalizedApiBaseUrl,
     `sites/${encodeURIComponent(resolvedSiteId)}/opportunities`,
   );
-  const opportunitiesPayload = await requestJson<unknown>(opportunitiesUrl, apiKey);
+  const opportunitiesPayload = await requestJson<unknown>(
+    opportunitiesUrl,
+    apiKey,
+    proxyConfig,
+  );
   const opportunityPresence = summarizeOpportunityPresence(opportunitiesPayload);
   const normalizedOpportunities = normalizeOpportunityCollection(opportunitiesPayload);
   const opportunities = await Promise.all(
@@ -332,6 +519,7 @@ export async function fetchSiteDashboardData({
         apiKey,
         resolvedSiteId,
         opportunity,
+        proxyConfig,
       ),
     ),
   );
@@ -361,4 +549,35 @@ export async function evaluateSuggestionRow(
     SUGGESTION_EVALUATOR_API_PATH,
     payload,
   );
+}
+
+export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {
+  try {
+    const response = await fetch(SPACECAT_PROXY_CONFIG_API_PATH, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: API_HEADERS,
+    });
+
+    if (!response.ok) {
+      return {
+        configured: false,
+        apiBaseUrl: DEFAULT_API_BASE_URL,
+      };
+    }
+
+    const payload = (await response.json()) as Partial<SpacecatProxyConfig>;
+    return {
+      configured: payload.configured === true,
+      apiBaseUrl:
+        typeof payload.apiBaseUrl === 'string' && payload.apiBaseUrl.trim()
+          ? payload.apiBaseUrl.trim()
+          : DEFAULT_API_BASE_URL,
+    };
+  } catch {
+    return {
+      configured: false,
+      apiBaseUrl: DEFAULT_API_BASE_URL,
+    };
+  }
 }

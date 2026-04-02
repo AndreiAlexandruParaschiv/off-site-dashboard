@@ -10,6 +10,13 @@ export type SiteFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 export type OpportunityPresenceState = 'missing' | 'exists' | 'exists_mixed';
 export type SentimentEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
 export type SuggestionEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
+export type SuggestionRecordStatus =
+  | 'NEW'
+  | 'PENDING_VALIDATION'
+  | 'OUTDATED'
+  | 'IGNORED'
+  | 'FIXED'
+  | 'UNKNOWN';
 export type SentimentEvaluationFetchStatus =
   | 'success'
   | 'partial'
@@ -29,10 +36,17 @@ export interface DashboardConfig {
   siteInputText: string;
 }
 
+export interface SpacecatProxyConfig {
+  configured: boolean;
+  apiBaseUrl: string;
+}
+
 export interface SuggestionRecord {
   suggestionId: string;
   suggestionText: string;
   suggestionUrl?: string;
+  status?: SuggestionRecordStatus;
+  evidenceItems?: string[];
   rowKey?: string;
   canEvaluate?: boolean;
   evaluationStatus?: SuggestionEvaluationStatus;
@@ -44,6 +58,7 @@ export interface SentimentItemRecord {
   item: string;
   sov: string;
   sentiment: string;
+  timesCited?: number;
   rowKey?: string;
   canEvaluate?: boolean;
   evaluationStatus?: SentimentEvaluationStatus;
@@ -56,6 +71,7 @@ export interface SentimentEvaluationFetchMetadata {
   sourceType: 'youtube' | 'reddit' | 'web';
   sourceUrl: string;
   usedTranscript: boolean;
+  usedComments?: boolean;
   transcriptStatus?: YouTubeTranscriptStatus;
   evidenceCharacters: number;
 }
@@ -99,6 +115,13 @@ export interface SuggestionEvaluationResult {
   targetBrand: string;
 }
 
+export interface SuggestionEvidenceRow {
+  item: string;
+  sov: string;
+  sentiment: string;
+  timesCited?: number;
+}
+
 export interface SentimentEvaluationRequest {
   site: string;
   siteId?: string;
@@ -118,6 +141,7 @@ export interface SuggestionEvaluationRequest {
   suggestionText: string;
   suggestionUrl?: string;
   evidenceItems: string[];
+  sentimentRows: SuggestionEvidenceRow[];
 }
 
 export interface SentimentEvaluationStoredResult extends SentimentEvaluationResult {
@@ -128,6 +152,7 @@ export interface SentimentEvaluationStoredResult extends SentimentEvaluationResu
 
 export interface SuggestionEvaluationStoredResult extends SuggestionEvaluationResult {
   rowKey: string;
+  requestFingerprint: string;
   suggestionText: string;
   suggestionUrl?: string;
 }
@@ -190,6 +215,8 @@ export interface GroupedSuggestionItem {
   suggestionId?: string;
   suggestionText?: string;
   suggestionUrl?: string;
+  status?: SuggestionRecordStatus;
+  evidenceItems?: string[];
   rowKey?: string;
   canEvaluate?: boolean;
   evaluationStatus?: SuggestionEvaluationStatus;
@@ -212,6 +239,7 @@ export interface FetchSiteParams {
   apiBaseUrl: string;
   apiKey: string;
   siteInput: string;
+  proxyConfig?: SpacecatProxyConfig;
 }
 
 export interface FetchSiteSuccessResult extends SiteDashboardResult {

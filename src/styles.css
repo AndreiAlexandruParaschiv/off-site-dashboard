@@ -29,6 +29,8 @@
   --warning-soft: rgba(154, 103, 0, 0.12);
   --info-soft: rgba(31, 41, 55, 0.06);
   --table-stripe: rgba(255, 255, 255, 0.42);
+  --active-row: rgba(15, 118, 110, 0.1);
+  --active-row-strong: rgba(15, 118, 110, 0.2);
 }
 
 * {
@@ -595,12 +597,8 @@ a {
   width: 160px;
 }
 
-.suggestion-evaluation-col-rationale {
-  width: 280px;
-}
-
-.suggestion-evaluation-col-correction {
-  width: 260px;
+.suggestion-evaluation-col-details {
+  width: 110px;
 }
 
 .suggestions-col-site {
@@ -655,6 +653,30 @@ a {
   background: var(--table-stripe);
 }
 
+.dashboard-table tbody tr.evaluation-row-running {
+  background:
+    linear-gradient(90deg, rgba(15, 118, 110, 0.16), rgba(15, 118, 110, 0.04) 18%, transparent 42%),
+    var(--active-row);
+}
+
+.dashboard-table tbody tr.evaluation-row-running td {
+  box-shadow: inset 0 -1px 0 rgba(15, 118, 110, 0.08);
+}
+
+.dashboard-table tbody tr.evaluation-row-running .metric-card,
+.dashboard-table tbody tr.evaluation-row-running .metric-link,
+.dashboard-table tbody tr.evaluation-row-running .suggestion-list-item,
+.dashboard-table tbody tr.evaluation-row-running .suggestion-detail-card {
+  border-color: var(--active-row-strong);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.08);
+}
+
+.dashboard-table tbody tr.evaluation-row-running .ghost-button {
+  border-color: var(--active-row-strong);
+  background: rgba(15, 118, 110, 0.08);
+}
+
 .dashboard-table tbody tr:last-child td {
   border-bottom: none;
 }
@@ -693,6 +715,34 @@ a {
   background: rgba(255, 255, 255, 0.78);
 }
 
+.suggestion-list-item-expanded {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(15, 118, 110, 0.18);
+}
+
+.suggestion-list-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.suggestion-list-item-title-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.suggestion-list-item-body {
+  display: grid;
+  gap: 10px;
+}
+
+.suggestion-item-toggle {
+  min-width: 72px;
+  flex: 0 0 auto;
+}
+
 .metric-list-item {
   color: var(--ink);
   min-width: 0;
@@ -718,6 +768,46 @@ a {
   border-radius: 18px;
   border: 1px solid rgba(31, 41, 55, 0.08);
   background: rgba(255, 255, 255, 0.78);
+}
+
+.suggestion-evaluation-row-expanded {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.suggestion-evaluation-detail-row td {
+  padding-top: 0;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.suggestion-evaluation-detail-grid {
+  display: grid;
+  gap: 14px;
+  padding: 0 0 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.suggestion-evaluation-detail-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.suggestion-evaluation-detail-card h4 {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+
+.suggestion-evaluation-source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.suggestion-detail-toggle {
+  min-width: 74px;
 }
 
 .metric-link {

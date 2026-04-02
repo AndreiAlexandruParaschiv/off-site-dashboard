@@ -7,6 +7,11 @@ import type {
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_BEDROCK_MODEL = 'us.anthropic.claude-3-5-haiku-20241022-v1:0';
+const DEFAULT_BRIGHTDATA_WEB_UNLOCKER_ZONE = 'web_unlocker1';
+const DEFAULT_BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID = 'gd_lk56epmy2i5g7lzu0k';
+const DEFAULT_BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID = 'gd_lk9q0ew71spt1mxywf';
+const DEFAULT_BRIGHTDATA_REDDIT_POST_DATASET_ID = 'gd_lvz8ah06191smkebj4';
+const DEFAULT_BRIGHTDATA_REDDIT_COMMENT_DATASET_ID = 'gd_lvzdpsdlw09j6t702';
 const BEDROCK_MODEL_FALLBACKS = [
   'us.anthropic.claude-opus-4-6-v1',
   'us.anthropic.claude-sonnet-4-6',
@@ -25,6 +30,12 @@ type ServerEnv = {
   BEDROCK_REGION?: string;
   BEDROCK_MODEL_ID?: string;
   BEDROCK_MODEL?: string;
+  BRIGHTDATA_API_KEY?: string;
+  BRIGHTDATA_WEB_UNLOCKER_ZONE?: string;
+  BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?: string;
+  BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?: string;
+  BRIGHTDATA_REDDIT_POST_DATASET_ID?: string;
+  BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?: string;
   OPENAI_API_KEY?: string;
   OPENAI_EVALUATOR_MODEL?: string;
   AZURE_OPENAI_ENDPOINT?: string;
@@ -36,6 +47,7 @@ type SourceEvidence = {
   sourceType: 'youtube' | 'reddit' | 'web';
   sourceUrl: string;
   usedTranscript: boolean;
+  usedComments: boolean;
   transcriptStatus:
     | 'available_and_used'
     | 'available_but_not_used'
@@ -160,6 +172,42 @@ function getPreferredBedrockModel(env: ServerEnv) {
   return env.BEDROCK_MODEL_ID ?? env.BEDROCK_MODEL;
 }
 
+function getBrightDataApiKey(env: ServerEnv) {
+  return env.BRIGHTDATA_API_KEY?.trim() || '';
+}
+
+function getBrightDataUnlockerZone(env: ServerEnv) {
+  return env.BRIGHTDATA_WEB_UNLOCKER_ZONE?.trim() || DEFAULT_BRIGHTDATA_WEB_UNLOCKER_ZONE;
+}
+
+function getBrightDataYoutubeVideoDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID
+  );
+}
+
+function getBrightDataYoutubeCommentDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID
+  );
+}
+
+function getBrightDataRedditPostDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_REDDIT_POST_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_REDDIT_POST_DATASET_ID
+  );
+}
+
+function getBrightDataRedditCommentDatasetId(env: ServerEnv) {
+  return (
+    env.BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?.trim() ||
+    DEFAULT_BRIGHTDATA_REDDIT_COMMENT_DATASET_ID
+  );
+}
+
 function getBedrockModelCandidates(preferredModel?: string) {
   const candidates = [
     preferredModel?.trim(),
@@ -226,6 +274,449 @@ async function fetchText(url: string) {
   }
 
   return response.text();
+}
+
+async function fetchBrightDataUnlockerBody(
+  targetUrl: string,
+  env: ServerEnv,
+  dataFormat: 'markdown' | 'raw' = 'markdown',
+) {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch('https://api.brightdata.com/request', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      zone: getBrightDataUnlockerZone(env),
+      url: targetUrl,
+      format: 'json',
+      method: 'GET',
+      data_format: dataFormat,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data unlocker failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    status_code?: number;
+    body?: string;
+  };
+
+  if (typeof payload.status_code === 'number' && payload.status_code >= 400) {
+    throw new Error(`Bright Data unlocker target failed with ${payload.status_code}`);
+  }
+
+  if (typeof payload.body !== 'string' || !payload.body.trim()) {
+    throw new Error('Bright Data unlocker returned an empty body.');
+  }
+
+  return payload.body;
+}
+
+async function fetchBrightDataYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeVideoDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            country: '',
+            transcription_language: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const firstResult = payload[0];
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube scrape returned no results.');
+  }
+
+  const title = trimMultilineText(String(firstResult.title ?? ''));
+  const description = trimMultilineText(String(firstResult.description ?? ''));
+  const transcript = trimMultilineText(
+    String(firstResult.formatted_transcript ?? firstResult.transcript ?? ''),
+  );
+  const channelName = trimMultilineText(String(firstResult.youtuber ?? ''));
+  const channelUrl = trimMultilineText(String(firstResult.channel_url ?? ''));
+
+  const evidenceText = clampEvidenceText(
+    trimMultilineText(
+      [
+        title ? `Title: ${title}` : '',
+        description ? `Description: ${description}` : '',
+        channelName ? `Channel: ${channelName}` : '',
+        channelUrl ? `Channel URL: ${channelUrl}` : '',
+        transcript ? `Transcript:\n${transcript}` : '',
+      ].join('\n\n'),
+    ),
+  );
+  const usedTranscript = transcript.length >= MIN_EVIDENCE_CHARACTERS;
+
+  return {
+    sourceType: 'youtube',
+    sourceUrl: itemUrl,
+    usedTranscript,
+    usedComments: false,
+    transcriptStatus: transcript
+      ? usedTranscript
+        ? 'available_and_used'
+        : 'available_but_not_used'
+      : 'not_available',
+    status:
+      evidenceText.length < MIN_EVIDENCE_CHARACTERS
+        ? 'insufficient_evidence'
+        : usedTranscript
+          ? 'success'
+          : 'partial',
+    evidenceText,
+    fallbackSnippet:
+      title ||
+      description ||
+      'Bright Data YouTube evidence could not be extracted.',
+  };
+}
+
+function extractBrightDataCommentText(entry: Record<string, unknown>) {
+  const textCandidates = [
+    entry.comment,
+    entry.comment_text,
+    entry.text,
+    entry.content,
+    entry.comment_content,
+  ];
+
+  for (const candidate of textCandidates) {
+    const normalizedCandidate = trimMultilineText(String(candidate ?? ''));
+
+    if (normalizedCandidate) {
+      return normalizedCandidate;
+    }
+  }
+
+  return '';
+}
+
+function collectBrightDataCommentTexts(entries: unknown, limit = 20) {
+  const comments: string[] = [];
+
+  const visitEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return;
+    }
+
+    const normalizedEntry = entry as Record<string, unknown>;
+    const commentText = extractBrightDataCommentText(normalizedEntry);
+
+    if (commentText) {
+      comments.push(commentText);
+    }
+
+    if (comments.length >= limit) {
+      return;
+    }
+
+    for (const nestedKey of ['replies', 'comments']) {
+      const nestedEntries = normalizedEntry[nestedKey];
+
+      if (Array.isArray(nestedEntries)) {
+        for (const nestedEntry of nestedEntries) {
+          if (comments.length >= limit) {
+            break;
+          }
+
+          visitEntry(nestedEntry);
+        }
+      }
+    }
+  };
+
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (comments.length >= limit) {
+        break;
+      }
+
+      visitEntry(entry);
+    }
+  } else if (entries && typeof entries === 'object') {
+    const normalizedEntries = entries as Record<string, unknown>;
+    const commentsArray = normalizedEntries.comments;
+
+    if (Array.isArray(commentsArray)) {
+      for (const entry of commentsArray) {
+        if (comments.length >= limit) {
+          break;
+        }
+
+        visitEntry(entry);
+      }
+    } else {
+      visitEntry(entries);
+    }
+  }
+
+  return comments.slice(0, limit);
+}
+
+async function fetchBrightDataYoutubeCommentTexts(
+  itemUrl: string,
+  env: ServerEnv,
+) {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeCommentDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            sort_by: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      errorText || `Bright Data YouTube comments scrape failed with ${response.status}`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  return collectBrightDataCommentTexts(payload);
+}
+
+async function fetchBrightDataRedditEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataRedditPostDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [{ url: itemUrl }],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data Reddit scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  const firstResult = Array.isArray(payload) ? payload[0] : payload;
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data Reddit scrape returned no results.');
+  }
+
+  return buildBrightDataRedditEvidence(itemUrl, firstResult);
+}
+
+function collectBrightDataRedditComments(entries: unknown, limit = 12) {
+  const comments: string[] = [];
+
+  const visitEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return;
+    }
+
+    const commentText = trimMultilineText(
+      String((entry as { comment?: unknown }).comment ?? ''),
+    );
+
+    if (commentText) {
+      comments.push(commentText);
+    }
+
+    if (comments.length >= limit) {
+      return;
+    }
+
+    const replies = (entry as { replies?: unknown }).replies;
+
+    if (Array.isArray(replies)) {
+      for (const reply of replies) {
+        if (comments.length >= limit) {
+          break;
+        }
+
+        visitEntry(reply);
+      }
+    }
+  };
+
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      if (comments.length >= limit) {
+        break;
+      }
+
+      visitEntry(entry);
+    }
+  }
+
+  return comments.slice(0, limit);
+}
+
+function buildBrightDataRedditEvidence(
+  itemUrl: string,
+  firstResult: Record<string, unknown>,
+): SourceEvidence {
+  const title = trimMultilineText(String(firstResult.title ?? ''));
+  const description = trimMultilineText(String(firstResult.description ?? ''));
+  const community = trimMultilineText(String(firstResult.community_name ?? ''));
+  const communityDescription = trimMultilineText(
+    String(firstResult.community_description ?? ''),
+  );
+  const comments = collectBrightDataRedditComments(firstResult.comments);
+  const evidenceText = clampEvidenceText(
+    trimMultilineText(
+      [
+        title ? `Post title: ${title}` : '',
+        description ? `Post body:\n${description}` : '',
+        community ? `Community: ${community}` : '',
+        communityDescription
+          ? `Community description:\n${communityDescription}`
+          : '',
+        comments.length > 0 ? `Comments:\n${comments.join('\n')}` : '',
+      ].join('\n\n'),
+    ),
+  );
+
+  return {
+    sourceType: 'reddit',
+    sourceUrl: itemUrl,
+    usedTranscript: false,
+    usedComments: comments.length > 0,
+    transcriptStatus: 'not_applicable',
+    status:
+      evidenceText.length >= MIN_EVIDENCE_CHARACTERS
+        ? 'success'
+        : 'insufficient_evidence',
+    evidenceText,
+    fallbackSnippet:
+      title || description || 'Bright Data Reddit evidence could not be extracted.',
+  };
+}
+
+function isRedditCommentUrl(itemUrl: string) {
+  return /\/comment\/[a-z0-9]+/i.test(itemUrl);
+}
+
+async function fetchBrightDataRedditCommentEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataRedditCommentDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            days_back: 365,
+            load_all_replies: true,
+            comment_limit: '',
+            sort_by: '',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      errorText || `Bright Data Reddit comment scrape failed with ${response.status}`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  const firstResult = Array.isArray(payload) ? payload[0] : payload;
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data Reddit comment scrape returned no results.');
+  }
+
+  return buildBrightDataRedditEvidence(itemUrl, firstResult);
 }
 
 function extractMetaTagValue(html: string, matcher: RegExp) {
@@ -731,7 +1222,18 @@ function buildSovConfidenceScore(input: {
   return clampConfidenceScore(sovConfidence);
 }
 
-async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      return await fetchBrightDataYoutubeEvidence(itemUrl, env);
+    } catch {
+      // Fall through to direct fetch if Bright Data is unavailable for this item.
+    }
+  }
+
   try {
     const html = await fetchText(itemUrl);
     const title =
@@ -804,11 +1306,12 @@ async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
     );
     const usedTranscript = transcript.length >= MIN_EVIDENCE_CHARACTERS;
 
-    return {
-      sourceType: 'youtube',
-      sourceUrl: itemUrl,
-      usedTranscript,
-      transcriptStatus,
+      return {
+        sourceType: 'youtube',
+        sourceUrl: itemUrl,
+        usedTranscript,
+        usedComments: false,
+        transcriptStatus,
       status:
         evidenceText.length < MIN_EVIDENCE_CHARACTERS
           ? 'insufficient_evidence'
@@ -823,6 +1326,7 @@ async function fetchYoutubeEvidence(itemUrl: string): Promise<SourceEvidence> {
       sourceType: 'youtube',
       sourceUrl: itemUrl,
       usedTranscript: false,
+      usedComments: false,
       transcriptStatus: 'unknown',
       status: 'fetch_failed',
       evidenceText: '',
@@ -899,7 +1403,42 @@ function buildRedditHtmlUrls(itemUrl: string) {
   }
 }
 
-async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchRedditEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      return isRedditCommentUrl(itemUrl)
+        ? await fetchBrightDataRedditCommentEvidence(itemUrl, env)
+        : await fetchBrightDataRedditEvidence(itemUrl, env);
+    } catch {
+      // Fall back to Unlocker and then the legacy Reddit fetch path.
+    }
+  }
+
+  if (getBrightDataApiKey(env)) {
+    try {
+      const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
+      const pageText = clampEvidenceText(trimMultilineText(brightDataBody));
+
+      if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
+        return {
+          sourceType: 'reddit',
+          sourceUrl: itemUrl,
+          usedTranscript: false,
+          usedComments: false,
+          transcriptStatus: 'not_applicable',
+          status: 'success',
+          evidenceText: pageText,
+          fallbackSnippet: pageText.slice(0, 280),
+        };
+      }
+    } catch {
+      // Fall back to the existing Reddit fetch path.
+    }
+  }
+
   const jsonUrls = buildRedditJsonUrls(itemUrl);
   let lastFetchError = '';
 
@@ -936,6 +1475,7 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
         sourceType: 'reddit',
         sourceUrl: jsonUrl,
         usedTranscript: false,
+        usedComments: comments.length > 0,
         transcriptStatus: 'not_applicable',
         status:
           evidenceText.length >= MIN_EVIDENCE_CHARACTERS
@@ -980,6 +1520,7 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
         sourceType: 'reddit',
         sourceUrl: htmlUrl,
         usedTranscript: false,
+        usedComments: false,
         transcriptStatus: 'not_applicable',
         status:
           evidenceText.length >= MIN_EVIDENCE_CHARACTERS
@@ -998,6 +1539,7 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
     sourceType: 'reddit',
     sourceUrl: itemUrl,
     usedTranscript: false,
+    usedComments: false,
     transcriptStatus: 'not_applicable',
     status: 'fetch_failed',
     evidenceText: '',
@@ -1007,7 +1549,32 @@ async function fetchRedditEvidence(itemUrl: string): Promise<SourceEvidence> {
   }
 }
 
-async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
+async function fetchWebEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  if (getBrightDataApiKey(env)) {
+    try {
+      const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
+      const pageText = clampEvidenceText(trimMultilineText(brightDataBody));
+
+      if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
+        return {
+          sourceType: 'web',
+          sourceUrl: itemUrl,
+          usedTranscript: false,
+          usedComments: false,
+          transcriptStatus: 'not_applicable',
+          status: 'success',
+          evidenceText: pageText,
+          fallbackSnippet: pageText.slice(0, 280),
+        };
+      }
+    } catch {
+      // Fall back to direct fetch.
+    }
+  }
+
   try {
     const html = await fetchText(itemUrl);
     const title =
@@ -1031,6 +1598,7 @@ async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
       sourceType: 'web',
       sourceUrl: itemUrl,
       usedTranscript: false,
+      usedComments: false,
       transcriptStatus: 'not_applicable',
       status:
         evidenceText.length >= MIN_EVIDENCE_CHARACTERS
@@ -1044,6 +1612,7 @@ async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
       sourceType: 'web',
       sourceUrl: itemUrl,
       usedTranscript: false,
+      usedComments: false,
       transcriptStatus: 'not_applicable',
       status: 'fetch_failed',
       evidenceText: '',
@@ -1054,16 +1623,17 @@ async function fetchWebEvidence(itemUrl: string): Promise<SourceEvidence> {
 
 async function fetchEvidenceForRequest(
   payload: SentimentEvaluationRequest,
+  env: ServerEnv,
 ): Promise<SourceEvidence> {
   if (payload.opportunityType === 'YouTube') {
-    return fetchYoutubeEvidence(payload.item);
+    return fetchYoutubeEvidence(payload.item, env);
   }
 
   if (payload.opportunityType === 'Reddit') {
-    return fetchRedditEvidence(payload.item);
+    return fetchRedditEvidence(payload.item, env);
   }
 
-  return fetchWebEvidence(payload.item);
+  return fetchWebEvidence(payload.item, env);
 }
 
 function buildLlmPrompt(
@@ -1449,7 +2019,7 @@ export async function runOffsiteEvaluation(
     throw new Error('Invalid evaluator request payload.');
   }
 
-  const evidence = await fetchEvidenceForRequest(payload);
+  const evidence = await fetchEvidenceForRequest(payload, env);
 
   if (
     evidence.status === 'fetch_failed' ||
@@ -1487,6 +2057,7 @@ export async function runOffsiteEvaluation(
         sourceType: evidence.sourceType,
         sourceUrl: evidence.sourceUrl,
         usedTranscript: evidence.usedTranscript,
+        usedComments: evidence.usedComments,
         transcriptStatus: evidence.transcriptStatus,
         evidenceCharacters: evidence.evidenceText.length,
       },
@@ -1536,6 +2107,7 @@ export async function runOffsiteEvaluation(
       sourceType: evidence.sourceType,
       sourceUrl: evidence.sourceUrl,
       usedTranscript: evidence.usedTranscript,
+      usedComments: evidence.usedComments,
       transcriptStatus: evidence.transcriptStatus,
       evidenceCharacters: evidence.evidenceText.length,
     },

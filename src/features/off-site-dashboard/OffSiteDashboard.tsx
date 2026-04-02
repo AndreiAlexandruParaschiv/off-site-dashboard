@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
 import { getConfidenceBand, getConfidenceLabel } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
@@ -8,8 +8,10 @@ import type {
   GroupedOpportunityRow,
   OpportunityPresenceState,
   SentimentItemRecord,
+  SentimentEvaluationFetchMetadata,
   SiteDashboardResult,
   SiteOpportunityPresence,
+  SuggestionEvaluationResult,
 } from './types';
 
 const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
@@ -324,6 +326,89 @@ function isConfirmedSuggestionEvaluation(input: {
   );
 }
 
+function getSuggestionEvaluationSourceUrls(
+  evaluationResult?: SuggestionEvaluationResult,
+) {
+  if (!evaluationResult) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      evaluationResult.evidenceSources
+        .map((source) => source.sourceUrl.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function getEvaluationEvidenceContextLines(
+  fetch?: SentimentEvaluationFetchMetadata,
+) {
+  if (!fetch) {
+    return [] as string[];
+  }
+
+  if (fetch.sourceType === 'youtube') {
+    if (fetch.usedTranscript) {
+      return ['Evidence source: transcript/captions'];
+    }
+
+    const lines = ['Evidence source: metadata only'];
+
+    if (
+      fetch.transcriptStatus === 'available_but_not_used' ||
+      fetch.transcriptStatus === 'not_available' ||
+      fetch.transcriptStatus === 'unknown'
+    ) {
+      lines.push('No usable transcript/captions were available for this clip.');
+    }
+
+    return lines;
+  }
+
+  if (fetch.sourceType === 'reddit') {
+    return [
+      fetch.usedComments
+        ? 'Evidence source: Reddit thread + comments'
+        : 'Evidence source: Reddit thread',
+    ];
+  }
+
+  return ['Evidence source: web page'];
+}
+
+function getEvaluatedAtSortValue(value?: string) {
+  if (!value) {
+    return null;
+  }
+
+  const parsedValue = Date.parse(value);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+}
+
+function compareEvaluationSortOrder(
+  leftEvaluatedAt?: string,
+  rightEvaluatedAt?: string,
+) {
+  const leftTimestamp = getEvaluatedAtSortValue(leftEvaluatedAt);
+  const rightTimestamp = getEvaluatedAtSortValue(rightEvaluatedAt);
+
+  if (leftTimestamp !== null && rightTimestamp !== null) {
+    return rightTimestamp - leftTimestamp;
+  }
+
+  if (leftTimestamp !== null) {
+    return -1;
+  }
+
+  if (rightTimestamp !== null) {
+    return 1;
+  }
+
+  return 0;
+}
+
 function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[] {
   return filterEvaluationOpportunityRows(rows)
     .flatMap((row) =>
@@ -335,7 +420,19 @@ function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[
         opportunityId: row.opportunityId ?? ' - ',
         item,
       })),
-    );
+    )
+    .sort((leftRow, rightRow) => {
+      const evaluatedAtOrder = compareEvaluationSortOrder(
+        leftRow.item.evaluationResult?.evaluatedAt,
+        rightRow.item.evaluationResult?.evaluatedAt,
+      );
+
+      if (evaluatedAtOrder !== 0) {
+        return evaluatedAtOrder;
+      }
+
+      return leftRow.id.localeCompare(rightRow.id);
+    });
 }
 
 function buildSuggestionEvaluationRows(
@@ -350,7 +447,19 @@ function buildSuggestionEvaluationRows(
       opportunityId: row.opportunityId ?? ' - ',
       suggestion,
     })),
-  );
+  )
+    .sort((leftRow, rightRow) => {
+      const evaluatedAtOrder = compareEvaluationSortOrder(
+        leftRow.suggestion.evaluationResult?.evaluatedAt,
+        rightRow.suggestion.evaluationResult?.evaluatedAt,
+      );
+
+      if (evaluatedAtOrder !== 0) {
+        return evaluatedAtOrder;
+      }
+
+      return leftRow.id.localeCompare(rightRow.id);
+    });
 }
 
 function getPresenceDetails(value: OpportunityPresenceState) {
@@ -429,6 +538,8 @@ function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
 }
 
 function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
+  const [expandedSuggestionKeys, setExpandedSuggestionKeys] = useState<string[]>([]);
+
   if (props.rows.length === 0) {
     return (
       <div className="table-empty-state">
@@ -440,6 +551,14 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
       </div>
     );
   }
+
+  const toggleSuggestion = (suggestionKey: string) => {
+    setExpandedSuggestionKeys((currentKeys) =>
+      currentKeys.includes(suggestionKey)
+        ? currentKeys.filter((currentKey) => currentKey !== suggestionKey)
+        : [...currentKeys, suggestionKey],
+    );
+  };
 
   return (
     <div className="table-wrapper">
@@ -476,6 +595,7 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
                       const suggestionText = trimSuggestionText(
                         suggestion.suggestionText,
                       );
+                      const suggestionKey = `${row.id}-${suggestion.suggestionId ?? index}`;
                       const suggestionLines = suggestionText
                         ? suggestionText.split('\n')
                         : [];
@@ -485,32 +605,65 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
                         suggestionLines.length > 1
                           ? suggestionLines.slice(1).join('\n')
                           : suggestionText;
+                      const suggestionPreview = (
+                        suggestionHeading || suggestionBody || ' - '
+                      ).replace(/\s+/g, ' ').trim();
+                      const normalizedHeading = suggestionHeading
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                      const normalizedBody = suggestionBody.replace(/\s+/g, ' ').trim();
+                      const hasExpandableBody = Boolean(
+                        normalizedHeading &&
+                          normalizedBody &&
+                          normalizedBody !== normalizedHeading,
+                      );
+                      const isExpanded = expandedSuggestionKeys.includes(suggestionKey);
 
                       return (
                         <li
-                          className="suggestion-list-item"
-                          key={`${row.id}-${suggestion.suggestionId ?? index}`}
+                          className={`suggestion-list-item ${isExpanded ? 'suggestion-list-item-expanded' : ''}`}
+                          key={suggestionKey}
                         >
-                          {suggestion.suggestionId && (
-                            <span className="suggestion-meta-id">
-                              {suggestion.suggestionId}
-                            </span>
-                          )}
-                          {suggestionHeading ? (
-                            <>
+                          <div className="suggestion-list-item-header">
+                            <div className="suggestion-list-item-title-block">
+                              {suggestion.suggestionId && (
+                                <span className="suggestion-meta-id">
+                                  {suggestion.suggestionId}
+                                </span>
+                              )}
                               <strong className="suggestion-heading">
-                                {suggestionHeading}
+                                {suggestionPreview}
                               </strong>
+                            </div>
+                            {hasExpandableBody ? (
+                              <button
+                                className="ghost-button suggestion-item-toggle"
+                                onClick={() => toggleSuggestion(suggestionKey)}
+                                type="button"
+                                aria-expanded={isExpanded}
+                              >
+                                {isExpanded ? 'Hide' : 'Show'}
+                              </button>
+                            ) : null}
+                          </div>
+                          {hasExpandableBody && isExpanded && (
+                            <div className="suggestion-list-item-body">
                               <span className="suggestion-copy">
                                 {suggestionBody || ' - '}
                               </span>
-                            </>
-                          ) : (
-                            <span className="suggestion-copy">
-                              {suggestionBody || ' - '}
-                            </span>
+                              {suggestion.suggestionUrl && (
+                                <a
+                                  className="suggestion-link"
+                                  href={suggestion.suggestionUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open link
+                                </a>
+                              )}
+                            </div>
                           )}
-                          {suggestion.suggestionUrl && (
+                          {!hasExpandableBody && suggestion.suggestionUrl && (
                             <a
                               className="suggestion-link"
                               href={suggestion.suggestionUrl}
@@ -673,6 +826,7 @@ function SuggestionEvaluationTable(props: {
   isEvaluating: boolean;
 }) {
   const evaluationRows = buildSuggestionEvaluationRows(props.rows);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.suggestion.canEvaluate && row.suggestion.rowKey)
     .map((row) => row.suggestion.rowKey as string);
@@ -682,6 +836,13 @@ function SuggestionEvaluationTable(props: {
   const areAllVisibleRowsSelected =
     visibleEvaluableRowKeys.length > 0 &&
     selectedVisibleRowCount === visibleEvaluableRowKeys.length;
+  const toggleExpandedRow = (rowKey: string) => {
+    setExpandedRowKeys((currentRowKeys) =>
+      currentRowKeys.includes(rowKey)
+        ? currentRowKeys.filter((currentRowKey) => currentRowKey !== rowKey)
+        : [...currentRowKeys, rowKey],
+    );
+  };
 
   if (evaluationRows.length === 0) {
     return (
@@ -702,10 +863,9 @@ function SuggestionEvaluationTable(props: {
           <col className="suggestion-evaluation-col-suggestion" />
           <col className="suggestion-evaluation-col-confidence" />
           <col className="suggestion-evaluation-col-verdict" />
-          <col className="suggestion-evaluation-col-rationale" />
-          <col className="suggestion-evaluation-col-correction" />
           <col className="evaluation-col-evaluated-at" />
           <col className="evaluation-col-action" />
+          <col className="suggestion-evaluation-col-details" />
         </colgroup>
         <thead>
           <tr>
@@ -726,10 +886,9 @@ function SuggestionEvaluationTable(props: {
             <th>Suggestion</th>
             <th>Confidence</th>
             <th>Verdict</th>
-            <th>Rationale / Evidence</th>
-            <th>Corrected Suggestion</th>
             <th>Evaluated At</th>
             <th>Action</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -758,108 +917,157 @@ function SuggestionEvaluationTable(props: {
                     .filter(Boolean)
                     .join('\n\n')
                 : 'Run evaluation to check whether this suggestion is grounded in the evidence.';
-            const correctedSuggestion =
-              row.suggestion.evaluationError || !evaluationResult
-                ? ' - '
-                : evaluationResult.correctedSuggestion || 'No change needed';
+            const sourceUrls = getSuggestionEvaluationSourceUrls(evaluationResult);
+            const isExpanded = row.suggestion.rowKey
+              ? expandedRowKeys.includes(row.suggestion.rowKey)
+              : false;
+            const rowClassName = [
+              isExpanded ? 'suggestion-evaluation-row-expanded' : '',
+              isRunning ? 'evaluation-row-running' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
 
             return (
-              <tr key={row.id}>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    disabled={!row.suggestion.canEvaluate || isRunning}
-                    onChange={() =>
-                      row.suggestion.rowKey
-                        ? props.onToggleRowSelection(row.suggestion.rowKey)
-                        : undefined
-                    }
-                  />
-                </td>
-                <td>
-                  <div className="evaluation-site-stack">
-                    <span>{row.site}</span>
-                    <span className="evaluation-site-meta">
-                      {row.siteId ?? row.opportunityId}
-                    </span>
-                  </div>
-                </td>
-                <td>{row.opportunityType}</td>
-                <td>
-                  <div className="metric-card">
-                    {row.suggestion.suggestionId && (
-                      <span className="suggestion-meta-id">
-                        {row.suggestion.suggestionId}
+              <Fragment key={row.id}>
+                <tr className={rowClassName || undefined}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={!row.suggestion.canEvaluate || isRunning}
+                      onChange={() =>
+                        row.suggestion.rowKey
+                          ? props.onToggleRowSelection(row.suggestion.rowKey)
+                          : undefined
+                      }
+                    />
+                  </td>
+                  <td>
+                    <div className="evaluation-site-stack">
+                      <span>{row.site}</span>
+                      <span className="evaluation-site-meta">
+                        {row.siteId ?? row.opportunityId}
+                      </span>
+                    </div>
+                  </td>
+                  <td>{row.opportunityType}</td>
+                  <td>
+                    <div className="metric-card">
+                      {row.suggestion.suggestionId && (
+                        <span className="suggestion-meta-id">
+                          {row.suggestion.suggestionId}
+                        </span>
+                      )}
+                      <span className="suggestion-copy">{suggestionText || ' - '}</span>
+                      {row.suggestion.suggestionUrl && (
+                        <a
+                          className="suggestion-link"
+                          href={row.suggestion.suggestionUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open link
+                        </a>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    {evaluationResult ? (
+                      <span
+                        className={`confidence-pill confidence-pill-${getConfidenceBand(
+                          evaluationResult.confidence,
+                        )}`}
+                      >
+                        {getConfidenceLabel(evaluationResult.confidence) || ' - '}
+                      </span>
+                    ) : (
+                      <span className="metric-copy metric-card">
+                        {isRunning ? 'Evaluating...' : 'Not evaluated'}
                       </span>
                     )}
-                    <span className="suggestion-copy">{suggestionText || ' - '}</span>
-                    {row.suggestion.suggestionUrl && (
-                      <a
-                        className="suggestion-link"
-                        href={row.suggestion.suggestionUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open link
-                      </a>
-                    )}
-                  </div>
-                </td>
-                <td>
-                  {evaluationResult ? (
+                  </td>
+                  <td>
                     <span
-                      className={`confidence-pill confidence-pill-${getConfidenceBand(
-                        evaluationResult.confidence,
+                      className={`status-pill status-pill-${getSuggestionVerdictTone(
+                        verdictOutput,
                       )}`}
                     >
-                      {getConfidenceLabel(evaluationResult.confidence) || ' - '}
+                      {verdictOutput}
                     </span>
-                  ) : (
+                  </td>
+                  <td>
                     <span className="metric-copy metric-card">
-                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
                     </span>
-                  )}
-                </td>
-                <td>
-                  <span
-                    className={`status-pill status-pill-${getSuggestionVerdictTone(
-                      verdictOutput,
-                    )}`}
-                  >
-                    {verdictOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={rationaleOutput}>
-                    {rationaleOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={correctedSuggestion}>
-                    {correctedSuggestion}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card">
-                    {formatTimestamp(evaluationResult?.evaluatedAt)}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="ghost-button"
-                    disabled={isActionDisabled}
-                    onClick={() =>
-                      row.suggestion.rowKey
-                        ? props.onEvaluateRow(row.suggestion.rowKey)
-                        : undefined
-                    }
-                    type="button"
-                  >
-                    {isRunning ? 'Evaluating...' : 'Evaluate'}
-                  </button>
-                </td>
-              </tr>
+                  </td>
+                  <td>
+                    <button
+                      className="ghost-button"
+                      disabled={isActionDisabled}
+                      onClick={() =>
+                        row.suggestion.rowKey
+                          ? props.onEvaluateRow(row.suggestion.rowKey)
+                          : undefined
+                      }
+                      type="button"
+                    >
+                      {isRunning ? 'Evaluating...' : 'Evaluate'}
+                    </button>
+                  </td>
+                  <td>
+                    {row.suggestion.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.suggestion.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr className="suggestion-evaluation-detail-row">
+                    <td colSpan={9}>
+                      <div className="suggestion-evaluation-detail-grid">
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Rationale / Evidence</h4>
+                          <p className="metric-copy">{rationaleOutput}</p>
+                        </div>
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Source Used</h4>
+                          {sourceUrls.length > 0 ? (
+                            <div className="suggestion-evaluation-source-list">
+                              {sourceUrls.map((sourceUrl) => (
+                                <a
+                                  key={sourceUrl}
+                                  className="metric-link"
+                                  href={sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={sourceUrl}
+                                >
+                                  {sourceUrl}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="metric-copy">
+                              {evaluationResult
+                                ? 'No source URL was captured for this evaluation.'
+                                : 'Run evaluation to see the source used.'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -954,6 +1162,7 @@ function EvaluationTable(props: {
               ? `Error: ${row.item.evaluationError}`
               : evaluationResult
                 ? [
+                    ...getEvaluationEvidenceContextLines(evaluationResult.fetch),
                     evaluationResult.rationale,
                     evaluationResult.evidenceSnippet
                       ? `Evidence: ${evaluationResult.evidenceSnippet}`
@@ -964,7 +1173,10 @@ function EvaluationTable(props: {
                 : 'Run evaluation to score sentiment.';
 
             return (
-              <tr key={row.id}>
+              <tr
+                key={row.id}
+                className={isRunning ? 'evaluation-row-running' : undefined}
+              >
                 <td>
                   <input
                     type="checkbox"
@@ -1161,6 +1373,7 @@ function SovEvaluationTable(props: {
               ? `Error: ${row.item.evaluationError}`
               : evaluationResult
                 ? [
+                    ...getEvaluationEvidenceContextLines(evaluationResult.fetch),
                     evaluationResult.rationale,
                     evaluationResult.evidenceSnippet
                       ? `Evidence: ${evaluationResult.evidenceSnippet}`
@@ -1171,7 +1384,10 @@ function SovEvaluationTable(props: {
                 : 'Run sentiment evaluation above to score share of voice.';
 
             return (
-              <tr key={`${row.id}-sov`}>
+              <tr
+                key={`${row.id}-sov`}
+                className={isRunning ? 'evaluation-row-running' : undefined}
+              >
                 <td>
                   <input
                     type="checkbox"
@@ -1494,23 +1710,40 @@ export function OffSiteDashboard() {
                 <input
                   className="text-input"
                   type="text"
-                  value={dashboard.config.apiBaseUrl}
+                  disabled={dashboard.spacecatProxyConfig.configured}
+                  value={
+                    dashboard.spacecatProxyConfig.configured
+                      ? dashboard.spacecatProxyConfig.apiBaseUrl
+                      : dashboard.config.apiBaseUrl
+                  }
                   onChange={(event) => dashboard.setApiBaseUrl(event.target.value)}
                   placeholder="https://spacecat.experiencecloud.live/api/v1"
                 />
+                <small className="field-note">
+                  {dashboard.spacecatProxyConfig.configured
+                    ? 'Using the server-side Spacecat proxy base URL.'
+                    : 'Browser requests use this Spacecat API base URL.'}
+                </small>
               </label>
 
               <label className="field">
                 <span>API key</span>
                 <input
                   className="text-input"
+                  disabled={dashboard.spacecatProxyConfig.configured}
                   type="password"
                   value={dashboard.config.apiKey}
                   onChange={(event) => dashboard.setApiKey(event.target.value)}
-                  placeholder="Paste your API Key"
+                  placeholder={
+                    dashboard.spacecatProxyConfig.configured
+                      ? 'Server-side proxy enabled'
+                      : 'Paste your API Key'
+                  }
                 />
                 <small className="field-note">
-                  API key is manual input only and is not persisted in localStorage.
+                  {dashboard.spacecatProxyConfig.configured
+                    ? 'Server-side Spacecat proxy is enabled. Browser API key entry is not required and the secret stays on the server.'
+                    : 'API key is manual input only and is not persisted in localStorage.'}
                 </small>
               </label>
 

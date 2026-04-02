@@ -78,7 +78,6 @@ function HeroSignal(props: {
 function PanelToggleButton(props: {
   expanded: boolean;
   onClick: () => void;
-  label: string;
 }) {
   return (
     <button
@@ -87,7 +86,7 @@ function PanelToggleButton(props: {
       type="button"
       aria-expanded={props.expanded}
     >
-      <span>{props.expanded ? 'Collapse' : 'Expand'} {props.label}</span>
+      <span>{props.expanded ? 'Collapse' : 'Expand'}</span>
       <svg
         className={`panel-toggle-icon ${props.expanded ? '' : 'panel-toggle-icon-collapsed'}`}
         viewBox="0 0 20 20"
@@ -1939,7 +1938,6 @@ export function OffSiteDashboard() {
                 <PanelToggleButton
                   expanded={isCoverageExpanded}
                   onClick={() => setIsCoverageExpanded((value) => !value)}
-                  label="Opportunity coverage"
                 />
               </div>
             </div>
@@ -1958,7 +1956,6 @@ export function OffSiteDashboard() {
                 <PanelToggleButton
                   expanded={isSitesExpanded}
                   onClick={() => setIsSitesExpanded((value) => !value)}
-                  label="Sites"
                 />
               </div>
             </div>
@@ -2044,7 +2041,6 @@ export function OffSiteDashboard() {
               <PanelToggleButton
                 expanded={isSentimentExpanded}
                 onClick={() => setIsSentimentExpanded((value) => !value)}
-                label="Sentiment"
               />
             </div>
           </div>
@@ -2071,7 +2067,6 @@ export function OffSiteDashboard() {
               <PanelToggleButton
                 expanded={isSuggestionsExpanded}
                 onClick={() => setIsSuggestionsExpanded((value) => !value)}
-                label="Suggestions"
               />
             </div>
           </div>
@@ -2120,7 +2115,6 @@ export function OffSiteDashboard() {
               <PanelToggleButton
                 expanded={isSuggestionEvaluationExpanded}
                 onClick={() => setIsSuggestionEvaluationExpanded((value) => !value)}
-                label="Suggestion evaluation"
               />
             </div>
           </div>
@@ -2178,7 +2172,6 @@ export function OffSiteDashboard() {
               <PanelToggleButton
                 expanded={isEvaluationExpanded}
                 onClick={() => setIsEvaluationExpanded((value) => !value)}
-                label="Evaluation"
               />
             </div>
           </div>
@@ -2235,7 +2228,6 @@ export function OffSiteDashboard() {
               <PanelToggleButton
                 expanded={isSovEvaluationExpanded}
                 onClick={() => setIsSovEvaluationExpanded((value) => !value)}
-                label="SOV evaluation"
               />
             </div>
           </div>

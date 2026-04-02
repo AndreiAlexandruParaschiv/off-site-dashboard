@@ -1864,7 +1864,7 @@ export function OffSiteDashboard() {
             <div className="panel-header">
               <div>
                 <h2>View Filters</h2>
-                <p>Reduce the current workspace without losing the underlying site set.</p>
+                <p>Select an off-site opportunity to review.</p>
               </div>
               <button className="ghost-button" onClick={dashboard.resetFilters} type="button">
                 Reset filters

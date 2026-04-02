@@ -1685,7 +1685,7 @@ export function OffSiteDashboard() {
           <h1>Off-Site Opportunity Monitor</h1>
           <p>
             Resolve site IDs, pull fresh off-site opportunity rows, and verify
-            suggestions, sentiment, and share of voice from one operator surface.
+            suggestions, sentiment, and share of voice in one review workspace.
           </p>
           <div className="hero-signal-row">
             <HeroSignal

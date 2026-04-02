@@ -316,7 +316,11 @@ a {
   display: grid;
   grid-template-columns: minmax(340px, 1.18fr) minmax(280px, 0.82fr);
   gap: 22px;
-  align-items: start;
+  align-items: stretch;
+}
+
+.dashboard-overview-grid > .panel {
+  height: 100%;
 }
 
 .panel {

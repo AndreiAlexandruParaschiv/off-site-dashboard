@@ -18,7 +18,6 @@ const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
   'Reddit',
   'YouTube',
   'Cited URLs',
-  'Prompt Gap',
 ]);
 
 function getAllowedEvaluationOpportunityTypes() {
@@ -51,12 +50,28 @@ type SuggestionEvaluationRowEntry = {
   suggestion: GroupedSuggestionItem;
 };
 
-function StatsCard(props: { label: string; value: string }) {
+function StatsCard(props: { label: string; value: string; detail?: string }) {
   return (
     <article className="stats-card">
-      <span className="stats-label">{props.label}</span>
+      <div className="stats-card-copy">
+        <span className="stats-label">{props.label}</span>
+        {props.detail ? <span className="stats-detail">{props.detail}</span> : null}
+      </div>
       <strong className="stats-value">{props.value}</strong>
     </article>
+  );
+}
+
+function HeroSignal(props: {
+  label: string;
+  value: string;
+  tone?: 'accent' | 'warm' | 'neutral';
+}) {
+  return (
+    <div className={`hero-signal hero-signal-${props.tone ?? 'neutral'}`}>
+      <span className="hero-signal-label">{props.label}</span>
+      <strong className="hero-signal-value">{props.value}</strong>
+    </div>
   );
 }
 
@@ -1482,6 +1497,12 @@ export function OffSiteDashboard() {
     (count, row) => count + row.suggestions.length,
     0,
   );
+  const syncedSiteCount = dashboard.siteCards.filter(
+    (site) => site.status === 'success',
+  ).length;
+  const attentionSiteCount = dashboard.siteCards.filter(
+    (site) => site.status === 'error',
+  ).length;
   const visibleSuggestionEvaluationRows = buildSuggestionEvaluationRows(
     dashboard.pagedOpportunityRows,
   );
@@ -1646,41 +1667,132 @@ export function OffSiteDashboard() {
       notEvaluated: 0,
     },
   );
+  const pendingReviewCount =
+    suggestionEvaluationSummary.review +
+    suggestionEvaluationSummary.incorrect +
+    evaluationSummary.review +
+    sovEvaluationSummary.review;
+  const currentModeLabel = dashboard.spacecatProxyConfig.configured
+    ? 'Server relay secured'
+    : 'Browser key mode';
+  const activeFilterLabel = `${dashboard.selectedTypes.length} type${dashboard.selectedTypes.length === 1 ? '' : 's'} · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
 
   return (
     <div className="dashboard-shell">
       <header className="dashboard-hero">
         <div className="hero-copy">
+          <span className="eyebrow">Off-site workspace</span>
           <h1>Off-Site Opportunity Monitor</h1>
           <p>
-            Resolve site IDs from site URLs, fetch matching off-site opportunities,
-            and review every Reddit, YouTube, Cited URLs, Prompt Gap, and Wikipedia
-            suggestion in one place.
+            Resolve site IDs, pull fresh off-site opportunity rows, and verify
+            suggestions, sentiment, and share of voice from one operator surface.
           </p>
+          <div className="hero-signal-row">
+            <HeroSignal
+              label="Mode"
+              value={currentModeLabel}
+              tone={dashboard.spacecatProxyConfig.configured ? 'accent' : 'warm'}
+            />
+            <HeroSignal
+              label="Visible scope"
+              value={`${visibleOpportunityCount} opportunities`}
+            />
+            <HeroSignal
+              label="Needs review"
+              value={`${pendingReviewCount} rows`}
+              tone={pendingReviewCount > 0 ? 'warm' : 'accent'}
+            />
+          </div>
+          <div className="hero-actions">
+            <button
+              className="primary-button"
+              disabled={!dashboard.canRefresh}
+              onClick={() => void dashboard.refreshAll()}
+              type="button"
+            >
+              {dashboard.isRefreshing ? 'Refreshing...' : 'Refresh all sites'}
+            </button>
+            <button
+              className="ghost-button"
+              disabled={!dashboard.hasExportRows}
+              onClick={dashboard.exportExcel}
+              type="button"
+            >
+              Export Excel
+            </button>
+            <button
+              className="ghost-button"
+              disabled={!dashboard.hasExportRows}
+              onClick={dashboard.exportRows}
+              type="button"
+            >
+              Export CSV
+            </button>
+            <button
+              className="ghost-button"
+              onClick={dashboard.clearResults}
+              type="button"
+            >
+              Clear results
+            </button>
+          </div>
         </div>
-        <div className="hero-stats">
-          <StatsCard
-            label="Configured sites"
-            value={String(dashboard.configuredSites.length)}
-          />
-          <StatsCard
-            label="Matching opportunities"
-            value={String(dashboard.summary.opportunityCount)}
-          />
-          <StatsCard
-            label="Suggestions"
-            value={String(dashboard.summary.suggestionCount)}
-          />
-        </div>
+        <aside className="hero-command">
+          <div className="hero-command-copy">
+            <span className="hero-command-label">Current workspace</span>
+            <p>
+              {dashboard.page} / {dashboard.totalPages} pages loaded. Filters are live
+              across the current result set.
+            </p>
+          </div>
+          <div className="hero-stats">
+            <StatsCard
+              label="Configured sites"
+              value={String(dashboard.configuredSites.length)}
+              detail={
+                dashboard.configuredSites.length === 0
+                  ? 'Waiting for inputs'
+                  : `${syncedSiteCount} synced`
+              }
+            />
+            <StatsCard
+              label="Matching opportunities"
+              value={String(dashboard.summary.opportunityCount)}
+              detail={`${visibleOpportunityCount} in view`}
+            />
+            <StatsCard
+              label="Suggestions"
+              value={String(dashboard.summary.suggestionCount)}
+              detail={`${visibleSuggestionCount} on this page`}
+            />
+          </div>
+          <div className="hero-command-notes">
+            <div className="hero-note">
+              <span className="hero-note-label">Filters</span>
+              <strong>{activeFilterLabel}</strong>
+            </div>
+            <div className="hero-note">
+              <span className="hero-note-label">Attention</span>
+              <strong>
+                {attentionSiteCount > 0
+                  ? `${attentionSiteCount} site${attentionSiteCount === 1 ? '' : 's'} need attention`
+                  : 'No site errors'}
+              </strong>
+            </div>
+          </div>
+        </aside>
       </header>
 
       <main className="dashboard-layout">
         <section className="dashboard-overview-grid">
-          <section className="panel panel-settings panel-settings-compact">
+          <section className="panel panel-settings panel-settings-compact panel-tone-warm">
             <div className="panel-header">
               <div>
-                <h2>Settings</h2>
-                <p>Configuration is stored locally in this browser.</p>
+                <h2>Connection Setup</h2>
+                <p>
+                  Local configuration stays in this browser. Use this panel to aim the
+                  workspace at Spacecat and define the site set.
+                </p>
               </div>
             </div>
 
@@ -1744,47 +1856,13 @@ export function OffSiteDashboard() {
                 </small>
               </label>
             </div>
-
-            <div className="button-row">
-              <button
-                className="primary-button"
-                disabled={!dashboard.canRefresh}
-                onClick={() => void dashboard.refreshAll()}
-                type="button"
-              >
-                {dashboard.isRefreshing ? 'Refreshing...' : 'Refresh all sites'}
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!dashboard.hasExportRows}
-                onClick={dashboard.exportRows}
-                type="button"
-              >
-                Export CSV
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!dashboard.hasExportRows}
-                onClick={dashboard.exportExcel}
-                type="button"
-              >
-                Export Excel
-              </button>
-              <button
-                className="ghost-button"
-                onClick={dashboard.clearResults}
-                type="button"
-              >
-                Clear results
-              </button>
-            </div>
           </section>
 
-          <section className="panel panel-filters">
+          <section className="panel panel-filters panel-tone-cool">
             <div className="panel-header">
               <div>
-                <h2>Filters</h2>
-                <p>Use multi-select chips to narrow the current table view.</p>
+                <h2>View Filters</h2>
+                <p>Reduce the current workspace without losing the underlying site set.</p>
               </div>
               <button className="ghost-button" onClick={dashboard.resetFilters} type="button">
                 Reset filters
@@ -1843,65 +1921,68 @@ export function OffSiteDashboard() {
           </section>
         </section>
 
-        <section className="panel panel-table panel-coverage">
-          <div className="panel-header">
-            <div>
-              <h2>Opportunity coverage</h2>
-              <p>
-                Per-site existence check for Reddit, YouTube, Cited URLs, Prompt Gap,
-                and Wikipedia opportunities.
-              </p>
+        <section className="dashboard-secondary-grid">
+          <section className="panel panel-table panel-coverage panel-tone-neutral">
+            <div className="panel-header">
+              <div>
+                <h2>Opportunity coverage</h2>
+                <p>
+                  Per-site existence check for Reddit, YouTube, Cited URLs, and
+                  Wikipedia opportunities.
+                </p>
+              </div>
+
+              <div className="panel-header-actions">
+                <PanelToggleButton
+                  expanded={isCoverageExpanded}
+                  onClick={() => setIsCoverageExpanded((value) => !value)}
+                  label="Opportunity coverage"
+                />
+              </div>
             </div>
 
-            <div className="panel-header-actions">
-              <PanelToggleButton
-                expanded={isCoverageExpanded}
-                onClick={() => setIsCoverageExpanded((value) => !value)}
-                label="Opportunity coverage"
-              />
-            </div>
-          </div>
+            {isCoverageExpanded && <CoverageTable rows={dashboard.sitePresenceRows} />}
+          </section>
 
-          {isCoverageExpanded && <CoverageTable rows={dashboard.sitePresenceRows} />}
+          <section className="panel panel-sites panel-sites-inline panel-tone-neutral">
+            <div className="panel-header">
+              <div>
+                <h2>Sites</h2>
+                <p>Per-site sync state, lookup result, and inline API errors.</p>
+              </div>
+
+              <div className="panel-header-actions">
+                <PanelToggleButton
+                  expanded={isSitesExpanded}
+                  onClick={() => setIsSitesExpanded((value) => !value)}
+                  label="Sites"
+                />
+              </div>
+            </div>
+
+            {isSitesExpanded && (
+              <div className="site-grid">
+                {dashboard.siteCards.length === 0 ? (
+                  <div className="empty-panel">
+                    <h3>Add at least one site URL</h3>
+                    <p>The dashboard will create a card for each configured site.</p>
+                  </div>
+                ) : (
+                  dashboard.siteCards.map((site) => (
+                    <SiteCard
+                      key={site.requestSite}
+                      site={site}
+                      onRefresh={(requestSite) => void dashboard.refreshSite(requestSite)}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+          </section>
         </section>
 
-        <section className="panel panel-sites panel-sites-inline">
-          <div className="panel-header">
-            <div>
-              <h2>Sites</h2>
-              <p>Per-site status, last sync time, and inline API errors.</p>
-            </div>
-
-            <div className="panel-header-actions">
-              <PanelToggleButton
-                expanded={isSitesExpanded}
-                onClick={() => setIsSitesExpanded((value) => !value)}
-                label="Sites"
-              />
-            </div>
-          </div>
-
-          {isSitesExpanded && (
-            <div className="site-grid">
-              {dashboard.siteCards.length === 0 ? (
-                <div className="empty-panel">
-                  <h3>Add at least one site URL</h3>
-                  <p>The dashboard will create a card for each configured site.</p>
-                </div>
-              ) : (
-                dashboard.siteCards.map((site) => (
-                  <SiteCard
-                    key={site.requestSite}
-                    site={site}
-                    onRefresh={(requestSite) => void dashboard.refreshSite(requestSite)}
-                  />
-                ))
-              )}
-            </div>
-          )}
-        </section>
-
-        <section className="panel panel-table panel-table-wide">
+        <div className="dashboard-data-stack">
+        <section className="panel panel-table panel-table-wide panel-tone-data">
           <div className="panel-header">
             <div>
               <h2>Sentiment &amp; Share of Voice</h2>
@@ -1970,7 +2051,7 @@ export function OffSiteDashboard() {
           )}
         </section>
 
-        <section className="panel panel-table panel-table-wide">
+        <section className="panel panel-table panel-table-wide panel-tone-data">
           <div className="panel-header">
             <div>
               <h2>Suggestions</h2>
@@ -1995,7 +2076,7 @@ export function OffSiteDashboard() {
           {isSuggestionsExpanded && <SuggestionsTable rows={dashboard.pagedOpportunityRows} />}
         </section>
 
-        <section className="panel panel-table panel-table-wide">
+        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
           <div className="panel-header">
             <div>
               <h2>Suggestion Evaluation</h2>
@@ -2053,7 +2134,7 @@ export function OffSiteDashboard() {
           )}
         </section>
 
-        <section className="panel panel-table panel-table-wide">
+        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
           <div className="panel-header">
             <div>
               <h2>Sentiment Evaluation</h2>
@@ -2111,7 +2192,7 @@ export function OffSiteDashboard() {
           )}
         </section>
 
-        <section className="panel panel-table panel-table-wide">
+        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
           <div className="panel-header">
             <div>
               <h2>SOV Evaluation</h2>
@@ -2167,6 +2248,7 @@ export function OffSiteDashboard() {
             />
           )}
         </section>
+        </div>
       </main>
     </div>
   );

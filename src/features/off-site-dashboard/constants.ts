@@ -4,7 +4,6 @@ export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
   'Reddit',
   'YouTube',
   'Cited URLs',
-  'Prompt Gap',
   'Wikipedia',
 ];
 

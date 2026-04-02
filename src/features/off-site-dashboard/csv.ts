@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
-import { getConfidenceLabel } from './evaluation';
-import type { GroupedOpportunityRow } from './types';
+import { getConfidenceLabel, getConfidenceLevel } from './evaluation';
+import type { GroupedOpportunityRow, GroupedSuggestionItem } from './types';
 
 const SUGGESTION_CSV_HEADERS = [
   'Site',
@@ -74,7 +74,6 @@ const SENTIMENT_OPPORTUNITY_TYPES = new Set([
   'Reddit',
   'YouTube',
   'Cited URLs',
-  'Prompt Gap',
 ]);
 const MIN_EXCEL_COLUMN_WIDTH = 14;
 const MAX_EXCEL_COLUMN_WIDTH = 60;
@@ -82,6 +81,7 @@ const HEADER_ROW_HEIGHT_POINTS = 24;
 const DEFAULT_ROW_HEIGHT_POINTS = 20;
 const ROW_HEIGHT_PER_LINE_POINTS = 15;
 const MAX_ROW_HEIGHT_POINTS = 320;
+const EXPORT_ASSIGNEE = 'Liam the Evaluator';
 
 type ExcelSheetOptions = {
   expandRows?: boolean;
@@ -148,13 +148,164 @@ function formatSuggestionRows(rows: GroupedOpportunityRow[]) {
   return rows.map(formatRow);
 }
 
+function normalizeComparableExportValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isHighConfidence(score?: number) {
+  return getConfidenceLevel(score) === 'high';
+}
+
+function buildSuggestionEvaluationNote(suggestion: GroupedSuggestionItem) {
+  const parts: string[] = [];
+
+  if (suggestion.suggestionId?.trim()) {
+    parts.push(`Suggestion ID: ${suggestion.suggestionId.trim()}`);
+  }
+
+  if (suggestion.evaluationError) {
+    parts.push(`Verdict: Error`);
+    parts.push(`Evidence: ${suggestion.evaluationError}`);
+    return parts.join('\n');
+  }
+
+  if (!suggestion.evaluationResult) {
+    return '';
+  }
+
+  parts.push(`Verdict: ${suggestion.evaluationResult.verdict}`);
+
+  const confidenceLabel = getConfidenceLabel(suggestion.evaluationResult.confidence);
+  if (confidenceLabel) {
+    parts.push(`Confidence: ${confidenceLabel}`);
+  }
+
+  if (suggestion.evaluationResult.evidenceSnippet.trim()) {
+    parts.push(`Evidence: ${suggestion.evaluationResult.evidenceSnippet.trim()}`);
+  }
+
+  return parts.join('\n');
+}
+
+function deriveSuggestionExportMetadata(row: GroupedOpportunityRow) {
+  const evaluatedSuggestions = row.suggestions.filter(
+    (suggestion) => suggestion.evaluationResult || suggestion.evaluationError,
+  );
+  const hasIncorrectSuggestion = row.suggestions.some(
+    (suggestion) => suggestion.evaluationResult?.verdict === 'Incorrect',
+  );
+  const hasMediumOrLowConfidenceSuggestion = row.suggestions.some((suggestion) => {
+    const result = suggestion.evaluationResult;
+    return result ? getConfidenceLevel(result.confidence) !== 'high' : false;
+  });
+  const hasNeedsReviewSuggestion = row.suggestions.some(
+    (suggestion) => suggestion.evaluationResult?.verdict === 'Needs Review',
+  );
+  const allSuggestionsAccepted =
+    evaluatedSuggestions.length > 0 &&
+    row.suggestions.every((suggestion) => {
+      const result = suggestion.evaluationResult;
+      return result
+        ? result.verdict === 'Correct' && isHighConfidence(result.confidence)
+        : false;
+    });
+  const notes = evaluatedSuggestions.map(buildSuggestionEvaluationNote).filter(Boolean).join('\n\n');
+
+  return {
+    reviewStatus:
+      allSuggestionsAccepted
+        ? 'DONE'
+        : evaluatedSuggestions.length > 0 ||
+            hasIncorrectSuggestion ||
+            hasMediumOrLowConfidenceSuggestion ||
+            hasNeedsReviewSuggestion
+          ? 'IN REVIEW'
+          : '',
+    accepted: allSuggestionsAccepted ? 'YES' : evaluatedSuggestions.length > 0 ? 'NO' : '',
+    hallucinated: hasIncorrectSuggestion ? 'TRUE' : allSuggestionsAccepted ? 'FALSE' : '',
+    notes,
+  };
+}
+
+function deriveSentimentExportMetadata(item: GroupedOpportunityRow['sentimentItems'][number]) {
+  const evaluationResult = item.evaluationResult;
+  const sentimentMatches = evaluationResult
+    ? normalizeComparableExportValue(item.sentiment) ===
+      normalizeComparableExportValue(evaluationResult.evaluatedSentiment)
+    : false;
+  const sovMatches = evaluationResult
+    ? normalizeComparableExportValue(item.sov) ===
+      normalizeComparableExportValue(evaluationResult.evaluatedSov)
+    : false;
+  const hasHighConfidenceMatch =
+    Boolean(evaluationResult) &&
+    isHighConfidence(evaluationResult?.sentimentConfidence) &&
+    isHighConfidence(evaluationResult?.sovConfidence) &&
+    sentimentMatches &&
+    sovMatches;
+  const hasExplicitMismatch =
+    Boolean(evaluationResult) &&
+    ((!sentimentMatches &&
+      normalizeComparableExportValue(evaluationResult?.evaluatedSentiment ?? '') !==
+        'needs review') ||
+      (!sovMatches &&
+        normalizeComparableExportValue(evaluationResult?.evaluatedSov ?? '') !==
+          'needs review'));
+  const hasEvaluation = Boolean(evaluationResult || item.evaluationError);
+
+  return {
+    reviewStatus: hasHighConfidenceMatch ? 'DONE' : hasEvaluation ? 'IN REVIEW' : '',
+    accepted: hasHighConfidenceMatch ? 'YES' : hasEvaluation ? 'NO' : '',
+    hallucinated: hasHighConfidenceMatch
+      ? 'FALSE'
+      : hasExplicitMismatch
+        ? 'TRUE'
+        : '',
+    notes: [
+      evaluationResult
+        ? `Sentiment verdict: ${
+            sentimentMatches
+              ? 'Correct'
+              : normalizeComparableExportValue(evaluationResult.evaluatedSentiment) ===
+                  'needs review'
+                ? 'Needs Review'
+                : 'Incorrect'
+          }`
+        : '',
+      evaluationResult
+        ? `SOV verdict: ${
+            sovMatches
+              ? 'Correct'
+              : normalizeComparableExportValue(evaluationResult.evaluatedSov) ===
+                  'needs review'
+                ? 'Needs Review'
+                : 'Incorrect'
+          }`
+        : '',
+      evaluationResult?.evidenceSnippet
+        ? `Evidence: ${evaluationResult.evidenceSnippet}`
+        : '',
+      item.evaluationError ? `Evidence: ${item.evaluationError}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
 function formatSuggestionExcelRows(rows: GroupedOpportunityRow[]) {
-  return formatSuggestionRows(rows).map((row) => [
-    ...row.slice(0, 7),
-    '',
-    '',
-    ...row.slice(7),
-  ]);
+  return rows.map((row) => {
+    const baseRow = formatRow(row);
+    const metadata = deriveSuggestionExportMetadata(row);
+
+    return [
+      ...baseRow.slice(0, 7),
+      metadata.reviewStatus,
+      EXPORT_ASSIGNEE,
+      metadata.accepted,
+      metadata.hallucinated,
+      metadata.notes,
+    ];
+  });
 }
 
 function formatSentimentRows(rows: GroupedOpportunityRow[]) {
@@ -176,6 +327,7 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
           row.status,
           '',
           '',
+          EXPORT_ASSIGNEE,
           '',
           '',
           '',
@@ -183,42 +335,45 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
       ];
     }
 
-    return row.sentimentItems.map((item, index) => [
-      index === 0 ? row.site : '',
-      index === 0 ? row.siteId ?? '' : '',
-      index === 0 ? row.opportunityType ?? '' : '',
-      index === 0 ? row.opportunityId ?? '' : '',
-      item.item.trim(),
-      item.sov.trim(),
-      item.sentiment.trim(),
-      item.evaluationResult?.evaluatedSov ?? '',
-      item.evaluationResult
-        ? getConfidenceLabel(item.evaluationResult.sovConfidence)
-        : '',
-      item.evaluationResult?.evaluatedSentiment ?? '',
-      item.evaluationResult
-        ? getConfidenceLabel(item.evaluationResult.sentimentConfidence)
-        : '',
-      [
-        item.evaluationError ? `Error: ${item.evaluationError}` : '',
-        item.evaluationResult?.rationale ?? '',
-        item.evaluationResult?.fetch.transcriptStatus
-          ? `Transcript status: ${item.evaluationResult.fetch.transcriptStatus}`
+    return row.sentimentItems.map((item, index) => {
+      const metadata = deriveSentimentExportMetadata(item);
+      return [
+        index === 0 ? row.site : '',
+        index === 0 ? row.siteId ?? '' : '',
+        index === 0 ? row.opportunityType ?? '' : '',
+        index === 0 ? row.opportunityId ?? '' : '',
+        item.item.trim(),
+        item.sov.trim(),
+        item.sentiment.trim(),
+        item.evaluationResult?.evaluatedSov ?? '',
+        item.evaluationResult
+          ? getConfidenceLabel(item.evaluationResult.sovConfidence)
           : '',
-        item.evaluationResult?.evidenceSnippet
-          ? `Evidence: ${item.evaluationResult.evidenceSnippet}`
+        item.evaluationResult?.evaluatedSentiment ?? '',
+        item.evaluationResult
+          ? getConfidenceLabel(item.evaluationResult.sentimentConfidence)
           : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-      item.evaluationResult?.evaluatedAt ?? '',
-      index === 0 ? row.status : '',
-      '',
-      '',
-      '',
-      '',
-      '',
-    ]);
+        [
+          item.evaluationError ? `Error: ${item.evaluationError}` : '',
+          item.evaluationResult?.rationale ?? '',
+          item.evaluationResult?.fetch.transcriptStatus
+            ? `Transcript status: ${item.evaluationResult.fetch.transcriptStatus}`
+            : '',
+          item.evaluationResult?.evidenceSnippet
+            ? `Evidence: ${item.evaluationResult.evidenceSnippet}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        item.evaluationResult?.evaluatedAt ?? '',
+        index === 0 ? row.status : '',
+        metadata.reviewStatus,
+        EXPORT_ASSIGNEE,
+        metadata.accepted,
+        metadata.hallucinated,
+        metadata.notes,
+      ];
+    });
   });
 }
 

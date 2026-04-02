@@ -22,7 +22,6 @@ const SENTIMENT_TABLE_TYPES = new Set<CanonicalOpportunityType>([
   'Reddit',
   'YouTube',
   'Cited URLs',
-  'Prompt Gap',
 ]);
 const SITE_URL_KEYS = [
   'baseURL',
@@ -1571,6 +1570,10 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
     normalizeOpportunityType(rawType) ?? inferOpportunityType(record);
 
   if (!opportunityType) {
+    return null;
+  }
+
+  if (!TARGET_OPPORTUNITY_TYPES.includes(opportunityType)) {
     return null;
   }
 

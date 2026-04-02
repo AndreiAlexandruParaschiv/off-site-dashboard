@@ -11,7 +11,6 @@ const SENTIMENT_EVALUATION_TYPES = new Set<CanonicalOpportunityType>([
   'Reddit',
   'YouTube',
   'Cited URLs',
-  'Prompt Gap',
 ]);
 const URL_LIKE_PATTERN = /^https?:\/\//i;
 

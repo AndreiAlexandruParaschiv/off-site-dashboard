@@ -1481,7 +1481,7 @@ function SovEvaluationTable(props: {
 export function OffSiteDashboard() {
   const [isCoverageExpanded, setIsCoverageExpanded] = useState(true);
   const dashboard = useOffSiteDashboard();
-  const [isSitesExpanded, setIsSitesExpanded] = useState(false);
+  const [isSitesExpanded, setIsSitesExpanded] = useState(true);
   const [isSentimentExpanded, setIsSentimentExpanded] = useState(true);
   const [isSuggestionEvaluationExpanded, setIsSuggestionEvaluationExpanded] =
     useState(false);

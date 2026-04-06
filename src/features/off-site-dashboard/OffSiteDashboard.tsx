@@ -461,7 +461,7 @@ function getPresenceDetails(value: OpportunityPresenceState) {
     return {
       className: 'presence-pill-yes',
       label: 'Exists',
-      detail: 'New + ignored',
+      detail: 'Active + Ignored',
       title:
         'Both new and ignored opportunities were found for this type. The current/new one is used by default.',
     };
@@ -471,7 +471,7 @@ function getPresenceDetails(value: OpportunityPresenceState) {
     return {
       className: 'presence-pill-yes',
       label: 'Exists',
-      detail: 'Active + ignored',
+      detail: 'Active + Ignored',
       title:
         'Both active and ignored opportunities were found for this type. The active one is used by default.',
     };

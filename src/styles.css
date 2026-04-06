@@ -459,6 +459,10 @@ a {
   text-transform: uppercase;
 }
 
+.settings-actions {
+  margin-top: 18px;
+}
+
 .field span,
 .inline-field span,
 .filter-label {

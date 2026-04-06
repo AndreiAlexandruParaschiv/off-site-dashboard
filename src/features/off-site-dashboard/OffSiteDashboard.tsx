@@ -1678,6 +1678,37 @@ export function OffSiteDashboard() {
     ? 'Managed relay'
     : 'Manual connection';
   const activeFilterLabel = `${dashboard.selectedTypes.length} oppty selected · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
+  const workspaceActionButtons = (className: string) => (
+    <div className={className}>
+      <button
+        className="primary-button"
+        disabled={!dashboard.canRefresh}
+        onClick={() => void dashboard.refreshAll()}
+        type="button"
+      >
+        {dashboard.isRefreshing ? 'Refreshing...' : 'Refresh all sites'}
+      </button>
+      <button
+        className="ghost-button"
+        disabled={!dashboard.hasExportRows}
+        onClick={dashboard.exportExcel}
+        type="button"
+      >
+        Export Excel
+      </button>
+      <button
+        className="ghost-button"
+        disabled={!dashboard.hasExportRows}
+        onClick={dashboard.exportRows}
+        type="button"
+      >
+        Export CSV
+      </button>
+      <button className="ghost-button" onClick={dashboard.clearResults} type="button">
+        Clear results
+      </button>
+    </div>
+  );
 
   return (
     <div className="dashboard-shell">
@@ -1705,39 +1736,7 @@ export function OffSiteDashboard() {
               tone={pendingReviewCount > 0 ? 'warm' : 'accent'}
             />
           </div>
-          <div className="hero-actions">
-            <button
-              className="primary-button"
-              disabled={!dashboard.canRefresh}
-              onClick={() => void dashboard.refreshAll()}
-              type="button"
-            >
-              {dashboard.isRefreshing ? 'Refreshing...' : 'Refresh all sites'}
-            </button>
-            <button
-              className="ghost-button"
-              disabled={!dashboard.hasExportRows}
-              onClick={dashboard.exportExcel}
-              type="button"
-            >
-              Export Excel
-            </button>
-            <button
-              className="ghost-button"
-              disabled={!dashboard.hasExportRows}
-              onClick={dashboard.exportRows}
-              type="button"
-            >
-              Export CSV
-            </button>
-            <button
-              className="ghost-button"
-              onClick={dashboard.clearResults}
-              type="button"
-            >
-              Clear results
-            </button>
-          </div>
+          {!isManagedConnection ? workspaceActionButtons('hero-actions') : null}
         </div>
         <aside className="hero-command">
           <div className="hero-command-copy">
@@ -1849,6 +1848,7 @@ export function OffSiteDashboard() {
                 </small>
               </label>
             </div>
+            {isManagedConnection ? workspaceActionButtons('button-row settings-actions') : null}
           </section>
 
           <section className="panel panel-filters panel-tone-cool">

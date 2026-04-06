@@ -31,6 +31,20 @@ const API_HEADERS = {
   Accept: 'application/json',
 };
 
+const SERVER_API_BASE_URL = normalizeServerApiBaseUrl(
+  import.meta.env.VITE_SERVER_API_BASE_URL ||
+    import.meta.env.VITE_BACKEND_BASE_URL ||
+    '',
+);
+
+function normalizeServerApiBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function buildInternalApiUrl(path: string) {
+  return SERVER_API_BASE_URL ? `${SERVER_API_BASE_URL}${path}` : path;
+}
+
 function sleep(milliseconds: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
@@ -83,7 +97,7 @@ async function requestJson<T>(
     const useProxy = proxyConfig?.configured === true;
     const response = await fetch(
       useProxy
-        ? `${SPACECAT_PROXY_API_PATH}?target=${encodeURIComponent(url)}`
+        ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
         : url,
       {
         method: 'GET',
@@ -157,7 +171,7 @@ async function requestJson<T>(
 }
 
 async function requestLocalJson<T>(url: string, payload: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(buildInternalApiUrl(url), {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -553,7 +567,7 @@ export async function evaluateSuggestionRow(
 
 export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {
   try {
-    const response = await fetch(SPACECAT_PROXY_CONFIG_API_PATH, {
+    const response = await fetch(buildInternalApiUrl(SPACECAT_PROXY_CONFIG_API_PATH), {
       method: 'GET',
       cache: 'no-store',
       headers: API_HEADERS,

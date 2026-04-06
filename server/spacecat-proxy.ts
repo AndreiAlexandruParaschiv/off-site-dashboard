@@ -4,6 +4,8 @@ const DEFAULT_SPACECAT_API_BASE_URL =
 export type SpacecatProxyEnv = {
   SPACECAT_API_KEY?: string;
   SPACECAT_API_BASE_URL?: string;
+  APP_ALLOWED_ORIGINS?: string;
+  CORS_ALLOWED_ORIGINS?: string;
 };
 
 function normalizeApiBaseUrl(value?: string) {

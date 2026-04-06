@@ -1,4 +1,8 @@
 import { handleOffsiteEvaluateRequest } from '../server/offsite-evaluate.js';
+import {
+  buildCorsPreflightResponse,
+  withCors,
+} from '../server/api-cors.js';
 
 const runtimeEnv =
   (
@@ -11,6 +15,7 @@ const runtimeEnv =
 
 const evaluatorEnv = {
   AWS_BEARER_TOKEN_BEDROCK: runtimeEnv.AWS_BEARER_TOKEN_BEDROCK,
+  BEDROCK_BEARER_TOKEN: runtimeEnv.BEDROCK_BEARER_TOKEN,
   AWS_REGION: runtimeEnv.AWS_REGION,
   BEDROCK_REGION: runtimeEnv.BEDROCK_REGION,
   BEDROCK_MODEL_ID: runtimeEnv.BEDROCK_MODEL_ID,
@@ -29,10 +34,20 @@ const evaluatorEnv = {
   AZURE_OPENAI_ENDPOINT: runtimeEnv.AZURE_OPENAI_ENDPOINT,
   AZURE_OPENAI_KEY: runtimeEnv.AZURE_OPENAI_KEY,
   AZURE_OPENAI_DEPLOYMENT: runtimeEnv.AZURE_OPENAI_DEPLOYMENT,
+  APP_ALLOWED_ORIGINS: runtimeEnv.APP_ALLOWED_ORIGINS,
+  CORS_ALLOWED_ORIGINS: runtimeEnv.CORS_ALLOWED_ORIGINS,
 };
 
 export default {
   async fetch(request: Request) {
-    return handleOffsiteEvaluateRequest(request, evaluatorEnv);
+    if (request.method === 'OPTIONS') {
+      return buildCorsPreflightResponse(request, evaluatorEnv);
+    }
+
+    return withCors(
+      request,
+      await handleOffsiteEvaluateRequest(request, evaluatorEnv),
+      evaluatorEnv,
+    );
   },
 };

@@ -103,6 +103,7 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               SPACECAT_API_KEY: env.SPACECAT_API_KEY,
               SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
               AWS_BEARER_TOKEN_BEDROCK: env.AWS_BEARER_TOKEN_BEDROCK,
+              BEDROCK_BEARER_TOKEN: env.BEDROCK_BEARER_TOKEN,
               AWS_REGION: env.AWS_REGION,
               BEDROCK_REGION: env.BEDROCK_REGION,
               BEDROCK_MODEL_ID: env.BEDROCK_MODEL_ID,

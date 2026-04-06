@@ -37,6 +37,7 @@ export async function handler(event: {
     const payload = parseEventBody(event);
     const result = await runOffsiteSuggestionEvaluation(payload, {
       AWS_BEARER_TOKEN_BEDROCK: process.env.AWS_BEARER_TOKEN_BEDROCK,
+      BEDROCK_BEARER_TOKEN: process.env.BEDROCK_BEARER_TOKEN,
       AWS_REGION: process.env.AWS_REGION,
       BEDROCK_REGION: process.env.BEDROCK_REGION,
       BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID,

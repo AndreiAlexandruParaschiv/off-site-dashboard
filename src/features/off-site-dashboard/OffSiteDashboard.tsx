@@ -496,7 +496,6 @@ function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
         <thead>
           <tr>
             <th>Site</th>
-            <th>Site ID</th>
             {TARGET_OPPORTUNITY_TYPES.map((type) => (
               <th key={type}>{type}</th>
             ))}
@@ -506,8 +505,14 @@ function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
         <tbody>
           {props.rows.map((row) => (
             <tr key={row.site}>
-              <td>{row.site}</td>
-              <td>{row.siteId ?? ' - '}</td>
+              <td>
+                <div className="coverage-site-cell">
+                  <span className="coverage-site-name">{row.site}</span>
+                  <span className="coverage-site-id">
+                    Site ID: {row.siteId ?? 'Not resolved yet'}
+                  </span>
+                </div>
+              </td>
               {TARGET_OPPORTUNITY_TYPES.map((type) => {
                 const presence = getPresenceDetails(row.presence[type]);
 
@@ -1672,7 +1677,7 @@ export function OffSiteDashboard() {
   const currentModeLabel = dashboard.spacecatProxyConfig.configured
     ? 'Managed relay'
     : 'Manual connection';
-  const activeFilterLabel = `${dashboard.selectedTypes.length} type${dashboard.selectedTypes.length === 1 ? '' : 's'} · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
+  const activeFilterLabel = `${dashboard.selectedTypes.length} oppty selected · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
 
   return (
     <div className="dashboard-shell">
@@ -1737,10 +1742,7 @@ export function OffSiteDashboard() {
         <aside className="hero-command">
           <div className="hero-command-copy">
             <span className="hero-command-label">Current workspace</span>
-            <p>
-              {dashboard.page} / {dashboard.totalPages} pages loaded. Filters are live
-              across the current result set.
-            </p>
+            <p>Review the configured site set and current off-site selection.</p>
           </div>
           <div className="hero-stats">
             <StatsCard

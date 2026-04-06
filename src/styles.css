@@ -727,6 +727,22 @@ a {
   min-width: 1040px;
 }
 
+.coverage-site-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.coverage-site-name {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.coverage-site-id {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
 .sentiment-table {
   table-layout: fixed;
   min-width: 0;

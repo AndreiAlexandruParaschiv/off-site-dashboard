@@ -1334,6 +1334,34 @@ function scoreWikipediaTitle(title: string, site: string) {
   return score;
 }
 
+function extractWikipediaTitleFromEvidenceItem(item: string, prefix: RegExp) {
+  const directUrl = item.replace(prefix, '').trim();
+
+  if (directUrl) {
+    const directTitle = extractWikipediaTitleFromUrl(directUrl);
+
+    if (directTitle) {
+      return normalizeWikipediaTitle(directTitle);
+    }
+  }
+
+  const fallbackTitle = extractWikipediaTitleFromUrl(item);
+
+  if (fallbackTitle) {
+    return normalizeWikipediaTitle(fallbackTitle);
+  }
+
+  for (const candidateUrl of extractUrlCandidatesFromText(item)) {
+    const urlTitle = extractWikipediaTitleFromUrl(candidateUrl);
+
+    if (urlTitle) {
+      return normalizeWikipediaTitle(urlTitle);
+    }
+  }
+
+  return '';
+}
+
 function detectWikipediaPrimaryTitleMismatch(payload: SuggestionEvaluationRequest) {
   const primaryTitles: string[] = [];
 
@@ -1342,19 +1370,13 @@ function detectWikipediaPrimaryTitleMismatch(payload: SuggestionEvaluationReques
       continue;
     }
 
-    const title = extractWikipediaTitleFromUrl(item);
+    const title = extractWikipediaTitleFromEvidenceItem(
+      item,
+      /^Wikipedia URL:\s*/i,
+    );
 
     if (title) {
-      primaryTitles.push(normalizeWikipediaTitle(title));
-      continue;
-    }
-
-    for (const candidateUrl of extractUrlCandidatesFromText(item)) {
-      const urlTitle = extractWikipediaTitleFromUrl(candidateUrl);
-
-      if (urlTitle) {
-        primaryTitles.push(normalizeWikipediaTitle(urlTitle));
-      }
+      primaryTitles.push(title);
     }
   }
 
@@ -1394,7 +1416,18 @@ function collectWikipediaTitlesFromPayload(payload: SuggestionEvaluationRequest)
 
   payload.evidenceItems
     .filter((item) => /^Wikipedia URL:/i.test(item))
-    .forEach(appendTitlesFromSource);
+    .forEach((item) => {
+      const directUrl = item.replace(/^Wikipedia URL:\s*/i, '').trim();
+      const directTitle = directUrl
+        ? extractWikipediaTitleFromUrl(directUrl)
+        : '';
+
+      if (directTitle) {
+        appendTitle(directTitle);
+      } else {
+        appendTitlesFromSource(item);
+      }
+    });
 
   payload.evidenceItems
     .filter((item) => /^Wikipedia competitor:/i.test(item))

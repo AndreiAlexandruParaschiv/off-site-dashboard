@@ -1499,9 +1499,6 @@ export function OffSiteDashboard() {
   const syncedSiteCount = dashboard.siteCards.filter(
     (site) => site.status === 'success',
   ).length;
-  const attentionSiteCount = dashboard.siteCards.filter(
-    (site) => site.status === 'error',
-  ).length;
   const visibleSuggestionEvaluationRows = buildSuggestionEvaluationRows(
     dashboard.pagedOpportunityRows,
   );
@@ -1770,14 +1767,6 @@ export function OffSiteDashboard() {
             <div className="hero-note">
               <span className="hero-note-label">Filters</span>
               <strong>{activeFilterLabel}</strong>
-            </div>
-            <div className="hero-note">
-              <span className="hero-note-label">Attention</span>
-              <strong>
-                {attentionSiteCount > 0
-                  ? `${attentionSiteCount} site${attentionSiteCount === 1 ? '' : 's'} need attention`
-                  : 'No site errors'}
-              </strong>
             </div>
           </div>
         </aside>

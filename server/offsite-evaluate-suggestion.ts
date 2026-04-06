@@ -524,14 +524,53 @@ function normalizeRequestPayload(value: unknown): SuggestionEvaluationRequest | 
 }
 
 function extractUrlCandidatesFromText(value: string) {
+  const trimTrailingUrlPunctuation = (input: string) => {
+    let nextValue = input.trim();
+
+    while (nextValue) {
+      const trailingCharacter = nextValue.charAt(nextValue.length - 1);
+
+      if (trailingCharacter && /[.,!?;:'"]/u.test(trailingCharacter)) {
+        nextValue = nextValue.slice(0, -1);
+        continue;
+      }
+
+      if (trailingCharacter === ')') {
+        const openCount = (nextValue.match(/\(/g) ?? []).length;
+        const closeCount = (nextValue.match(/\)/g) ?? []).length;
+
+        if (closeCount > openCount) {
+          nextValue = nextValue.slice(0, -1);
+          continue;
+        }
+      }
+
+      if (trailingCharacter === ']') {
+        const openCount = (nextValue.match(/\[/g) ?? []).length;
+        const closeCount = (nextValue.match(/\]/g) ?? []).length;
+
+        if (closeCount > openCount) {
+          nextValue = nextValue.slice(0, -1);
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    return nextValue;
+  };
+
   return Array.from(
     new Set(
       Array.from(
         value.matchAll(
-          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s),\]]*)?/gi,
+          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s<>"']*)?/gi,
         ),
       )
-        .map((match) => normalizeAbsoluteUrl(match[0] ?? ''))
+        .map((match) =>
+          normalizeAbsoluteUrl(trimTrailingUrlPunctuation(match[0] ?? '')),
+        )
         .filter(Boolean),
     ),
   );

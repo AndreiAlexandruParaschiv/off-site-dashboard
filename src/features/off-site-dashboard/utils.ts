@@ -137,6 +137,43 @@ function normalizeAbsoluteUrl(value?: string) {
   return `https://${trimmedValue.replace(/^\/+/, '')}`;
 }
 
+function trimTrailingUrlPunctuation(value: string) {
+  let nextValue = value.trim();
+
+  while (nextValue) {
+    const trailingCharacter = nextValue.charAt(nextValue.length - 1);
+
+    if (trailingCharacter && /[.,!?;:'"]/u.test(trailingCharacter)) {
+      nextValue = nextValue.slice(0, -1);
+      continue;
+    }
+
+    if (trailingCharacter === ')') {
+      const openCount = (nextValue.match(/\(/g) ?? []).length;
+      const closeCount = (nextValue.match(/\)/g) ?? []).length;
+
+      if (closeCount > openCount) {
+        nextValue = nextValue.slice(0, -1);
+        continue;
+      }
+    }
+
+    if (trailingCharacter === ']') {
+      const openCount = (nextValue.match(/\[/g) ?? []).length;
+      const closeCount = (nextValue.match(/\]/g) ?? []).length;
+
+      if (closeCount > openCount) {
+        nextValue = nextValue.slice(0, -1);
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return nextValue;
+}
+
 function extractUrlCandidatesFromText(value?: string) {
   if (!value) {
     return [];
@@ -146,10 +183,10 @@ function extractUrlCandidatesFromText(value?: string) {
     new Set(
       Array.from(
         value.matchAll(
-          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s),\]]*)?/gi,
+          /\b(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s<>"']*)?/gi,
         ),
       )
-        .map((match) => normalizeAbsoluteUrl(match[0] ?? ''))
+        .map((match) => normalizeAbsoluteUrl(trimTrailingUrlPunctuation(match[0] ?? '')))
         .filter(Boolean),
     ),
   );

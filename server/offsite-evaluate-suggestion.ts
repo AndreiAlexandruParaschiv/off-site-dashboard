@@ -68,6 +68,7 @@ type SuggestionEvidenceBundle = {
   status: SourceEvidence['status'];
   combinedEvidenceText: string;
   fallbackSnippet: string;
+  wikipediaTitleMismatch?: boolean;
 };
 
 type LlmSuggestionEvaluation = {
@@ -1333,6 +1334,39 @@ function scoreWikipediaTitle(title: string, site: string) {
   return score;
 }
 
+function detectWikipediaPrimaryTitleMismatch(payload: SuggestionEvaluationRequest) {
+  const primaryTitles: string[] = [];
+
+  for (const item of payload.evidenceItems) {
+    if (!/^Wikipedia URL:/i.test(item)) {
+      continue;
+    }
+
+    const title = extractWikipediaTitleFromUrl(item);
+
+    if (title) {
+      primaryTitles.push(normalizeWikipediaTitle(title));
+      continue;
+    }
+
+    for (const candidateUrl of extractUrlCandidatesFromText(item)) {
+      const urlTitle = extractWikipediaTitleFromUrl(candidateUrl);
+
+      if (urlTitle) {
+        primaryTitles.push(normalizeWikipediaTitle(urlTitle));
+      }
+    }
+  }
+
+  if (primaryTitles.length === 0) {
+    return false;
+  }
+
+  return primaryTitles.every(
+    (title) => scoreWikipediaTitle(title, payload.site) === 0,
+  );
+}
+
 function collectWikipediaTitlesFromPayload(payload: SuggestionEvaluationRequest) {
   const orderedTitles: string[] = [];
   const seenTitles = new Set<string>();
@@ -2010,6 +2044,7 @@ async function fetchEvidenceForSuggestionRequest(
       sources,
       combinedEvidenceText,
       fallbackSnippet,
+      wikipediaTitleMismatch: detectWikipediaPrimaryTitleMismatch(payload),
       status:
         combinedEvidenceText.length < MIN_EVIDENCE_CHARACTERS
           ? hasAnyEvidence
@@ -2316,6 +2351,40 @@ function applyWikipediaMaintenanceOverride(
     correctedSuggestion: buildSectionSpecificWikipediaSuggestion(
       payload.suggestionText,
       maintenanceContext,
+    ),
+  };
+}
+
+function applyWikipediaTitleMismatchOverride(
+  evidence: SuggestionEvidenceBundle,
+  llmResult: LlmSuggestionEvaluation,
+): LlmSuggestionEvaluation {
+  if (!evidence.wikipediaTitleMismatch) {
+    return llmResult;
+  }
+
+  const sourceUrls = evidence.sources
+    .map((source) => source.sourceUrl)
+    .filter(Boolean);
+  const sourceLabel =
+    sourceUrls.length > 0 ? sourceUrls.join(', ') : 'the provided Wikipedia URL';
+
+  return {
+    ...llmResult,
+    verdict: 'Needs Review',
+    confidence: 'low',
+    rationale: trimMultilineText(
+      [
+        `The Wikipedia page referenced in the payload (${sourceLabel}) does not appear to match the target site.`,
+        'The evaluation may be based on the wrong article.',
+        llmResult.rationale,
+      ].join(' '),
+    ),
+    evidenceSnippet: trimMultilineText(
+      [
+        `Wikipedia title mismatch: the evaluated page (${sourceLabel}) may not be the correct article for this site.`,
+        llmResult.evidenceSnippet,
+      ].join(' '),
     ),
   };
 }
@@ -3548,18 +3617,23 @@ export async function runOffsiteSuggestionEvaluation(
   );
 
   if (deterministicWikipediaResult) {
+    const adjustedResult = applyWikipediaTitleMismatchOverride(
+      evidence,
+      deterministicWikipediaResult,
+    );
+
     return appendSuggestionSourceMismatchEvidence(payload, {
-      verdict: deterministicWikipediaResult.verdict,
+      verdict: adjustedResult.verdict,
       confidence: buildSuggestionConfidenceScore({
-        llmResult: deterministicWikipediaResult,
+        llmResult: adjustedResult,
         fetchStatus: 'success',
       }),
-      rationale: trimMultilineText(deterministicWikipediaResult.rationale),
+      rationale: trimMultilineText(adjustedResult.rationale),
       evidenceSnippet:
-        trimMultilineText(deterministicWikipediaResult.evidenceSnippet) ||
+        trimMultilineText(adjustedResult.evidenceSnippet) ||
         evidence.fallbackSnippet,
       correctedSuggestion: trimMultilineText(
-        deterministicWikipediaResult.correctedSuggestion,
+        adjustedResult.correctedSuggestion,
       ),
       evaluatedAt: new Date().toISOString(),
       evaluatorVersion: SUGGESTION_EVALUATOR_VERSION,
@@ -3571,7 +3645,7 @@ export async function runOffsiteSuggestionEvaluation(
         transcriptStatus: source.transcriptStatus,
         evidenceCharacters: source.evidenceText.length,
       })),
-      targetBrand: deterministicWikipediaResult.targetBrand,
+      targetBrand: adjustedResult.targetBrand,
     });
   }
 
@@ -3605,9 +3679,12 @@ export async function runOffsiteSuggestionEvaluation(
   }
 
   const llmResponse = await fetchSuggestionLlmEvaluation(payload, evidence, env);
-  const llmResult = applyWikipediaQualityStatusOverride(
-    payload,
-    applyWikipediaMaintenanceOverride(payload, evidence, llmResponse.evaluation),
+  const llmResult = applyWikipediaTitleMismatchOverride(
+    evidence,
+    applyWikipediaQualityStatusOverride(
+      payload,
+      applyWikipediaMaintenanceOverride(payload, evidence, llmResponse.evaluation),
+    ),
   );
 
   return appendSuggestionSourceMismatchEvidence(payload, {

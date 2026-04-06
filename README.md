@@ -56,20 +56,7 @@ The evaluator independently fetches the cited URL/thread/video and returns:
 - sentiment confidence score
 - rationale and evidence snippet
 
-## Deploy (Recommended)
-
-GitHub Pages is disabled for Enterprise Managed User repositories in your setup.
-Use Netlify or Vercel instead.
-
-### Netlify
-
-This repo includes `netlify.toml` with the build and SPA routing config.
-
-1. In Netlify, import this GitHub repo.
-2. Deploy settings will be auto-detected:
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-3. Deploy and share the generated site URL with your team.
+## Deploy
 
 ### Vercel
 
@@ -80,6 +67,14 @@ This repo includes `vercel.json` with build/output and SPA rewrite config.
    - Build command: `npm run build`
    - Output directory: `dist`
 3. Deploy and share the generated site URL with your team.
+
+### Amplify
+
+Amplify is supported as a frontend host.
+
+1. In Amplify, connect this GitHub repo and deploy the `main` branch.
+2. Set `VITE_SERVER_API_BASE_URL` to your Vercel deployment URL so the frontend can use the hosted backend routes.
+3. Keep backend secrets on Vercel. Use `APP_ALLOWED_ORIGINS` on Vercel to restrict access to your Amplify URL.
 
 ## Notes
 

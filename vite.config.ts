@@ -7,7 +7,7 @@ import {
   handleSpacecatProxyRequest,
 } from './server/spacecat-proxy';
 
-const ALLOWED_VITE_HOSTS = ['.netlify.app'];
+const ALLOWED_VITE_HOSTS = ['.vercel.app', '.amplifyapp.com'];
 
 function evaluationDevMiddleware(env: Record<string, string>) {
   return {

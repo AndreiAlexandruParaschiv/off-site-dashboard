@@ -7,7 +7,12 @@ export type CanonicalOpportunityType =
 
 export type SiteFetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
-export type OpportunityPresenceState = 'missing' | 'exists' | 'exists_mixed';
+export type OpportunityPresenceState =
+  | 'missing'
+  | 'exists'
+  | 'exists_mixed'
+  | 'exists_new_ignored'
+  | 'exists_ignored_only';
 export type SentimentEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
 export type SuggestionEvaluationStatus = 'idle' | 'running' | 'success' | 'error';
 export type SuggestionRecordStatus =

@@ -443,21 +443,25 @@ export function summarizeOpportunityPresence(responsePayload: unknown) {
         ? [responsePayload]
         : [];
   const statusBuckets = TARGET_OPPORTUNITY_TYPES.reduce<
-    Record<CanonicalOpportunityType, { hasIgnored: boolean; hasVisible: boolean }>
+    Record<
+      CanonicalOpportunityType,
+      { hasIgnored: boolean; hasNew: boolean; hasVisible: boolean }
+    >
   >(
     (nextBuckets, type) => {
       nextBuckets[type] = {
         hasIgnored: false,
+        hasNew: false,
         hasVisible: false,
       };
       return nextBuckets;
     },
     {
-      Reddit: { hasIgnored: false, hasVisible: false },
-      YouTube: { hasIgnored: false, hasVisible: false },
-      'Cited URLs': { hasIgnored: false, hasVisible: false },
-      'Prompt Gap': { hasIgnored: false, hasVisible: false },
-      Wikipedia: { hasIgnored: false, hasVisible: false },
+      Reddit: { hasIgnored: false, hasNew: false, hasVisible: false },
+      YouTube: { hasIgnored: false, hasNew: false, hasVisible: false },
+      'Cited URLs': { hasIgnored: false, hasNew: false, hasVisible: false },
+      'Prompt Gap': { hasIgnored: false, hasNew: false, hasVisible: false },
+      Wikipedia: { hasIgnored: false, hasNew: false, hasVisible: false },
     },
   );
 
@@ -480,6 +484,10 @@ export function summarizeOpportunityPresence(responsePayload: unknown) {
       return;
     }
 
+    if (opportunityStatus === 'new') {
+      statusBuckets[opportunityType].hasNew = true;
+    }
+
     statusBuckets[opportunityType].hasVisible = true;
   });
 
@@ -489,12 +497,22 @@ export function summarizeOpportunityPresence(responsePayload: unknown) {
     const bucket = statusBuckets[type];
 
     if (bucket.hasIgnored && bucket.hasVisible) {
+      if (bucket.hasNew) {
+        presence[type] = 'exists_new_ignored';
+        return presence;
+      }
+
       presence[type] = 'exists_mixed';
       return presence;
     }
 
-    if (bucket.hasIgnored || bucket.hasVisible) {
+    if (bucket.hasVisible) {
       presence[type] = 'exists';
+      return presence;
+    }
+
+    if (bucket.hasIgnored) {
+      presence[type] = 'exists_ignored_only';
       return presence;
     }
 

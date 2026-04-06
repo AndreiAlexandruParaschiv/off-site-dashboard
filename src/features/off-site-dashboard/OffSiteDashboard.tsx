@@ -457,11 +457,32 @@ function buildSuggestionEvaluationRows(
 }
 
 function getPresenceDetails(value: OpportunityPresenceState) {
+  if (value === 'exists_new_ignored') {
+    return {
+      className: 'presence-pill-yes',
+      label: 'Exists',
+      detail: 'New + ignored',
+      title:
+        'Both new and ignored opportunities were found for this type. The current/new one is used by default.',
+    };
+  }
+
   if (value === 'exists_mixed') {
     return {
       className: 'presence-pill-yes',
-      label: 'Exists*',
-      title: 'Both active and ignored opportunities were found for this type.',
+      label: 'Exists',
+      detail: 'Active + ignored',
+      title:
+        'Both active and ignored opportunities were found for this type. The active one is used by default.',
+    };
+  }
+
+  if (value === 'exists_ignored_only') {
+    return {
+      className: 'presence-pill-yes',
+      label: 'Exists',
+      detail: 'Ignored',
+      title: 'Only ignored opportunities were found for this type.',
     };
   }
 
@@ -518,12 +539,17 @@ function CoverageTable(props: { rows: SiteOpportunityPresence[] }) {
 
                 return (
                   <td key={`${row.site}-${type}`}>
-                    <span
-                      className={`presence-pill ${presence.className}`}
-                      title={presence.title}
-                    >
-                      {presence.label}
-                    </span>
+                    <div className="presence-cell">
+                      <span
+                        className={`presence-pill ${presence.className}`}
+                        title={presence.title}
+                      >
+                        {presence.label}
+                      </span>
+                      {presence.detail ? (
+                        <span className="presence-detail">{presence.detail}</span>
+                      ) : null}
+                    </div>
                   </td>
                 );
               })}

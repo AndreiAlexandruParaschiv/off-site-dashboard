@@ -1227,6 +1227,18 @@ a {
   background: var(--error-soft);
 }
 
+.presence-cell {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.presence-detail {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
 @media (max-width: 1140px) {
   .dashboard-hero,
   .dashboard-overview-grid,

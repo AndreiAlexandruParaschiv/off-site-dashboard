@@ -429,8 +429,26 @@ function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[
     });
 }
 
+type SuggestionEvaluationSortColumn = 'confidence' | 'verdict';
+type SuggestionEvaluationSortState = {
+  column: SuggestionEvaluationSortColumn;
+  direction: 'asc' | 'desc';
+} | null;
+
+const VERDICT_SORT_RANK: Record<string, number> = {
+  correct: 3,
+  incorrect: 2,
+  needs_review: 1,
+  unknown: 0,
+};
+
+function getVerdictSortRank(verdict?: string) {
+  return VERDICT_SORT_RANK[normalizeSuggestionVerdict(verdict)] ?? 0;
+}
+
 function buildSuggestionEvaluationRows(
   rows: GroupedOpportunityRow[],
+  sortState?: SuggestionEvaluationSortState,
 ): SuggestionEvaluationRowEntry[] {
   return rows.flatMap((row) =>
     row.suggestions.map((suggestion, index) => ({
@@ -443,6 +461,29 @@ function buildSuggestionEvaluationRows(
     })),
   )
     .sort((leftRow, rightRow) => {
+      if (sortState) {
+        const direction = sortState.direction === 'desc' ? -1 : 1;
+        let columnOrder = 0;
+
+        if (sortState.column === 'confidence') {
+          const leftScore = leftRow.suggestion.evaluationResult?.confidence ?? -1;
+          const rightScore = rightRow.suggestion.evaluationResult?.confidence ?? -1;
+          columnOrder = (leftScore - rightScore) * direction;
+        } else if (sortState.column === 'verdict') {
+          const leftRank = getVerdictSortRank(
+            leftRow.suggestion.evaluationResult?.verdict,
+          );
+          const rightRank = getVerdictSortRank(
+            rightRow.suggestion.evaluationResult?.verdict,
+          );
+          columnOrder = (leftRank - rightRank) * direction;
+        }
+
+        if (columnOrder !== 0) {
+          return columnOrder;
+        }
+      }
+
       const evaluatedAtOrder = compareEvaluationSortOrder(
         leftRow.suggestion.evaluationResult?.evaluatedAt,
         rightRow.suggestion.evaluationResult?.evaluatedAt,
@@ -850,7 +891,8 @@ function SuggestionEvaluationTable(props: {
   onEvaluateRow: (rowKey: string) => void;
   isEvaluating: boolean;
 }) {
-  const evaluationRows = buildSuggestionEvaluationRows(props.rows);
+  const [sortState, setSortState] = useState<SuggestionEvaluationSortState>(null);
+  const evaluationRows = buildSuggestionEvaluationRows(props.rows, sortState);
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.suggestion.canEvaluate && row.suggestion.rowKey)
@@ -861,6 +903,19 @@ function SuggestionEvaluationTable(props: {
   const areAllVisibleRowsSelected =
     visibleEvaluableRowKeys.length > 0 &&
     selectedVisibleRowCount === visibleEvaluableRowKeys.length;
+  const toggleSort = (column: SuggestionEvaluationSortColumn) => {
+    setSortState((current) => {
+      if (current?.column !== column) {
+        return { column, direction: 'desc' };
+      }
+
+      if (current.direction === 'desc') {
+        return { column, direction: 'asc' };
+      }
+
+      return null;
+    });
+  };
   const toggleExpandedRow = (rowKey: string) => {
     setExpandedRowKeys((currentRowKeys) =>
       currentRowKeys.includes(rowKey)
@@ -909,8 +964,46 @@ function SuggestionEvaluationTable(props: {
             <th>Site</th>
             <th>Opportunity Type</th>
             <th>Suggestion</th>
-            <th>Confidence</th>
-            <th>Verdict</th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('confidence')}
+              aria-sort={
+                sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Confidence
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('verdict')}
+              aria-sort={
+                sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Verdict
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
             <th>Evaluated At</th>
             <th>Action</th>
             <th>Details</th>

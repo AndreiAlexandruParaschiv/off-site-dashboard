@@ -903,6 +903,25 @@ a {
   color: var(--ink-strong);
 }
 
+.sortable-column-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-column-header:hover {
+  color: var(--ink-link);
+}
+
+.sort-arrow {
+  font-size: 0.7em;
+  opacity: 0.45;
+}
+
+.sortable-column-header[aria-sort='ascending'] .sort-arrow,
+.sortable-column-header[aria-sort='descending'] .sort-arrow {
+  opacity: 1;
+}
+
 .dashboard-table tbody tr:nth-child(even) {
   background: var(--table-stripe);
 }

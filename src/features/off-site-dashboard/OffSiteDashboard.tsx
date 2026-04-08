@@ -2220,6 +2220,14 @@ export function OffSiteDashboard() {
                       ? 'Evaluating...'
                       : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
                   </button>
+                  <button
+                    className="ghost-button"
+                    disabled={!dashboard.hasExportRows}
+                    onClick={dashboard.exportWikipediaSuggestionEvaluation}
+                    type="button"
+                  >
+                    Export Wikipedia Excel
+                  </button>
                 </div>
               )}
               <PanelToggleButton

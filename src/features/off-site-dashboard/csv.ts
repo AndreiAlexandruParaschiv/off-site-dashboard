@@ -574,3 +574,88 @@ export function downloadRowsAsExcel(rows: GroupedOpportunityRow[]) {
 
   XLSX.writeFile(workbook, 'Off-Site Evaluation.xlsx', { cellStyles: true });
 }
+
+const WIKIPEDIA_SUGGESTION_EVAL_HEADERS = [
+  'Site',
+  'Site ID',
+  'Opportunity Type',
+  'Opportunity ID',
+  'Suggestion ID',
+  'Suggestion',
+  'Suggestion URL',
+  'Verdict',
+  'Confidence',
+  'Confidence Score',
+  'Rationale',
+  'Evidence Snippet',
+  'Corrected Suggestion',
+  'Sources Used',
+  'Evaluated At',
+  'Evaluator',
+  'Status',
+] as const;
+
+function formatWikipediaSuggestionEvaluationRows(rows: GroupedOpportunityRow[]) {
+  return rows
+    .filter((row) => row.opportunityType === 'Wikipedia')
+    .flatMap((row) =>
+      row.suggestions.map((suggestion) => {
+        const result = suggestion.evaluationResult;
+        const sources = result?.evidenceSources
+          ?.map((source) => source.sourceUrl)
+          .filter(Boolean)
+          .join('\n') ?? '';
+        const evaluator = [
+          result?.evaluatorProvider ?? '',
+          result?.evaluatorModel ?? '',
+        ]
+          .filter(Boolean)
+          .join(' / ');
+
+        return [
+          row.site,
+          row.siteId ?? '',
+          row.opportunityType ?? '',
+          row.opportunityId ?? '',
+          suggestion.suggestionId?.trim() ?? '',
+          suggestion.suggestionText?.trim() ?? '',
+          suggestion.suggestionUrl?.trim() ?? '',
+          result?.verdict ?? 'Not evaluated',
+          result ? getConfidenceLabel(result.confidence) : '',
+          typeof result?.confidence === 'number' ? String(result.confidence) : '',
+          result?.rationale?.trim() ?? '',
+          result?.evidenceSnippet?.trim() ?? '',
+          result?.correctedSuggestion?.trim() ?? '',
+          sources,
+          result?.evaluatedAt ?? '',
+          evaluator,
+          row.status,
+        ];
+      }),
+    );
+}
+
+export function downloadWikipediaSuggestionEvaluationExcel(
+  rows: GroupedOpportunityRow[],
+) {
+  const dataRows = formatWikipediaSuggestionEvaluationRows(rows);
+
+  if (dataRows.length === 0) {
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(WIKIPEDIA_SUGGESTION_EVAL_HEADERS, dataRows, {
+      expandRows: true,
+      wrapText: true,
+    }),
+    'WikipediaSuggestions',
+  );
+
+  XLSX.writeFile(workbook, 'Wikipedia Suggestion Evaluation.xlsx', {
+    cellStyles: true,
+  });
+}

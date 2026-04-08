@@ -12,7 +12,11 @@ import {
   SUGGESTION_EVALUATOR_VERSION,
   TARGET_OPPORTUNITY_TYPES,
 } from './constants';
-import { downloadRowsAsCsv, downloadRowsAsExcel } from './csv';
+import {
+  downloadRowsAsCsv,
+  downloadRowsAsExcel,
+  downloadWikipediaSuggestionEvaluationExcel,
+} from './csv';
 import {
   SpacecatApiError,
   evaluateSentimentRow,
@@ -711,6 +715,10 @@ export function useOffSiteDashboard() {
     downloadRowsAsExcel(exportableRows);
   }, [exportableRows]);
 
+  const exportWikipediaSuggestionEvaluation = useCallback(() => {
+    downloadWikipediaSuggestionEvaluationExcel(exportableRows);
+  }, [exportableRows]);
+
   const toggleSentimentRowSelection = useCallback((rowKey: string) => {
     setSelectedSentimentRowKeys((currentKeys) =>
       currentKeys.includes(rowKey)
@@ -945,6 +953,7 @@ export function useOffSiteDashboard() {
     clearResults,
     exportRows,
     exportExcel,
+    exportWikipediaSuggestionEvaluation,
     toggleSentimentRowSelection,
     setSentimentRowSelections,
     toggleSuggestionRowSelection,

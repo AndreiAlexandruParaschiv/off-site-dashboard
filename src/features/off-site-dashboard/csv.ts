@@ -585,13 +585,11 @@ const WIKIPEDIA_SUGGESTION_EVAL_HEADERS = [
   'Suggestion URL',
   'Verdict',
   'Confidence',
-  'Confidence Score',
   'Rationale',
   'Evidence Snippet',
   'Corrected Suggestion',
   'Sources Used',
   'Evaluated At',
-  'Evaluator',
   'Status',
 ] as const;
 
@@ -605,12 +603,6 @@ function formatWikipediaSuggestionEvaluationRows(rows: GroupedOpportunityRow[]) 
           ?.map((source) => source.sourceUrl)
           .filter(Boolean)
           .join('\n') ?? '';
-        const evaluator = [
-          result?.evaluatorProvider ?? '',
-          result?.evaluatorModel ?? '',
-        ]
-          .filter(Boolean)
-          .join(' / ');
 
         return [
           row.site,
@@ -622,13 +614,11 @@ function formatWikipediaSuggestionEvaluationRows(rows: GroupedOpportunityRow[]) 
           suggestion.suggestionUrl?.trim() ?? '',
           result?.verdict ?? 'Not evaluated',
           result ? getConfidenceLabel(result.confidence) : '',
-          typeof result?.confidence === 'number' ? String(result.confidence) : '',
           result?.rationale?.trim() ?? '',
           result?.evidenceSnippet?.trim() ?? '',
           result?.correctedSuggestion?.trim() ?? '',
           sources,
           result?.evaluatedAt ?? '',
-          evaluator,
           row.status,
         ];
       }),

@@ -2052,11 +2052,6 @@ function isNativeSuggestionCollection(collection: Record<string, unknown>[]) {
   });
 }
 
-function convertNativeSuggestionCollection(collection: Record<string, unknown>[]) {
-  const converted = convertNativeSuggestionsToRecords(collection);
-  return converted.length > 0 ? converted : collection;
-}
-
 export function normalizeSuggestionCollection(
   responsePayload: unknown,
   opportunityType?: CanonicalOpportunityType,
@@ -2084,7 +2079,8 @@ export function normalizeSuggestionCollection(
   }
 
   if (isNativeSuggestionCollection(collection)) {
-    collection = convertNativeSuggestionCollection(collection);
+    const converted = convertNativeSuggestionsToRecords(collection);
+    if (converted.length > 0) collection = converted;
   }
 
   const suggestionPayloads = collection

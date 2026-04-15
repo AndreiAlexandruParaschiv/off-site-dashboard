@@ -410,6 +410,7 @@ export function normalizeOpportunityType(rawType: unknown) {
     compactValue.includes('citedurls') ||
     compactValue.includes('topcitedurl') ||
     compactValue.includes('topcitedurls') ||
+    compactValue.includes('citedanalysis') ||
     compactValue.startsWith('url') ||
     compactValue.endsWith('urls')
   ) {
@@ -421,6 +422,16 @@ export function normalizeOpportunityType(rawType: unknown) {
   }
 
   return null;
+}
+
+export function formatOpportunityTypeLabel(
+  opportunityType?: string,
+  rawType?: string,
+) {
+  if (!opportunityType) return '';
+  const normalizedRaw = (rawType ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const suffix = normalizedRaw === 'genericopportunity' ? ' (Generic)' : ' (Native)';
+  return `${opportunityType}${suffix}`;
 }
 
 function flattenRecordSignals(record: Record<string, unknown>) {
@@ -1115,6 +1126,19 @@ function normalizeSuggestion(
   index: number,
   opportunityType?: CanonicalOpportunityType,
 ): NormalizedSuggestionPayload | null {
+  if (record.sentimentOnly) {
+    const suggestionValue = getSuggestionValue(record);
+    const sentimentItems =
+      opportunityType &&
+      SENTIMENT_TABLE_TYPES.has(opportunityType) &&
+      suggestionValue
+        ? extractSentimentItemsFromSuggestionValue(suggestionValue)
+        : [];
+    return sentimentItems.length > 0
+      ? { suggestions: [], sentimentItems }
+      : null;
+  }
+
   const suggestionText = extractSuggestionTextValue(record);
   const suggestionUrl =
     getStringValue(record, [
@@ -1614,15 +1638,308 @@ function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>)
   return Array.from(new Set(evidenceItems));
 }
 
+function isNativeOpportunity(record: Record<string, unknown>): boolean {
+  const data = record.data;
+  if (!isRecord(data)) return false;
+  const dashboard = data.dashboard;
+  if (!isRecord(dashboard)) return false;
+  const analytics = dashboard.analytics;
+  return isRecord(analytics);
+}
+
+const INSIGHT_SLICE_KEYS = ['combined', 'content', 'comments'] as const;
+const PREFERRED_INSIGHT_SLICE: Partial<Record<CanonicalOpportunityType, string>> = {
+  Reddit: 'combined',
+  YouTube: 'content',
+  'Cited URLs': 'content',
+};
+
+function getNativeInsightSlices(
+  record: Record<string, unknown>,
+  opportunityType?: CanonicalOpportunityType | null,
+) {
+  const data = record.data;
+  if (!isRecord(data)) return [];
+  const dashboard = data.dashboard;
+  if (!isRecord(dashboard)) return [];
+  const analytics = dashboard.analytics;
+  if (!isRecord(analytics)) return [];
+  const performance = analytics.performance;
+  if (!isRecord(performance)) return [];
+  const insights = performance.insights;
+  if (!isRecord(insights)) return [];
+
+  const preferred = opportunityType ? PREFERRED_INSIGHT_SLICE[opportunityType] : undefined;
+  if (preferred) {
+    const slice = insights[preferred];
+    if (isRecord(slice) && Array.isArray(slice.sources)) {
+      return [{ label: preferred, sources: slice.sources }];
+    }
+  }
+
+  const slices: Array<{ label: string; sources: unknown[] }> = [];
+  for (const key of INSIGHT_SLICE_KEYS) {
+    const slice = insights[key];
+    if (isRecord(slice) && Array.isArray(slice.sources)) {
+      slices.push({ label: key, sources: slice.sources });
+    }
+  }
+  return slices;
+}
+
+function formatSentimentLabel(label: unknown) {
+  if (typeof label !== 'string' || !label.trim()) return 'N/A';
+  const lower = label.trim().toLowerCase();
+  if (lower === 'favorable') return 'Favorable';
+  if (lower === 'unfavorable') return 'Unfavorable';
+  if (lower === 'neutral') return 'Neutral';
+  return label.trim();
+}
+
+function formatBrandGroupSegment(
+  label: string,
+  brandData: unknown,
+) {
+  if (!isRecord(brandData)) return '';
+  const brands = Array.isArray(brandData.brands) ? brandData.brands.filter(isRecord) : [];
+  if (brands.length === 0) return '';
+
+  const parts = brands
+    .map((b) => {
+      const name = getStringValue(b, ['name']) ?? '';
+      const pct = typeof b.mentionsPercent === 'number' && Number.isFinite(b.mentionsPercent)
+        ? `${formatMetricValue(b.mentionsPercent)}%`
+        : '';
+      return name && pct ? `${name} ${pct}` : name || pct;
+    })
+    .filter(Boolean);
+
+  if (parts.length === 0) return '';
+  return `${label}: ${parts.join(', ')}`;
+}
+
+function formatSovPercent(source: Record<string, unknown>) {
+  const mentions = source.mentions;
+  if (!isRecord(mentions)) return 'N/A';
+
+  const brand = mentions.brand;
+  const brandPct = isRecord(brand) && typeof brand.mentionsPercent === 'number' && Number.isFinite(brand.mentionsPercent)
+    ? brand.mentionsPercent
+    : 0;
+  const brandName = isRecord(brand) ? getStringValue(brand, ['name']) ?? '' : '';
+  const associatedSegment = formatBrandGroupSegment('Associated', mentions.associated);
+  const marketSegment = formatBrandGroupSegment('Market', mentions.market);
+
+  if (brandPct === 0 && !associatedSegment && !marketSegment) return 'N/A';
+
+  const lines: string[] = [];
+  if (brandPct > 0) {
+    lines.push(brandName ? `**${brandName}**: ${formatMetricValue(brandPct)}%` : `${formatMetricValue(brandPct)}%`);
+  }
+  if (associatedSegment) lines.push(associatedSegment);
+  if (marketSegment) lines.push(marketSegment);
+
+  return lines.map((line) => `· ${line}`).join('<br>');
+}
+
+function convertNativeSourcesToSovTable(
+  sources: unknown[],
+  itemColumnHeader: string,
+) {
+  const rows = sources.filter(isRecord).map((source) => {
+    const rawTitle = (getStringValue(source, ['title']) ?? '').replace(/[\r\n]+/g, ' ').replace(/\|/g, '-').trim();
+    const url = getStringValue(source, ['url']) ?? '';
+    const item = url ? `[${rawTitle || url}](${url})` : rawTitle;
+    const sov = formatSovPercent(source);
+    const sentiment = isRecord(source.sentiment)
+      ? formatSentimentLabel(source.sentiment.label)
+      : 'N/A';
+    const citations = typeof source.citations === 'number' ? String(source.citations) : '';
+    return { item, sov, sentiment, citations };
+  });
+
+  if (rows.length === 0) return '';
+
+  const hasCitations = rows.some((r) => r.citations);
+  const headerLine = hasCitations
+    ? `| ${itemColumnHeader} | Share of Voice | Sentiment | Times Cited |`
+    : `| ${itemColumnHeader} | Share of Voice | Sentiment |`;
+  const separatorLine = hasCitations
+    ? '|:------|:---------------|:----------|:------------|'
+    : '|:------|:---------------|:----------|';
+  const dataLines = rows.map((r) =>
+    hasCitations
+      ? `| ${r.item} | ${r.sov} | ${r.sentiment} | ${r.citations} |`
+      : `| ${r.item} | ${r.sov} | ${r.sentiment} |`,
+  );
+
+  return [headerLine, separatorLine, ...dataLines].join('\n');
+}
+
+const NATIVE_ITEM_COLUMN: Partial<Record<CanonicalOpportunityType, string>> = {
+  Reddit: 'Thread',
+  YouTube: 'Video',
+  'Cited URLs': 'URL',
+};
+
+function resolveNativeOpportunityType(record: Record<string, unknown>) {
+  const rawType = getStringValue(record, ['type', 'name', 'kind', 'category']) ?? '';
+  return normalizeOpportunityType(rawType) ?? inferOpportunityType(record);
+}
+
+function convertNativeToSuggestionValue(
+  record: Record<string, unknown>,
+  opportunityType?: CanonicalOpportunityType | null,
+) {
+  const slices = getNativeInsightSlices(record, opportunityType);
+  if (slices.length === 0) return '';
+  const defaultItemColumn = (opportunityType && NATIVE_ITEM_COLUMN[opportunityType]) ?? 'Item';
+
+  const tableSections: string[] = [];
+  for (const slice of slices) {
+    const sliceLabel = slices.length > 1 ? ` (${slice.label})` : '';
+    const table = convertNativeSourcesToSovTable(
+      slice.sources,
+      `${defaultItemColumn}${sliceLabel}`,
+    );
+    if (table) tableSections.push(table);
+  }
+
+  if (tableSections.length === 0) return '';
+
+  return tableSections.join('\n\n');
+}
+
+function formatPriorityLabel(priority: unknown) {
+  if (typeof priority !== 'string' || !priority.trim()) return 'MEDIUM';
+  return priority.trim().toUpperCase();
+}
+
+function resolveNativeSuggestionData(suggestion: Record<string, unknown>) {
+  const data = isRecord(suggestion.data) ? suggestion.data : suggestion;
+  const bindings = isRecord(data.bindings) ? data.bindings : null;
+  const boundSources = bindings && Array.isArray(bindings.sources)
+    ? bindings.sources.filter(isRecord)
+    : [];
+  return { data, boundSources };
+}
+
+function formatNativeSuggestionAsMarkdown(
+  data: Record<string, unknown>,
+  boundSources: Record<string, unknown>[],
+) {
+  const title = getStringValue(data, ['title']) ?? '';
+  const priority = formatPriorityLabel(data.priority);
+  const description = getStringValue(data, ['description']) ?? '';
+  const rationale = getStringValue(data, ['rationale']) ?? '';
+  const expectedOutcome = getStringValue(data, ['expectedOutcome']) ?? '';
+  const actionItems = Array.isArray(data.actionItems) ? data.actionItems : [];
+  const persona = getStringValue(data, ['persona']) ?? '';
+
+  const lines: string[] = [];
+  lines.push(title ? `[${priority}] ${title}` : `[${priority}]`);
+  if (persona) lines.push(`*Persona*: ${persona}`);
+  if (description) lines.push(`*Description*: ${description}`);
+  if (rationale) lines.push(`*Rationale*: ${rationale}`);
+
+  const validActionItems = actionItems
+    .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
+  if (validActionItems.length > 0) {
+    lines.push('*Action Items*:');
+    for (const item of validActionItems) lines.push(`- ${item}`);
+  }
+
+  if (expectedOutcome) lines.push(`*Expected Outcome*: ${expectedOutcome}`);
+
+  if (boundSources.length > 0) {
+    const sourceLinks = boundSources
+      .map((src) => {
+        const srcUrl = getStringValue(src, ['url']) ?? '';
+        const srcTitle = getStringValue(src, ['title']) ?? srcUrl;
+        return srcUrl ? `[${srcTitle}](${srcUrl})` : srcTitle || '';
+      })
+      .filter(Boolean);
+    if (sourceLinks.length > 0) {
+      lines.push(`*Related Sources*: ${sourceLinks.join(', ')}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function convertNativeSuggestionsToRecords(suggestions: unknown[]) {
+  return suggestions.filter(isRecord).map((suggestion, index) => {
+    const { data, boundSources } = resolveNativeSuggestionData(suggestion);
+    const baseSuggestionId =
+      getStringValue(suggestion, ['id', 'suggestionId']) ??
+      getStringValue(data, ['id']) ??
+      '';
+
+    const evidenceUrls = boundSources
+      .map((src) => getStringValue(src, ['url']) ?? '')
+      .filter(Boolean);
+
+    const suggestionData: Record<string, unknown> = {
+      title: getStringValue(data, ['title']) ?? '',
+      description: formatNativeSuggestionAsMarkdown(data, boundSources),
+    };
+    if (evidenceUrls.length > 0) {
+      suggestionData.evidenceUrls = evidenceUrls;
+    }
+
+    return {
+      id: `${baseSuggestionId}-rec-${index + 1}`,
+      type: suggestion.type ?? 'CONTENT_UPDATE',
+      rank: suggestion.rank ?? 1,
+      status: getStringValue(suggestion, ['status']) ?? 'NEW',
+      data: suggestionData,
+    } as Record<string, unknown>;
+  });
+}
+
+function convertNativeOpportunity(record: Record<string, unknown>) {
+  const opportunityType = resolveNativeOpportunityType(record);
+  const sovMarkdown = convertNativeToSuggestionValue(record, opportunityType);
+  const rawSuggestions = getOpportunitySuggestionRecords(record);
+  const individualSuggestions = convertNativeSuggestionsToRecords(rawSuggestions);
+
+  const syntheticSuggestions: Record<string, unknown>[] = [];
+
+  if (sovMarkdown) {
+    syntheticSuggestions.push({
+      id: `${getStringValue(record, ['id', 'opportunityId']) ?? 'unknown'}-sov`,
+      type: 'CONTENT_UPDATE',
+      rank: 0,
+      status: 'NEW',
+      sentimentOnly: true,
+      data: {
+        suggestionValue: sovMarkdown,
+      },
+    });
+  }
+
+  syntheticSuggestions.push(...individualSuggestions);
+
+  if (syntheticSuggestions.length === 0) return record;
+
+  const converted = { ...record };
+  converted.suggestions = syntheticSuggestions;
+  return converted;
+}
+
 function normalizeOpportunity(record: Record<string, unknown>, index: number) {
+  const effectiveRecord = isNativeOpportunity(record)
+    ? convertNativeOpportunity(record)
+    : record;
+
   const opportunityStatus =
-    getStringValue(record, ['status', 'opportunityStatus'])?.trim().toLowerCase() ??
+    getStringValue(effectiveRecord, ['status', 'opportunityStatus'])?.trim().toLowerCase() ??
     '';
 
   const rawType =
-    getStringValue(record, ['type', 'name', 'kind', 'category']) ?? '';
+    getStringValue(effectiveRecord, ['type', 'name', 'kind', 'category']) ?? '';
   const opportunityType =
-    normalizeOpportunityType(rawType) ?? inferOpportunityType(record);
+    normalizeOpportunityType(rawType) ?? inferOpportunityType(effectiveRecord);
 
   if (!opportunityType) {
     return null;
@@ -1633,9 +1950,9 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   }
 
   const opportunityId =
-    getStringValue(record, ['opportunityId', 'id', 'uuid']) ??
+    getStringValue(effectiveRecord, ['opportunityId', 'id', 'uuid']) ??
     `opportunity-${index + 1}`;
-  const rawSuggestions = getOpportunitySuggestionRecords(record);
+  const rawSuggestions = getOpportunitySuggestionRecords(effectiveRecord);
   const normalizedSuggestionPayloads = rawSuggestions
     .filter(isRecord)
     .map((suggestion, suggestionIndex) =>
@@ -1656,7 +1973,7 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   );
   const opportunityEvidenceItems =
     opportunityType === 'Wikipedia'
-      ? buildWikipediaOpportunityEvidenceItems(record)
+      ? buildWikipediaOpportunityEvidenceItems(effectiveRecord)
       : [];
   const suggestionsWithOpportunityEvidence = suggestions.map((suggestion) => ({
     ...suggestion,
@@ -1680,17 +1997,27 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   return normalizedOpportunity;
 }
 
+function unwrapOpportunitySuggestionsPayload(record: Record<string, unknown>): Record<string, unknown> {
+  const inner = record.opportunity;
+  if (!isRecord(inner)) return record;
+  const topSuggestions = Array.isArray(record.suggestions) ? record.suggestions : [];
+  if (topSuggestions.length === 0) return inner;
+  const existing = Array.isArray(inner.suggestions) ? inner.suggestions : [];
+  return { ...inner, suggestions: [...existing, ...topSuggestions] };
+}
+
 export function normalizeOpportunityCollection(responsePayload: unknown) {
   const collection = extractCollection(responsePayload, OPPORTUNITY_KEYS);
 
   if (collection.length === 0) {
     if (isRecord(responsePayload)) {
-      const directOpportunityId = getStringValue(responsePayload, [
+      const unwrapped = unwrapOpportunitySuggestionsPayload(responsePayload);
+      const directOpportunityId = getStringValue(unwrapped, [
         'opportunityId',
         'id',
       ]);
       if (directOpportunityId) {
-        const directOpportunity = normalizeOpportunity(responsePayload, 0);
+        const directOpportunity = normalizeOpportunity(unwrapped, 0);
         return directOpportunity ? [directOpportunity] : [];
       }
     }
@@ -1698,7 +2025,7 @@ export function normalizeOpportunityCollection(responsePayload: unknown) {
   }
 
   const normalizedOpportunities = collection
-    .map((record, index) => normalizeOpportunity(record, index))
+    .map((record, index) => normalizeOpportunity(unwrapOpportunitySuggestionsPayload(record), index))
     .filter((value): value is OpportunityRecord => value !== null);
 
   const activeTypes = new Set(
@@ -1714,11 +2041,27 @@ export function normalizeOpportunityCollection(responsePayload: unknown) {
   );
 }
 
+function isNativeSuggestionCollection(collection: Record<string, unknown>[]) {
+  if (collection.length === 0) return false;
+  return collection.some((record) => {
+    const data = record.data;
+    if (!isRecord(data)) return false;
+    const hasSuggestionValue = typeof data.suggestionValue === 'string' && data.suggestionValue.trim().length > 0;
+    const hasStructuredFields = typeof data.priority === 'string' || Array.isArray(data.actionItems);
+    return !hasSuggestionValue && hasStructuredFields;
+  });
+}
+
+function convertNativeSuggestionCollection(collection: Record<string, unknown>[]) {
+  const converted = convertNativeSuggestionsToRecords(collection);
+  return converted.length > 0 ? converted : collection;
+}
+
 export function normalizeSuggestionCollection(
   responsePayload: unknown,
   opportunityType?: CanonicalOpportunityType,
 ) {
-  const collection = extractCollection(responsePayload, SUGGESTION_KEYS);
+  let collection = extractCollection(responsePayload, SUGGESTION_KEYS);
 
   if (collection.length === 0) {
     if (isRecord(responsePayload)) {
@@ -1738,6 +2081,10 @@ export function normalizeSuggestionCollection(
     }
 
     return createEmptySuggestionPayload();
+  }
+
+  if (isNativeSuggestionCollection(collection)) {
+    collection = convertNativeSuggestionCollection(collection);
   }
 
   const suggestionPayloads = collection
@@ -1818,6 +2165,7 @@ export function flattenSiteRows(siteResults: SiteDashboardResult[]) {
           id: `${siteResult.requestSite}-${opportunity.opportunityId}-empty`,
           ...sharedFields,
           opportunityType: opportunity.opportunityType,
+          rawType: opportunity.rawType,
           opportunityId: opportunity.opportunityId,
           status:
             siteResult.status === 'error'
@@ -1840,6 +2188,7 @@ export function flattenSiteRows(siteResults: SiteDashboardResult[]) {
           ].join('-'),
           ...sharedFields,
           opportunityType: opportunity.opportunityType,
+          rawType: opportunity.rawType,
           opportunityId: opportunity.opportunityId,
           suggestionId: suggestion.suggestionId,
           suggestionText: suggestion.suggestionText,

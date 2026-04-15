@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
 import { getConfidenceBand, getConfidenceLabel } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
-import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
+import { formatOpportunityTypeLabel, formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
 import type {
   GroupedSuggestionItem,
   GroupedOpportunityRow,
@@ -37,6 +37,7 @@ type EvaluationRowEntry = {
   site: string;
   siteId?: string;
   opportunityType: string;
+  rawType?: string;
   opportunityId: string;
   item: SentimentItemRecord;
 };
@@ -46,6 +47,7 @@ type SuggestionEvaluationRowEntry = {
   site: string;
   siteId?: string;
   opportunityType: string;
+  rawType?: string;
   opportunityId: string;
   suggestion: GroupedSuggestionItem;
 };
@@ -411,6 +413,7 @@ function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[
         site: row.site,
         siteId: row.siteId,
         opportunityType: row.opportunityType ?? ' - ',
+        rawType: row.rawType,
         opportunityId: row.opportunityId ?? ' - ',
         item,
       })),
@@ -456,6 +459,7 @@ function buildSuggestionEvaluationRows(
       site: row.site,
       siteId: row.siteId,
       opportunityType: row.opportunityType ?? ' - ',
+      rawType: row.rawType,
       opportunityId: row.opportunityId ?? ' - ',
       suggestion,
     })),
@@ -650,7 +654,7 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
             <tr key={row.id}>
               <td>{row.site}</td>
               <td>{row.siteId ?? ' - '}</td>
-              <td>{row.opportunityType ?? ' - '}</td>
+              <td>{formatOpportunityTypeLabel(row.opportunityType, row.rawType) || ' - '}</td>
               <td>{row.opportunityId ?? ' - '}</td>
               <td>
                 {row.suggestions.length === 0 ? (
@@ -800,7 +804,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                 <tr key={`${row.id}-sentiment-empty`}>
                   <td>{row.site}</td>
                   <td>{row.siteId ?? ' - '}</td>
-                  <td>{row.opportunityType ?? ' - '}</td>
+                  <td>{formatOpportunityTypeLabel(row.opportunityType, row.rawType) || ' - '}</td>
                   <td>{row.opportunityId ?? ' - '}</td>
                   <td>
                     <span className="metric-copy metric-card" title={row.status}>
@@ -828,7 +832,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     <>
                       <td rowSpan={rowSpan}>{row.site}</td>
                       <td rowSpan={rowSpan}>{row.siteId ?? ' - '}</td>
-                      <td rowSpan={rowSpan}>{row.opportunityType ?? ' - '}</td>
+                      <td rowSpan={rowSpan}>{formatOpportunityTypeLabel(row.opportunityType, row.rawType) || ' - '}</td>
                       <td rowSpan={rowSpan}>{row.opportunityId ?? ' - '}</td>
                     </>
                   )}
@@ -1069,7 +1073,7 @@ function SuggestionEvaluationTable(props: {
                       </span>
                     </div>
                   </td>
-                  <td>{row.opportunityType}</td>
+                  <td>{formatOpportunityTypeLabel(row.opportunityType, row.rawType)}</td>
                   <td>
                     <div className="metric-card">
                       {row.suggestion.suggestionId && (
@@ -1315,7 +1319,7 @@ function EvaluationTable(props: {
                     </span>
                   </div>
                 </td>
-                <td>{row.opportunityType}</td>
+                <td>{formatOpportunityTypeLabel(row.opportunityType, row.rawType)}</td>
                 <td>
                   {isUrl ? (
                     <a
@@ -1526,7 +1530,7 @@ function SovEvaluationTable(props: {
                     </span>
                   </div>
                 </td>
-                <td>{row.opportunityType}</td>
+                <td>{formatOpportunityTypeLabel(row.opportunityType, row.rawType)}</td>
                 <td>
                   {isUrl ? (
                     <a

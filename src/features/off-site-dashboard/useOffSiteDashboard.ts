@@ -206,6 +206,7 @@ function buildExportableOpportunityRows(
         site: siteCard.requestSite,
         siteId: siteCard.siteId,
         opportunityType: opportunity.opportunityType,
+        rawType: opportunity.rawType,
         opportunityId: opportunity.opportunityId,
         suggestions,
         sentimentItems,

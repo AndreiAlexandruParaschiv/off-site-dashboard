@@ -424,7 +424,7 @@ async function fetchSuggestionsForOpportunity(
 ) {
   const shouldFetchSuggestionEndpoint =
     opportunity.opportunityType === 'Wikipedia' ||
-    (opportunity.suggestions.length === 0 && opportunity.sentimentItems.length === 0);
+    opportunity.suggestions.length === 0;
 
   if (!shouldFetchSuggestionEndpoint) {
     return opportunity;

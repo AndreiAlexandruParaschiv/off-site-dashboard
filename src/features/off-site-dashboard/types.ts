@@ -208,6 +208,7 @@ export interface DashboardRow {
   site: string;
   siteId?: string;
   opportunityType?: CanonicalOpportunityType;
+  rawType?: string;
   opportunityId?: string;
   suggestionId?: string;
   suggestionText?: string;
@@ -234,6 +235,7 @@ export interface GroupedOpportunityRow {
   site: string;
   siteId?: string;
   opportunityType?: CanonicalOpportunityType;
+  rawType?: string;
   opportunityId?: string;
   suggestions: GroupedSuggestionItem[];
   sentimentItems: SentimentItemRecord[];

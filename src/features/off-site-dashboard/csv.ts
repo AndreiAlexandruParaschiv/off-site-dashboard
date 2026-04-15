@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { getConfidenceLabel, getConfidenceLevel } from './evaluation';
 import type { GroupedOpportunityRow, GroupedSuggestionItem } from './types';
+import { formatOpportunityTypeLabel } from './utils';
 
 const SUGGESTION_CSV_HEADERS = [
   'Site',
@@ -133,7 +134,7 @@ function formatRow(row: GroupedOpportunityRow) {
   return [
     row.site,
     row.siteId ?? '',
-    row.opportunityType ?? '',
+    formatOpportunityTypeLabel(row.opportunityType, row.rawType),
     row.opportunityId ?? '',
     formatSuggestionIds(row),
     formatSuggestions(row),
@@ -310,12 +311,13 @@ function formatSuggestionExcelRows(rows: GroupedOpportunityRow[]) {
 
 function formatSentimentRows(rows: GroupedOpportunityRow[]) {
   return rows.flatMap((row) => {
+    const typeLabel = formatOpportunityTypeLabel(row.opportunityType, row.rawType);
     if (row.sentimentItems.length === 0) {
       return [
         [
           row.site,
           row.siteId ?? '',
-          row.opportunityType ?? '',
+          typeLabel,
           row.opportunityId ?? '',
           '',
           '',
@@ -340,7 +342,7 @@ function formatSentimentRows(rows: GroupedOpportunityRow[]) {
       return [
         index === 0 ? row.site : '',
         index === 0 ? row.siteId ?? '' : '',
-        index === 0 ? row.opportunityType ?? '' : '',
+        index === 0 ? typeLabel : '',
         index === 0 ? row.opportunityId ?? '' : '',
         item.item.trim(),
         item.sov.trim(),
@@ -607,7 +609,7 @@ function formatWikipediaSuggestionEvaluationRows(rows: GroupedOpportunityRow[]) 
         return [
           row.site,
           row.siteId ?? '',
-          row.opportunityType ?? '',
+          formatOpportunityTypeLabel(row.opportunityType, row.rawType),
           row.opportunityId ?? '',
           suggestion.suggestionId?.trim() ?? '',
           suggestion.suggestionText?.trim() ?? '',

@@ -535,8 +535,10 @@ export function useOffSiteDashboard() {
             opportunityType: row.opportunityType,
             opportunityId: row.opportunityId,
             item: item.item,
+            title: item.title,
             extractedSov: item.sov,
             extractedSentiment: item.sentiment,
+            timesCited: item.timesCited,
           });
 
           if (request && item.rowKey) {

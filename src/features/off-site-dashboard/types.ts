@@ -159,8 +159,10 @@ export interface SentimentEvaluationRequest {
   opportunityType: CanonicalOpportunityType;
   opportunityId: string;
   item: string;
+  title?: string;
   extractedSov: string;
   extractedSentiment: string;
+  timesCited?: number;
 }
 
 export interface SuggestionEvaluationRequest {

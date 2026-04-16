@@ -192,8 +192,10 @@ export function buildSentimentEvaluationRequest(input: {
   opportunityType?: CanonicalOpportunityType;
   opportunityId?: string;
   item: string;
+  title?: string;
   extractedSov: string;
   extractedSentiment: string;
+  timesCited?: number;
 }): SentimentEvaluationRequest | null {
   const opportunityId = input.opportunityId?.trim();
 
@@ -206,13 +208,21 @@ export function buildSentimentEvaluationRequest(input: {
     return null;
   }
 
+  const title = input.title?.trim();
+  const timesCited =
+    typeof input.timesCited === 'number' && Number.isFinite(input.timesCited)
+      ? input.timesCited
+      : undefined;
+
   return {
     site: input.site,
     siteId: input.siteId,
     opportunityType: input.opportunityType,
     opportunityId,
     item: input.item,
+    ...(title ? { title } : {}),
     extractedSov: input.extractedSov,
     extractedSentiment: input.extractedSentiment,
+    ...(typeof timesCited === 'number' ? { timesCited } : {}),
   };
 }

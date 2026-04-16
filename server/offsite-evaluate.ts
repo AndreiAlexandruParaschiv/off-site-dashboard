@@ -244,14 +244,23 @@ function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | n
     return null;
   }
 
+  const title =
+    typeof candidate.title === 'string' ? candidate.title.trim() : '';
+  const timesCited =
+    typeof candidate.timesCited === 'number' && Number.isFinite(candidate.timesCited)
+      ? candidate.timesCited
+      : undefined;
+
   return {
     site: candidate.site,
     siteId: typeof candidate.siteId === 'string' ? candidate.siteId : undefined,
     opportunityType: candidate.opportunityType as CanonicalOpportunityType,
     opportunityId: candidate.opportunityId,
     item: candidate.item,
+    ...(title ? { title } : {}),
     extractedSov: candidate.extractedSov,
     extractedSentiment: candidate.extractedSentiment,
+    ...(typeof timesCited === 'number' ? { timesCited } : {}),
   };
 }
 
@@ -1648,9 +1657,9 @@ function buildLlmPrompt(
   const extractedBrandShares = extractSovBrandShares(payload.extractedSov);
   const extractedBrandList = extractedBrandShares.map((share) => share.brand);
 
-  return [
-    'You are an off-site SEO/GEO analyst verifying extracted sentiment for off-site citations.',
-    'Review the evidence and determine whether the extracted sentiment is supported.',
+  const promptLines = [
+    'You are a quality engineer and off-site SEO/GEO/AEO analyst auditing the backend\'s extracted sentiment and share-of-voice for a cited off-site source.',
+    'Your job is to VERIFY the backend, not rubber-stamp it: count brand mentions yourself from the fetched evidence, judge sentiment directly from what you read, and flag cases where the backend\'s extracted values disagree with what the evidence actually shows.',
     'The target brand is the brand/company associated with the site URL.',
     '',
     `Site URL: ${payload.site}`,
@@ -1658,21 +1667,40 @@ function buildLlmPrompt(
     `Opportunity Type: ${payload.opportunityType}`,
     `Opportunity ID: ${payload.opportunityId}`,
     `Item URL: ${payload.item}`,
-    `Extracted SOV: ${payload.extractedSov || 'None'}`,
+  ];
+
+  if (payload.title) {
+    promptLines.push(`Item Title: ${payload.title}`);
+  }
+
+  if (typeof payload.timesCited === 'number') {
+    promptLines.push(`Times Cited across LLM answers: ${payload.timesCited}`);
+  }
+
+  promptLines.push(
+    `Extracted SOV (backend claim — audit this): ${payload.extractedSov || 'None'}`,
     `Extracted SOV brands: ${extractedBrandList.join(', ') || 'None'}`,
-    `Extracted Sentiment: ${payload.extractedSentiment || 'None'}`,
+    `Extracted Sentiment (backend claim — audit this): ${payload.extractedSentiment || 'None'}`,
     '',
-    'Return a grounded judgment from the evidence only.',
-    'Also assess whether the extracted share of voice is supported for the target brand.',
-    'Count explicit brand mentions from the evidence for the brands listed in Extracted SOV brands.',
-    'Return integer mention counts for those brands only, plus a separate targetBrandMentionCount.',
-    'Do not compute percentages yourself; the system will compute percentages from the mention counts.',
-    'If the target brand is already one of the extracted SOV brands, use the same mention count for targetBrandMentionCount.',
-    'If the evidence is too weak to support a confident judgment, set evidenceSufficient to false and use "Needs Review" for evaluatedSentiment.',
+    'Process:',
+    '  1. Use the Item Title as a fast topical signal before reading the body (e.g., "Manulife RRSP" signals a retirement-plan thread). Count any target-brand mentions that appear in the title.',
+    '  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of EACH brand in "Extracted SOV brands", plus a separate targetBrandMentionCount for the target brand.',
+    '  3. Judge the sentiment of the fetched content toward the target brand: "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if the target brand is never referenced, or "Needs Review" if the evidence is too sparse to support a confident judgment.',
+    '  4. Return integer mention counts — do NOT compute percentages. The system derives SOV percentages from your counts and compares them against the backend\'s extracted values.',
+    '',
+    'Auditing rules (these override any instinct to agree with the backend):',
+    '  - If the target brand is NOT mentioned in the evidence but Extracted SOV claims a non-zero share, that is a backend error: return targetBrandMentionCount = 0, evaluatedSentiment = "No brand mentions", confidence = "high". The system will correctly flag this as a large SOV disagreement.',
+    '  - Do not inflate counts to match the backend. If you count 3 mentions and the backend claims 8, return 3.',
+    '  - Adjacent sentiment labels (e.g., Favorable vs Neutral) are still a disagreement — only return the label you actually judged from the evidence.',
+    '  - Title-only mentions count toward targetBrandMentionCount but the sentiment should be judged from the body/transcript when available, not from the title alone.',
+    '  - If the target brand is already one of the extracted SOV brands, use the same count in both that brand\'s mentionCount and targetBrandMentionCount.',
+    '  - If the evidence is too weak to support a confident judgment, set evidenceSufficient = false and evaluatedSentiment = "Needs Review".',
     '',
     'Evidence:',
     evidence.evidenceText,
-  ].join('\n');
+  );
+
+  return promptLines.join('\n');
 }
 
 function buildBedrockPrompt(

@@ -1,43 +1,75 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Geist:wght@300..700&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&display=swap');
 
 :root {
   color-scheme: light;
   font-family:
-    'Space Grotesk',
-    'Avenir Next',
+    'Geist',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
     'Segoe UI',
     sans-serif;
-  line-height: 1.5;
+  font-feature-settings: 'ss01', 'ss03', 'cv11';
+  line-height: 1.55;
   font-weight: 400;
-  --bg-top: #f4ecdf;
-  --bg-bottom: #edf2ef;
-  --ink: #1d2732;
-  --ink-soft: #5a6774;
-  --ink-strong: #111b24;
-  --panel: rgba(255, 252, 247, 0.76);
-  --panel-border: rgba(17, 27, 36, 0.09);
-  --panel-shadow: 0 24px 56px rgba(17, 27, 36, 0.1);
-  --accent: #0d7a73;
-  --accent-strong: #0f5f5c;
-  --accent-soft: rgba(13, 122, 115, 0.12);
-  --warm: #c97034;
-  --warm-strong: #9e5426;
-  --warm-soft: rgba(201, 112, 52, 0.16);
-  --success: #166534;
-  --success-soft: rgba(22, 101, 52, 0.12);
-  --error: #b42318;
-  --error-soft: rgba(180, 35, 24, 0.12);
-  --warning: #9a6700;
-  --warning-soft: rgba(154, 103, 0, 0.12);
-  --info-soft: rgba(31, 41, 55, 0.06);
-  --table-stripe: rgba(255, 255, 255, 0.54);
-  --active-row: rgba(13, 122, 115, 0.1);
-  --active-row-strong: rgba(13, 122, 115, 0.2);
-  --hero-surface: #11202a;
-  --hero-surface-strong: #0c1820;
-  --hero-ink: rgba(247, 248, 244, 0.96);
-  --hero-muted: rgba(231, 235, 232, 0.74);
-  --hero-line: rgba(255, 255, 255, 0.12);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Paper & ink */
+  --paper: #f3ecdd;
+  --paper-deep: #ebe2cf;
+  --paper-card: #fbf6ea;
+  --paper-card-soft: #f7f0df;
+  --paper-hairline: rgba(24, 32, 37, 0.12);
+  --paper-hairline-strong: rgba(24, 32, 37, 0.22);
+
+  --ink: #131a1f;
+  --ink-strong: #050809;
+  --ink-soft: #525a58;
+  --ink-faint: #8a8f88;
+
+  /* One saturated accent: cadmium */
+  --accent: #c43c2b;
+  --accent-strong: #8b2818;
+  --accent-soft: rgba(196, 60, 43, 0.09);
+  --accent-bar: rgba(196, 60, 43, 0.92);
+
+  --ochre: #a7780b;
+  --ochre-soft: rgba(167, 120, 11, 0.12);
+  --moss: #3e5c3a;
+  --moss-soft: rgba(62, 92, 58, 0.1);
+
+  /* Aliases kept for legacy class compatibility */
+  --bg-top: var(--paper);
+  --bg-bottom: var(--paper-deep);
+  --panel: var(--paper-card);
+  --panel-border: var(--paper-hairline);
+  --panel-shadow:
+    0 1px 0 rgba(24, 32, 37, 0.05),
+    0 12px 30px -24px rgba(24, 32, 37, 0.4);
+  --warm: var(--accent);
+  --warm-strong: var(--accent-strong);
+  --warm-soft: var(--accent-soft);
+  --success: var(--moss);
+  --success-soft: var(--moss-soft);
+  --error: var(--accent);
+  --error-soft: var(--accent-soft);
+  --warning: var(--ochre);
+  --warning-soft: var(--ochre-soft);
+  --info-soft: rgba(19, 26, 31, 0.05);
+  --table-stripe: transparent;
+  --active-row: rgba(196, 60, 43, 0.05);
+  --active-row-strong: rgba(196, 60, 43, 0.12);
+  --hero-surface: #0d1216;
+  --hero-surface-strong: #05080a;
+  --hero-ink: #f5eede;
+  --hero-muted: rgba(245, 238, 222, 0.62);
+  --hero-line: rgba(245, 238, 222, 0.14);
+
+  --mono:
+    'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --display:
+    'Fraunces', 'Iowan Old Style', 'Hoefler Text', Garamond, serif;
 }
 
 * {
@@ -55,15 +87,24 @@ body {
   min-height: 100vh;
   color: var(--ink);
   background:
-    linear-gradient(rgba(17, 27, 36, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(17, 27, 36, 0.035) 1px, transparent 1px),
-    radial-gradient(circle at top left, rgba(201, 112, 52, 0.18), transparent 30%),
-    radial-gradient(circle at top right, rgba(13, 122, 115, 0.22), transparent 26%),
-    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+    /* film grain */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07 0 0 0 0 0.09 0 0 0 0 0.11 0 0 0 0.075 0'/></filter><rect width='240' height='240' filter='url(%23g)'/></svg>"),
+    /* fine baseline grid — 32px tall rows */
+    linear-gradient(
+      to bottom,
+      transparent 31px,
+      rgba(24, 32, 37, 0.035) 31px,
+      rgba(24, 32, 37, 0.035) 32px,
+      transparent 32px
+    ),
+    /* quiet ochre bloom */
+    radial-gradient(ellipse at 12% -10%, rgba(196, 60, 43, 0.05), transparent 38%),
+    /* warm paper gradient */
+    linear-gradient(168deg, var(--paper) 0%, var(--paper-deep) 100%);
+  background-attachment: fixed;
   background-size:
-    28px 28px,
-    28px 28px,
-    auto,
+    240px 240px,
+    100% 32px,
     auto,
     auto;
 }
@@ -77,12 +118,208 @@ select {
 
 a {
   color: var(--accent-strong);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(139, 40, 24, 0.35);
+  transition: text-decoration-color 140ms ease-out, color 140ms ease-out;
 }
+
+a:hover {
+  text-decoration-color: var(--accent);
+  color: var(--accent);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Breathing room — expand inner and outer spacing (Phase 1.1)
+   ───────────────────────────────────────────────────────────────── */
 
 .dashboard-shell {
   max-width: 1720px;
   margin: 0 auto;
   padding: 36px 28px 64px;
+}
+
+.dashboard-shell {
+  padding: 40px 40px 72px;
+}
+
+.dashboard-hero {
+  gap: 28px !important;
+  margin-bottom: 36px !important;
+}
+
+.hero-copy {
+  padding: 40px 44px !important;
+  gap: 24px !important;
+}
+
+.hero-copy h1 {
+  max-width: 16ch !important;
+  font-size: clamp(2.4rem, 4vw, 4.2rem) !important;
+  letter-spacing: -0.035em !important;
+  line-height: 0.98 !important;
+}
+
+.hero-copy p {
+  font-size: 1rem !important;
+  line-height: 1.6 !important;
+  max-width: 62ch !important;
+}
+
+.hero-signal-row {
+  gap: 14px !important;
+}
+
+.hero-signal {
+  min-width: 176px !important;
+  padding: 16px 18px !important;
+}
+
+.hero-command {
+  padding: 32px 30px !important;
+  gap: 22px !important;
+}
+
+.hero-stats {
+  gap: 14px !important;
+}
+
+.stats-card {
+  padding: 18px 0 !important;
+  gap: 18px !important;
+}
+
+.stats-value {
+  font-size: 2.2rem !important;
+}
+
+.hero-command-notes {
+  gap: 14px !important;
+}
+
+.hero-note {
+  padding-top: 14px !important;
+}
+
+.dashboard-layout {
+  gap: 32px !important;
+}
+
+.workspace-shell {
+  gap: 28px !important;
+}
+
+.workspace-sidebar {
+  gap: 20px !important;
+}
+
+.workspace-nav {
+  gap: 12px !important;
+}
+
+.workspace-nav-button {
+  padding: 18px 20px !important;
+  gap: 10px !important;
+}
+
+.workspace-content,
+.workspace-mode-stack {
+  gap: 28px !important;
+}
+
+.panel {
+  padding: 28px 30px !important;
+  gap: 22px !important;
+}
+
+.dashboard-secondary-grid,
+.dashboard-data-stack {
+  gap: 28px !important;
+}
+
+.dashboard-overview-grid {
+  gap: 28px !important;
+}
+
+.panel-header {
+  gap: 16px !important;
+}
+
+.panel-header h2 {
+  line-height: 1.2 !important;
+}
+
+.panel-header p {
+  line-height: 1.6 !important;
+}
+
+/* Give table cells a little more room so rows don't feel cramped */
+.dashboard-table thead th {
+  padding: 14px 16px !important;
+}
+
+.dashboard-table tbody td {
+  padding: 14px 16px !important;
+  line-height: 1.5 !important;
+}
+
+/* Wikipedia check + site cards */
+.wikipedia-check-layout {
+  gap: 24px !important;
+}
+
+.wikipedia-check-card {
+  padding: 24px 26px !important;
+}
+
+.site-card {
+  padding: 20px 22px !important;
+  gap: 12px !important;
+}
+
+.site-grid {
+  gap: 16px !important;
+}
+
+/* Inputs: a touch more vertical room */
+.text-input,
+.textarea-input,
+.select-input {
+  padding: 12px 14px !important;
+}
+
+/* Filters + chips + pagination footers */
+.filter-group {
+  gap: 12px !important;
+  padding: 14px 0 !important;
+}
+
+.button-row,
+.table-controls,
+.pagination-controls {
+  gap: 14px !important;
+  padding-top: 14px !important;
+}
+
+/* Managed connection block and action rows */
+.managed-connection-note {
+  gap: 14px !important;
+}
+
+.settings-grid,
+.settings-grid-managed {
+  gap: 18px !important;
+}
+
+.settings-actions {
+  gap: 12px !important;
+  padding-top: 8px !important;
 }
 
 .dashboard-hero {

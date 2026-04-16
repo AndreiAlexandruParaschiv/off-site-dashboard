@@ -24,7 +24,7 @@ export const SENTIMENT_EVALUATION_STORAGE_KEY =
 export const SUGGESTION_EVALUATION_STORAGE_KEY =
   'off-site-dashboard.suggestion-evaluations.v1';
 export const SENTIMENT_EVALUATOR_VERSION = 'offsite-sentiment-evaluator.v7';
-export const SUGGESTION_EVALUATOR_VERSION = 'offsite-suggestion-evaluator.v19';
+export const SUGGESTION_EVALUATOR_VERSION = 'offsite-suggestion-evaluator.v20';
 export const WIKIPEDIA_URL_EVALUATOR_VERSION = 'offsite-wikipedia-url-evaluator.v1';
 export const EVALUATOR_API_PATH = '/api/offsite-evaluate';
 export const SUGGESTION_EVALUATOR_API_PATH = '/api/offsite-evaluate-suggestion';

@@ -1319,9 +1319,40 @@ function buildWikipediaSearchTerms(site: string) {
   }
 }
 
-function scoreWikipediaTitle(title: string, site: string) {
+function computeWikipediaTitleAcronymScore(
+  normalizedTitle: string,
+  normalizedSearchTerm: string,
+) {
+  if (
+    !normalizedSearchTerm ||
+    normalizedSearchTerm.length < 2 ||
+    normalizedSearchTerm.length > 5 ||
+    normalizedSearchTerm.includes(' ')
+  ) {
+    return 0;
+  }
+
+  const titleTokens = normalizedTitle.split(' ').filter(Boolean);
+
+  if (titleTokens.length < 2) {
+    return 0;
+  }
+
+  const initials = titleTokens
+    .map((token) => token[0])
+    .filter(Boolean)
+    .join('');
+
+  return initials === normalizedSearchTerm ? 6 : 0;
+}
+
+function scoreWikipediaTitle(
+  title: string,
+  site: string,
+  extraSearchTerms: string[] = [],
+) {
   const normalizedTitle = normalizeComparableText(title);
-  const searchTerms = buildWikipediaSearchTerms(site);
+  const searchTerms = [...buildWikipediaSearchTerms(site), ...extraSearchTerms];
   let score = 0;
 
   for (const searchTerm of searchTerms) {
@@ -1348,6 +1379,16 @@ function scoreWikipediaTitle(title: string, site: string) {
       normalizedSearchTokens.every((token) => normalizedTitle.includes(token))
     ) {
       score += 3;
+      continue;
+    }
+
+    const acronymScore = computeWikipediaTitleAcronymScore(
+      normalizedTitle,
+      normalizedSearchTerm,
+    );
+
+    if (acronymScore > 0) {
+      score += acronymScore;
     }
   }
 
@@ -1382,6 +1423,18 @@ function extractWikipediaTitleFromEvidenceItem(item: string, prefix: RegExp) {
   return '';
 }
 
+function extractWikipediaCompanyNameFromEvidence(evidenceItems: string[]) {
+  for (const item of evidenceItems) {
+    if (/^Wikipedia company:/i.test(item)) {
+      const value = item.replace(/^Wikipedia company:\s*/i, '').trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return '';
+}
+
 function detectWikipediaPrimaryTitleMismatch(payload: SuggestionEvaluationRequest) {
   const primaryTitles: string[] = [];
 
@@ -1404,8 +1457,11 @@ function detectWikipediaPrimaryTitleMismatch(payload: SuggestionEvaluationReques
     return false;
   }
 
+  const companyName = extractWikipediaCompanyNameFromEvidence(payload.evidenceItems);
+  const extraSearchTerms = companyName ? [companyName] : [];
+
   return primaryTitles.every(
-    (title) => scoreWikipediaTitle(title, payload.site) === 0,
+    (title) => scoreWikipediaTitle(title, payload.site, extraSearchTerms) === 0,
   );
 }
 

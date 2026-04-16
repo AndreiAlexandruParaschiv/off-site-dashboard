@@ -13,8 +13,11 @@ import {
   TARGET_OPPORTUNITY_TYPES,
 } from './constants';
 import {
+  downloadOffsiteSuggestionEvaluationExcel,
   downloadRowsAsCsv,
   downloadRowsAsExcel,
+  downloadSentimentEvaluationExcel,
+  downloadSovEvaluationExcel,
   downloadWikipediaSuggestionEvaluationExcel,
 } from './csv';
 import {
@@ -719,6 +722,18 @@ export function useOffSiteDashboard() {
     downloadWikipediaSuggestionEvaluationExcel(exportableRows);
   }, [exportableRows]);
 
+  const exportOffsiteSuggestionEvaluation = useCallback(() => {
+    downloadOffsiteSuggestionEvaluationExcel(exportableRows);
+  }, [exportableRows]);
+
+  const exportSentimentEvaluation = useCallback(() => {
+    downloadSentimentEvaluationExcel(exportableRows);
+  }, [exportableRows]);
+
+  const exportSovEvaluation = useCallback(() => {
+    downloadSovEvaluationExcel(exportableRows);
+  }, [exportableRows]);
+
   const toggleSentimentRowSelection = useCallback((rowKey: string) => {
     setSelectedSentimentRowKeys((currentKeys) =>
       currentKeys.includes(rowKey)
@@ -954,6 +969,9 @@ export function useOffSiteDashboard() {
     exportRows,
     exportExcel,
     exportWikipediaSuggestionEvaluation,
+    exportOffsiteSuggestionEvaluation,
+    exportSentimentEvaluation,
+    exportSovEvaluation,
     toggleSentimentRowSelection,
     setSentimentRowSelections,
     toggleSuggestionRowSelection,

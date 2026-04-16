@@ -575,7 +575,7 @@ export function downloadRowsAsExcel(rows: GroupedOpportunityRow[]) {
   XLSX.writeFile(workbook, 'Off-Site Evaluation.xlsx', { cellStyles: true });
 }
 
-const WIKIPEDIA_SUGGESTION_EVAL_HEADERS = [
+const SUGGESTION_EVAL_HEADERS = [
   'Site',
   'Site ID',
   'Opportunity Type',
@@ -593,42 +593,93 @@ const WIKIPEDIA_SUGGESTION_EVAL_HEADERS = [
   'Status',
 ] as const;
 
-function formatWikipediaSuggestionEvaluationRows(rows: GroupedOpportunityRow[]) {
-  return rows
-    .filter((row) => row.opportunityType === 'Wikipedia')
-    .flatMap((row) =>
-      row.suggestions.map((suggestion) => {
-        const result = suggestion.evaluationResult;
-        const sources = result?.evidenceSources
-          ?.map((source) => source.sourceUrl)
-          .filter(Boolean)
-          .join('\n') ?? '';
+const SENTIMENT_EVAL_HEADERS = [
+  'Site',
+  'Site ID',
+  'Opportunity Type',
+  'Opportunity ID',
+  'Url',
+  'Extracted Sentiment',
+  'Evaluated Sentiment',
+  'Sentiment Confidence',
+  'Sentiment Verdict',
+  'Rationale',
+  'Evidence Snippet',
+  'Fetch Status',
+  'Evaluated At',
+  'Status',
+] as const;
 
-        return [
-          row.site,
-          row.siteId ?? '',
-          row.opportunityType ?? '',
-          row.opportunityId ?? '',
-          suggestion.suggestionId?.trim() ?? '',
-          suggestion.suggestionText?.trim() ?? '',
-          suggestion.suggestionUrl?.trim() ?? '',
-          result?.verdict ?? 'Not evaluated',
-          result ? getConfidenceLabel(result.confidence) : '',
-          result?.rationale?.trim() ?? '',
-          result?.evidenceSnippet?.trim() ?? '',
-          result?.correctedSuggestion?.trim() ?? '',
-          sources,
-          result?.evaluatedAt ?? '',
-          row.status,
-        ];
-      }),
+const SOV_EVAL_HEADERS = [
+  'Site',
+  'Site ID',
+  'Opportunity Type',
+  'Opportunity ID',
+  'Url',
+  'Extracted SOV',
+  'Evaluated SOV',
+  'SOV Confidence',
+  'Target Brand Share %',
+  'SOV Verdict',
+  'Rationale',
+  'Evidence Snippet',
+  'Fetch Status',
+  'Evaluated At',
+  'Status',
+] as const;
+
+function formatSuggestionEvaluationRow(
+  row: GroupedOpportunityRow,
+  suggestion: GroupedSuggestionItem,
+) {
+  const result = suggestion.evaluationResult;
+  const sources =
+    result?.evidenceSources
+      ?.map((source) => source.sourceUrl)
+      .filter(Boolean)
+      .join('\n') ?? '';
+
+  return [
+    row.site,
+    row.siteId ?? '',
+    row.opportunityType ?? '',
+    row.opportunityId ?? '',
+    suggestion.suggestionId?.trim() ?? '',
+    suggestion.suggestionText?.trim() ?? '',
+    suggestion.suggestionUrl?.trim() ?? '',
+    result?.verdict ?? (suggestion.evaluationError ? 'Error' : 'Not evaluated'),
+    result ? getConfidenceLabel(result.confidence) : '',
+    result?.rationale?.trim() ?? suggestion.evaluationError ?? '',
+    result?.evidenceSnippet?.trim() ?? '',
+    result?.correctedSuggestion?.trim() ?? '',
+    sources,
+    result?.evaluatedAt ?? '',
+    row.status,
+  ];
+}
+
+function buildSuggestionEvaluationSheet(
+  rows: GroupedOpportunityRow[],
+  matchType: (opportunityType?: string) => boolean,
+) {
+  return rows
+    .filter((row) => matchType(row.opportunityType))
+    .flatMap((row) =>
+      row.suggestions
+        .filter(
+          (suggestion) => suggestion.evaluationResult || suggestion.evaluationError,
+        )
+        .map((suggestion) => formatSuggestionEvaluationRow(row, suggestion)),
     );
 }
 
 export function downloadWikipediaSuggestionEvaluationExcel(
   rows: GroupedOpportunityRow[],
 ) {
-  const dataRows = formatWikipediaSuggestionEvaluationRows(rows);
+  const dataRows = buildSuggestionEvaluationSheet(
+    rows,
+    (type) => type === 'Wikipedia',
+  );
 
   if (dataRows.length === 0) {
     return;
@@ -638,7 +689,7 @@ export function downloadWikipediaSuggestionEvaluationExcel(
 
   XLSX.utils.book_append_sheet(
     workbook,
-    buildExcelSheet(WIKIPEDIA_SUGGESTION_EVAL_HEADERS, dataRows, {
+    buildExcelSheet(SUGGESTION_EVAL_HEADERS, dataRows, {
       expandRows: true,
       wrapText: true,
     }),
@@ -646,6 +697,168 @@ export function downloadWikipediaSuggestionEvaluationExcel(
   );
 
   XLSX.writeFile(workbook, 'Wikipedia Suggestion Evaluation.xlsx', {
+    cellStyles: true,
+  });
+}
+
+export function downloadOffsiteSuggestionEvaluationExcel(
+  rows: GroupedOpportunityRow[],
+) {
+  const dataRows = buildSuggestionEvaluationSheet(
+    rows,
+    (type) => !!type && type !== 'Wikipedia',
+  );
+
+  if (dataRows.length === 0) {
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(SUGGESTION_EVAL_HEADERS, dataRows, {
+      expandRows: true,
+      wrapText: true,
+    }),
+    'OffsiteSuggestions',
+  );
+
+  XLSX.writeFile(workbook, 'Off-Site Suggestion Evaluation.xlsx', {
+    cellStyles: true,
+  });
+}
+
+function compareSentimentValue(left: string, right: string) {
+  const leftValue = normalizeComparableExportValue(left);
+  const rightValue = normalizeComparableExportValue(right);
+
+  if (!leftValue || !rightValue) {
+    return 'Not evaluated';
+  }
+
+  if (rightValue === 'needs review') {
+    return 'Needs Review';
+  }
+
+  return leftValue === rightValue ? 'Correct' : 'Incorrect';
+}
+
+function formatSentimentEvaluationRows(rows: GroupedOpportunityRow[]) {
+  return rows
+    .filter((row) =>
+      row.opportunityType ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType) : false,
+    )
+    .flatMap((row) =>
+      row.sentimentItems
+        .filter((item) => item.evaluationResult || item.evaluationError)
+        .map((item) => {
+          const result = item.evaluationResult;
+          return [
+            row.site,
+            row.siteId ?? '',
+            row.opportunityType ?? '',
+            row.opportunityId ?? '',
+            item.item.trim(),
+            item.sentiment.trim(),
+            result?.evaluatedSentiment ?? '',
+            result ? getConfidenceLabel(result.sentimentConfidence) : '',
+            result
+              ? compareSentimentValue(item.sentiment, result.evaluatedSentiment)
+              : item.evaluationError
+                ? 'Error'
+                : 'Not evaluated',
+            result?.rationale?.trim() ?? item.evaluationError ?? '',
+            result?.evidenceSnippet?.trim() ?? '',
+            result?.fetch.status ?? '',
+            result?.evaluatedAt ?? '',
+            row.status,
+          ];
+        }),
+    );
+}
+
+function formatSovEvaluationRows(rows: GroupedOpportunityRow[]) {
+  return rows
+    .filter((row) =>
+      row.opportunityType ? SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType) : false,
+    )
+    .flatMap((row) =>
+      row.sentimentItems
+        .filter((item) => item.evaluationResult || item.evaluationError)
+        .map((item) => {
+          const result = item.evaluationResult;
+          const targetBrandShare =
+            typeof result?.evaluatedTargetBrandSharePct === 'number'
+              ? `${result.evaluatedTargetBrandSharePct.toFixed(1)}%`
+              : '';
+          return [
+            row.site,
+            row.siteId ?? '',
+            row.opportunityType ?? '',
+            row.opportunityId ?? '',
+            item.item.trim(),
+            item.sov.trim(),
+            result?.evaluatedSov ?? '',
+            result ? getConfidenceLabel(result.sovConfidence) : '',
+            targetBrandShare,
+            result
+              ? compareSentimentValue(item.sov, result.evaluatedSov)
+              : item.evaluationError
+                ? 'Error'
+                : 'Not evaluated',
+            result?.rationale?.trim() ?? item.evaluationError ?? '',
+            result?.evidenceSnippet?.trim() ?? '',
+            result?.fetch.status ?? '',
+            result?.evaluatedAt ?? '',
+            row.status,
+          ];
+        }),
+    );
+}
+
+export function downloadSentimentEvaluationExcel(rows: GroupedOpportunityRow[]) {
+  const dataRows = formatSentimentEvaluationRows(rows);
+
+  if (dataRows.length === 0) {
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(SENTIMENT_EVAL_HEADERS, dataRows, {
+      expandRows: true,
+      wrapText: true,
+    }),
+    'SentimentEvaluations',
+  );
+
+  XLSX.writeFile(workbook, 'Off-Site Sentiment Evaluation.xlsx', {
+    cellStyles: true,
+  });
+}
+
+export function downloadSovEvaluationExcel(rows: GroupedOpportunityRow[]) {
+  const dataRows = formatSovEvaluationRows(rows);
+
+  if (dataRows.length === 0) {
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildExcelSheet(SOV_EVAL_HEADERS, dataRows, {
+      expandRows: true,
+      wrapText: true,
+    }),
+    'SovEvaluations',
+  );
+
+  XLSX.writeFile(workbook, 'Off-Site SOV Evaluation.xlsx', {
     cellStyles: true,
   });
 }

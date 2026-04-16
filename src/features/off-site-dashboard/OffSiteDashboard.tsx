@@ -2807,6 +2807,14 @@ export function OffSiteDashboard() {
                             <button
                               className="ghost-button"
                               disabled={!dashboard.hasExportRows}
+                              onClick={dashboard.exportOffsiteSuggestionEvaluation}
+                              type="button"
+                            >
+                              Export Suggestion Excel
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!dashboard.hasExportRows}
                               onClick={dashboard.exportWikipediaSuggestionEvaluation}
                               type="button"
                             >
@@ -2874,6 +2882,14 @@ export function OffSiteDashboard() {
                                 ? 'Evaluating...'
                                 : `Evaluate Selected Rows (${visibleSelectedEvaluationRowsCount})`}
                             </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!dashboard.hasExportRows}
+                              onClick={dashboard.exportSentimentEvaluation}
+                              type="button"
+                            >
+                              Export Sentiment Excel
+                            </button>
                           </div>
                         )}
                         <PanelToggleButton
@@ -2933,6 +2949,14 @@ export function OffSiteDashboard() {
                               {dashboard.isEvaluatingSentiment
                                 ? 'Evaluating...'
                                 : `Evaluate Selected Rows (${visibleSelectedSovEvaluationRowsCount})`}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!dashboard.hasExportRows}
+                              onClick={dashboard.exportSovEvaluation}
+                              type="button"
+                            >
+                              Export SOV Excel
                             </button>
                           </div>
                         )}

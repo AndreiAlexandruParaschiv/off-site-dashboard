@@ -1230,21 +1230,140 @@ function getOpportunitySuggestionRecords(record: Record<string, unknown>) {
   return [] as Record<string, unknown>[];
 }
 
-function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>) {
-  const evidenceItems: string[] = [];
+const ANALYTICS_INSIGHTS_SECTION_KEYS = ['content', 'combined'] as const;
+
+function getAnalyticsInsightsContentSources(
+  record: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const data = record.data;
+  if (!isRecord(data)) return [];
+  const dashboard = data.dashboard;
+  if (!isRecord(dashboard)) return [];
+  const analytics = dashboard.analytics;
+  if (!isRecord(analytics)) return [];
+  const performance = analytics.performance;
+  if (!isRecord(performance)) return [];
+  const insights = performance.insights;
+  if (!isRecord(insights)) return [];
+
+  for (const sectionKey of ANALYTICS_INSIGHTS_SECTION_KEYS) {
+    const section = insights[sectionKey];
+    if (isRecord(section) && Array.isArray(section.sources)) {
+      return section.sources.filter(isRecord);
+    }
+  }
+
+  return [];
+}
+
+function extractAnalyticsInsightsSentimentItems(
+  record: Record<string, unknown>,
+): SentimentItemRecord[] {
+  const sources = getAnalyticsInsightsContentSources(record);
+  if (sources.length === 0) return [];
+
+  const items = sources
+    .map((source) => {
+      const url = getStringValue(source, ['url']) ?? '';
+      const title = getStringValue(source, ['title']) ?? '';
+      const item = url || title;
+
+      const mentions = isRecord(source.mentions) ? source.mentions : null;
+      const brandMentions = mentions && isRecord(mentions.brand) ? mentions.brand : null;
+      const brandName = brandMentions
+        ? (getStringValue(brandMentions, ['name']) ?? '')
+        : '';
+      const sovPercent = brandMentions
+        ? getNumberValue(brandMentions, ['mentionsPercent'])
+        : undefined;
+      const sov =
+        typeof sovPercent === 'number'
+          ? brandName
+            ? `${brandName}: ${formatMetricValue(sovPercent)}%`
+            : `${formatMetricValue(sovPercent)}%`
+          : '';
+
+      const sentimentRecord = isRecord(source.sentiment) ? source.sentiment : null;
+      const sentiment = sentimentRecord
+        ? (getStringValue(sentimentRecord, ['label']) ?? '')
+        : '';
+
+      const citations = getNumberValue(source, ['citations']);
+
+      if (!item && !sov && !sentiment && typeof citations !== 'number') {
+        return null;
+      }
+
+      return {
+        item,
+        sov,
+        sentiment,
+        ...(typeof citations === 'number' && Number.isFinite(citations)
+          ? { timesCited: citations }
+          : {}),
+      } satisfies SentimentItemRecord;
+    })
+    .filter((value): value is SentimentItemRecord => value !== null);
+
+  const hasAnyCitedItems = items.some(
+    (item) => typeof item.timesCited === 'number' && item.timesCited > 0,
+  );
+
+  if (!hasAnyCitedItems) {
+    return items;
+  }
+
+  return items.filter(
+    (item) => item.timesCited === undefined || item.timesCited > 0,
+  );
+}
+
+function isNormalizedWikipediaUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value);
+    return /(^|\.)wikipedia\.org$/i.test(parsedUrl.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWikipediaUrlCandidate(value?: string) {
+  const normalizedValue = normalizeAbsoluteUrl(value);
+
+  if (!normalizedValue || !isNormalizedWikipediaUrl(normalizedValue)) {
+    return '';
+  }
+
+  return normalizedValue;
+}
+
+function getWikipediaAnalysisRecord(record: Record<string, unknown>) {
   const nestedData = record.data;
 
-  if (!isRecord(nestedData)) {
-    return evidenceItems;
+  if (isRecord(nestedData) && isRecord(nestedData.fullAnalysis)) {
+    return nestedData.fullAnalysis;
   }
 
-  const fullAnalysis = nestedData.fullAnalysis;
-
-  if (!isRecord(fullAnalysis)) {
-    return evidenceItems;
+  if (isRecord(record.fullAnalysis)) {
+    return record.fullAnalysis;
   }
 
-  const wikipediaUrl = getStringValue(fullAnalysis, ['wikipediaUrl', 'url']);
+  return null;
+}
+
+function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>) {
+  const evidenceItems: string[] = [];
+  const wikipediaUrl = extractWikipediaOpportunityUrl(record);
+
+  if (wikipediaUrl) {
+    evidenceItems.push(`Wikipedia URL: ${wikipediaUrl}`);
+  }
+
+  const fullAnalysis = getWikipediaAnalysisRecord(record);
+
+  if (!fullAnalysis) {
+    return evidenceItems;
+  }
   const company = getStringValue(fullAnalysis, ['company', 'name']);
   const citationCount = getNumberValue(fullAnalysis, ['citationCount']);
   const avgCitations = getNumberValue(fullAnalysis, ['avgCitations']);
@@ -1265,10 +1384,6 @@ function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>)
   const hasExternalLinks = fullAnalysis.hasExternalLinks;
   const infoboxFields =
     isRecord(fullAnalysis.infoboxFields) ? fullAnalysis.infoboxFields : null;
-
-  if (wikipediaUrl) {
-    evidenceItems.push(`Wikipedia URL: ${normalizeAbsoluteUrl(wikipediaUrl)}`);
-  }
 
   if (company) {
     evidenceItems.push(`Wikipedia company: ${company}`);
@@ -1614,6 +1729,36 @@ function buildWikipediaOpportunityEvidenceItems(record: Record<string, unknown>)
   return Array.from(new Set(evidenceItems));
 }
 
+function extractWikipediaOpportunityUrl(record: Record<string, unknown>) {
+  const nestedData = record.data;
+  const fullAnalysis = getWikipediaAnalysisRecord(record);
+  const candidateValues = [
+    getStringValue(record, ['wikipediaUrl', 'wikiUrl', 'pageUrl']),
+    isRecord(nestedData)
+      ? getStringValue(nestedData, ['wikipediaUrl', 'wikiUrl', 'pageUrl', 'url'])
+      : undefined,
+    fullAnalysis
+      ? getStringValue(fullAnalysis, [
+          'wikipediaUrl',
+          'wikiUrl',
+          'pageUrl',
+          'pageURL',
+          'url',
+        ])
+      : undefined,
+  ];
+
+  for (const value of candidateValues) {
+    const normalizedWikipediaUrl = normalizeWikipediaUrlCandidate(value);
+
+    if (normalizedWikipediaUrl) {
+      return normalizedWikipediaUrl;
+    }
+  }
+
+  return undefined;
+}
+
 function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const opportunityStatus =
     getStringValue(record, ['status', 'opportunityStatus'])?.trim().toLowerCase() ??
@@ -1651,9 +1796,14 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const suggestions = normalizedSuggestionPayloads.flatMap(
     (payload) => payload.suggestions,
   );
-  const sentimentItems = normalizedSuggestionPayloads.flatMap(
+  const legacySentimentItems = normalizedSuggestionPayloads.flatMap(
     (payload) => payload.sentimentItems,
   );
+  const sentimentItems =
+    legacySentimentItems.length === 0 &&
+    SENTIMENT_TABLE_TYPES.has(opportunityType)
+      ? extractAnalyticsInsightsSentimentItems(record)
+      : legacySentimentItems;
   const opportunityEvidenceItems =
     opportunityType === 'Wikipedia'
       ? buildWikipediaOpportunityEvidenceItems(record)
@@ -1673,6 +1823,10 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
     opportunityType,
     opportunityStatus,
     rawType: rawType || opportunityType,
+    wikipediaUrl:
+      opportunityType === 'Wikipedia'
+        ? extractWikipediaOpportunityUrl(record)
+        : undefined,
     suggestions: suggestionsWithOpportunityEvidence,
     sentimentItems,
   };

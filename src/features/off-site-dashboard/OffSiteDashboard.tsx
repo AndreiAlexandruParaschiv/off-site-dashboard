@@ -1,8 +1,20 @@
 import { Fragment, useState } from 'react';
+import {
+  evaluateWikipediaUrl,
+  fetchSiteDashboardData,
+  SpacecatApiError,
+} from './api';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
 import { getConfidenceBand, getConfidenceLabel } from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
-import { formatTimestamp, getStatusTone, trimSuggestionText } from './utils';
+import {
+  formatTimestamp,
+  getStatusTone,
+  normalizeApiBaseUrl,
+  normalizeSiteInput,
+  normalizeSiteList,
+  trimSuggestionText,
+} from './utils';
 import type {
   GroupedSuggestionItem,
   GroupedOpportunityRow,
@@ -12,6 +24,7 @@ import type {
   SiteDashboardResult,
   SiteOpportunityPresence,
   SuggestionEvaluationResult,
+  WikipediaUrlEvaluationVerdict,
 } from './types';
 
 const SENTIMENT_OPPORTUNITY_TYPES = new Set<string>([
@@ -1602,7 +1615,267 @@ function SovEvaluationTable(props: {
   );
 }
 
+type WorkspaceMode = 'opportunities' | 'evaluation' | 'wikipedia-check';
+
+type WikipediaCheckVerdict =
+  | 'likely-correct'
+  | 'needs-review'
+  | 'likely-incorrect'
+  | 'missing';
+
+type WikipediaUrlCheckResult = {
+  requestedSite: string;
+  resolvedSiteUrl?: string;
+  siteId?: string;
+  opportunityId?: string;
+  verdict: WikipediaUrlEvaluationVerdict | WikipediaCheckVerdict;
+  verdictLabel: string;
+  summary: string;
+  backendWikipediaUrl?: string;
+  extractedTitle?: string;
+  wikipediaOpportunityCount: number;
+  wikipediaSuggestionCount: number;
+  rationale: string;
+  evidenceSnippet?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  evaluatorProvider?: string;
+  evaluatorModel?: string;
+};
+
+type WikipediaBatchProgress = {
+  completed: number;
+  total: number;
+};
+
+function WorkspaceNavButton(props: {
+  active: boolean;
+  count: string;
+  description: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`workspace-nav-button ${props.active ? 'workspace-nav-button-active' : ''}`}
+      onClick={props.onClick}
+      type="button"
+      aria-pressed={props.active}
+    >
+      <span className="workspace-nav-label-row">
+        <span className="workspace-nav-label">{props.label}</span>
+        <span className="workspace-nav-count">{props.count}</span>
+      </span>
+      <span className="workspace-nav-description">{props.description}</span>
+    </button>
+  );
+}
+
+function getWikipediaStatusTone(
+  verdict: WikipediaUrlEvaluationVerdict | WikipediaCheckVerdict,
+): 'success' | 'warning' | 'error' | 'neutral' {
+  if (verdict === 'Correct' || verdict === 'likely-correct') {
+    return 'success';
+  }
+
+  if (verdict === 'Needs Review' || verdict === 'needs-review') {
+    return 'warning';
+  }
+
+  if (verdict === 'Incorrect' || verdict === 'likely-incorrect') {
+    return 'error';
+  }
+
+  return 'neutral';
+}
+
+function isClaudeWikipediaVerdict(
+  verdict: WikipediaUrlEvaluationVerdict | WikipediaCheckVerdict,
+): verdict is WikipediaUrlEvaluationVerdict {
+  return verdict === 'Correct' || verdict === 'Needs Review' || verdict === 'Incorrect';
+}
+
+function isWikipediaUrl(value?: string) {
+  if (!value?.trim()) {
+    return false;
+  }
+
+  try {
+    const parsedUrl = new URL(value.trim());
+    return /(^|\.)wikipedia\.org$/i.test(parsedUrl.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function extractWikipediaTitleFromUrl(value?: string) {
+  if (!value?.trim() || !isWikipediaUrl(value)) {
+    return '';
+  }
+
+  try {
+    const parsedUrl = new URL(value.trim());
+
+    return decodeURIComponent(parsedUrl.pathname.replace(/^\/wiki\//i, ''))
+      .replace(/_/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
+function buildMissingWikipediaUrlCheckResult(
+  site: SiteDashboardResult,
+  options: {
+    opportunityId?: string;
+    summary: string;
+    rationale: string;
+    verdictLabel: string;
+  },
+): WikipediaUrlCheckResult {
+  const wikipediaOpportunities = site.opportunities.filter(
+    (opportunity) => opportunity.opportunityType === 'Wikipedia',
+  );
+
+  return {
+    requestedSite: site.requestSite,
+    resolvedSiteUrl: site.resolvedSiteUrl,
+    siteId: site.siteId,
+    opportunityId: options.opportunityId,
+    verdict: 'missing',
+    verdictLabel: options.verdictLabel,
+    summary: options.summary,
+    wikipediaOpportunityCount: wikipediaOpportunities.length,
+    wikipediaSuggestionCount: wikipediaOpportunities.reduce(
+      (count, opportunity) => count + opportunity.suggestions.length,
+      0,
+    ),
+    rationale: options.rationale,
+  };
+}
+
+function buildWikipediaUrlCheckResult(
+  site: SiteDashboardResult,
+  backendWikipediaUrl: string,
+  evaluation: {
+    confidence: 'high' | 'medium' | 'low';
+    evidenceSnippet: string;
+    evaluatorModel: string;
+    evaluatorProvider: string;
+    rationale: string;
+    verdict: WikipediaUrlEvaluationVerdict;
+    wikipediaTitle: string;
+  },
+): WikipediaUrlCheckResult {
+  const wikipediaOpportunities = site.opportunities.filter(
+    (opportunity) => opportunity.opportunityType === 'Wikipedia',
+  );
+
+  return {
+    requestedSite: site.requestSite,
+    resolvedSiteUrl: site.resolvedSiteUrl,
+    siteId: site.siteId,
+    opportunityId: wikipediaOpportunities[0]?.opportunityId,
+    verdict: evaluation.verdict,
+    verdictLabel: evaluation.verdict,
+    summary:
+      evaluation.verdict === 'Correct'
+        ? 'The backend wikipediaUrl appears correct for this site.'
+        : evaluation.verdict === 'Incorrect'
+          ? 'The backend wikipediaUrl appears incorrect for this site.'
+          : 'The backend wikipediaUrl needs review for this site.',
+    backendWikipediaUrl,
+    extractedTitle: evaluation.wikipediaTitle || extractWikipediaTitleFromUrl(backendWikipediaUrl),
+    wikipediaOpportunityCount: wikipediaOpportunities.length,
+    wikipediaSuggestionCount: wikipediaOpportunities.reduce(
+      (count, opportunity) => count + opportunity.suggestions.length,
+      0,
+    ),
+    rationale: evaluation.rationale,
+    evidenceSnippet: evaluation.evidenceSnippet,
+    confidence: evaluation.confidence,
+    evaluatorProvider: evaluation.evaluatorProvider,
+    evaluatorModel: evaluation.evaluatorModel,
+  };
+}
+
+function buildWikipediaCheckFailureResult(
+  site: string,
+  message: string,
+): WikipediaUrlCheckResult {
+  return {
+    requestedSite: site,
+    verdict: 'missing',
+    verdictLabel: 'Check failed',
+    summary: 'The Wikipedia URL check could not be completed for this site.',
+    wikipediaOpportunityCount: 0,
+    wikipediaSuggestionCount: 0,
+    rationale: message,
+  };
+}
+
+function escapeCsvValue(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function downloadWikipediaBatchResultsCsv(results: WikipediaUrlCheckResult[]) {
+  if (results.length === 0) {
+    return;
+  }
+
+  const headers = [
+    'Requested Site',
+    'Resolved Site',
+    'Site ID',
+    'Opportunity ID',
+    'Verdict',
+    'Confidence',
+    'Backend Wikipedia URL',
+    'Wikipedia Title',
+    'Summary',
+    'Rationale',
+    'Evidence Snippet',
+    'Evaluator Provider',
+    'Evaluator Model',
+  ];
+
+  const lines = [
+    headers.map(escapeCsvValue).join(','),
+    ...results.map((result) =>
+      [
+        result.requestedSite,
+        result.resolvedSiteUrl ?? '',
+        result.siteId ?? '',
+        result.opportunityId ?? '',
+        result.verdictLabel,
+        result.confidence ?? '',
+        result.backendWikipediaUrl ?? '',
+        result.extractedTitle ?? '',
+        result.summary,
+        result.rationale,
+        result.evidenceSnippet ?? '',
+        result.evaluatorProvider ?? '',
+        result.evaluatorModel ?? '',
+      ]
+        .map((value) => escapeCsvValue(String(value)))
+        .join(','),
+    ),
+  ];
+
+  const blob = new Blob([lines.join('\n')], {
+    type: 'text/csv;charset=utf-8;',
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = 'wikipedia-url-check-results.csv';
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export function OffSiteDashboard() {
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<WorkspaceMode>('opportunities');
   const [isCoverageExpanded, setIsCoverageExpanded] = useState(true);
   const dashboard = useOffSiteDashboard();
   const [isSitesExpanded, setIsSitesExpanded] = useState(true);
@@ -1612,6 +1885,26 @@ export function OffSiteDashboard() {
   const [isEvaluationExpanded, setIsEvaluationExpanded] = useState(false);
   const [isSovEvaluationExpanded, setIsSovEvaluationExpanded] = useState(false);
   const [isSuggestionsExpanded, setIsSuggestionsExpanded] = useState(true);
+  const [wikipediaCheckSiteInput, setWikipediaCheckSiteInput] = useState('');
+  const [wikipediaBatchInputText, setWikipediaBatchInputText] = useState('');
+  const [wikipediaCheckStatus, setWikipediaCheckStatus] = useState<
+    'idle' | 'loading' | 'success' | 'error'
+  >('idle');
+  const [wikipediaCheckResult, setWikipediaCheckResult] =
+    useState<WikipediaUrlCheckResult | null>(null);
+  const [wikipediaCheckError, setWikipediaCheckError] = useState('');
+  const [wikipediaBatchStatus, setWikipediaBatchStatus] = useState<
+    'idle' | 'loading' | 'success' | 'error'
+  >('idle');
+  const [wikipediaBatchError, setWikipediaBatchError] = useState('');
+  const [wikipediaBatchResults, setWikipediaBatchResults] = useState<
+    WikipediaUrlCheckResult[]
+  >([]);
+  const [wikipediaBatchProgress, setWikipediaBatchProgress] =
+    useState<WikipediaBatchProgress>({
+      completed: 0,
+      total: 0,
+    });
   const visibleOpportunityCount = dashboard.filteredOpportunityRows.length;
   const visibleSuggestionOpportunityCount = dashboard.filteredOpportunityRows.filter(
     (row) => row.suggestions.length > 0,
@@ -1793,10 +2086,29 @@ export function OffSiteDashboard() {
     evaluationSummary.review +
     sovEvaluationSummary.review;
   const isManagedConnection = dashboard.spacecatProxyConfig.configured;
+  const effectiveApiBaseUrl = normalizeApiBaseUrl(
+    isManagedConnection
+      ? dashboard.spacecatProxyConfig.apiBaseUrl
+      : dashboard.config.apiBaseUrl,
+  );
+  const canRunWikipediaCheck =
+    Boolean(effectiveApiBaseUrl.trim()) &&
+    (isManagedConnection || Boolean(dashboard.config.apiKey.trim()));
   const currentModeLabel = dashboard.spacecatProxyConfig.configured
     ? 'Managed relay'
     : 'Manual connection';
   const activeFilterLabel = `${dashboard.selectedTypes.length} oppty selected · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
+  const activeWorkspaceLabel =
+    activeWorkspace === 'opportunities'
+      ? 'Opportunities'
+      : activeWorkspace === 'evaluation'
+        ? 'Evaluation'
+        : 'Wikipedia URL Check';
+  const wikipediaQuickSites =
+    dashboard.selectedSites.length > 0
+      ? dashboard.selectedSites
+      : dashboard.configuredSites;
+  const wikipediaBatchSites = normalizeSiteList(wikipediaBatchInputText);
   const workspaceActionButtons = (className: string) => (
     <div className={className}>
       <button
@@ -1828,6 +2140,146 @@ export function OffSiteDashboard() {
       </button>
     </div>
   );
+  const getWikipediaCheckResultForSite = async (normalizedSite: string) => {
+    const siteResult = await fetchSiteDashboardData({
+      apiBaseUrl: effectiveApiBaseUrl,
+      apiKey: dashboard.config.apiKey,
+      proxyConfig: dashboard.spacecatProxyConfig,
+      siteInput: normalizedSite,
+    });
+    const wikipediaOpportunities = siteResult.opportunities.filter(
+      (opportunity) => opportunity.opportunityType === 'Wikipedia',
+    );
+
+    if (wikipediaOpportunities.length === 0) {
+      return buildMissingWikipediaUrlCheckResult(siteResult, {
+        verdictLabel: 'No Wikipedia opportunity',
+        summary: 'The backend did not return a Wikipedia opportunity for this site.',
+        rationale:
+          'There is no Wikipedia opportunity in the backend response, so Claude could not evaluate a backend wikipediaUrl.',
+      });
+    }
+
+    const wikipediaOpportunityWithUrl = wikipediaOpportunities.find(
+      (opportunity) => opportunity.wikipediaUrl,
+    );
+
+    if (!wikipediaOpportunityWithUrl?.wikipediaUrl) {
+      return buildMissingWikipediaUrlCheckResult(siteResult, {
+        opportunityId: wikipediaOpportunities[0]?.opportunityId,
+        verdictLabel: 'No backend Wikipedia URL',
+        summary: 'A Wikipedia opportunity exists, but the backend did not return a wikipediaUrl.',
+        rationale:
+          'The check only evaluates the backend wikipediaUrl field. That field is missing in this response.',
+      });
+    }
+
+    const evaluation = await evaluateWikipediaUrl({
+      site: normalizedSite,
+      resolvedSiteUrl: siteResult.resolvedSiteUrl,
+      siteId: siteResult.siteId,
+      opportunityId: wikipediaOpportunityWithUrl.opportunityId,
+      wikipediaUrl: wikipediaOpportunityWithUrl.wikipediaUrl,
+    });
+
+    return buildWikipediaUrlCheckResult(
+      siteResult,
+      wikipediaOpportunityWithUrl.wikipediaUrl,
+      evaluation,
+    );
+  };
+  const runWikipediaCheck = async () => {
+    const normalizedSite = normalizeSiteInput(wikipediaCheckSiteInput);
+
+    if (!normalizedSite) {
+      setWikipediaCheckStatus('error');
+      setWikipediaCheckError('Enter a valid site URL or domain to run the check.');
+      setWikipediaCheckResult(null);
+      return;
+    }
+
+    if (!canRunWikipediaCheck) {
+      setWikipediaCheckStatus('error');
+      setWikipediaCheckError(
+        'Configure the backend connection first so the checker can fetch live opportunity data.',
+      );
+      setWikipediaCheckResult(null);
+      return;
+    }
+
+    setWikipediaCheckStatus('loading');
+    setWikipediaCheckError('');
+
+    try {
+      const result = await getWikipediaCheckResultForSite(normalizedSite);
+
+      setWikipediaCheckResult(result);
+      setWikipediaCheckStatus('success');
+    } catch (error) {
+      const message =
+        error instanceof SpacecatApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Wikipedia URL check failed.';
+
+      setWikipediaCheckStatus('error');
+      setWikipediaCheckError(message);
+      setWikipediaCheckResult(null);
+    }
+  };
+  const runWikipediaBatchCheck = async () => {
+    if (wikipediaBatchSites.length === 0) {
+      setWikipediaBatchStatus('error');
+      setWikipediaBatchError('Add one or more site URLs or domains to run the batch check.');
+      setWikipediaBatchResults([]);
+      return;
+    }
+
+    if (!canRunWikipediaCheck) {
+      setWikipediaBatchStatus('error');
+      setWikipediaBatchError(
+        'Configure the backend connection first so the checker can fetch live opportunity data.',
+      );
+      setWikipediaBatchResults([]);
+      return;
+    }
+
+    setWikipediaBatchStatus('loading');
+    setWikipediaBatchError('');
+    setWikipediaBatchResults([]);
+    setWikipediaBatchProgress({
+      completed: 0,
+      total: wikipediaBatchSites.length,
+    });
+
+    const nextResults: WikipediaUrlCheckResult[] = [];
+
+    for (const site of wikipediaBatchSites) {
+      try {
+        const result = await getWikipediaCheckResultForSite(site);
+        nextResults.push(result);
+      } catch (error) {
+        const message =
+          error instanceof SpacecatApiError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : 'Wikipedia URL check failed.';
+
+        nextResults.push(buildWikipediaCheckFailureResult(site, message));
+      }
+
+      setWikipediaBatchResults([...nextResults]);
+      setWikipediaBatchProgress({
+        completed: nextResults.length,
+        total: wikipediaBatchSites.length,
+      });
+    }
+
+    setWikipediaCheckResult(nextResults[0] ?? null);
+    setWikipediaBatchStatus('success');
+  };
 
   return (
     <div className="dashboard-shell">
@@ -1888,480 +2340,1061 @@ export function OffSiteDashboard() {
               <span className="hero-note-label">Filters</span>
               <strong>{activeFilterLabel}</strong>
             </div>
+            <div className="hero-note">
+              <span className="hero-note-label">Active lane</span>
+              <strong>{activeWorkspaceLabel}</strong>
+            </div>
           </div>
         </aside>
       </header>
 
       <main className="dashboard-layout">
-        <section className="dashboard-overview-grid">
-          <section className="panel panel-settings panel-settings-compact panel-tone-warm">
-            <div className="panel-header">
-              <div>
-                <h2>Workspace Setup</h2>
-                <p>
-                  Define the site set for this workspace. Connection details stay out
-                  of the operating surface when the server handles them for you.
-                </p>
-              </div>
+        <section className="workspace-shell">
+          <aside className="panel panel-tone-neutral workspace-sidebar">
+            <div className="workspace-sidebar-copy">
+              <span className="hero-command-label">Sidebar</span>
+              <h2>Review lanes</h2>
+              <p>
+                Separate the raw backend opportunity feed, evaluation workflows, and
+                one-off Wikipedia URL validation.
+              </p>
             </div>
 
-            {isManagedConnection ? (
-              <div className="managed-connection-note">
-                <span className="managed-connection-pill">Managed connection active</span>
-                <p>
-                  Authentication and endpoint routing are handled server-side for this
-                  deployment.
-                </p>
-              </div>
-            ) : null}
-
-            <div
-              className={`settings-grid ${isManagedConnection ? 'settings-grid-managed' : ''}`}
-            >
-              {!isManagedConnection ? (
-                <>
-                  <label className="field">
-                    <span>Endpoint</span>
-                    <input
-                      className="text-input"
-                      type="text"
-                      value={dashboard.config.apiBaseUrl}
-                      onChange={(event) => dashboard.setApiBaseUrl(event.target.value)}
-                      placeholder="https://api.example.com/v1"
-                    />
-                    <small className="field-note">
-                      Requests use this endpoint for site lookup and opportunity data.
-                    </small>
-                  </label>
-
-                  <label className="field">
-                    <span>Access token</span>
-                    <input
-                      className="text-input"
-                      type="password"
-                      value={dashboard.config.apiKey}
-                      onChange={(event) => dashboard.setApiKey(event.target.value)}
-                      placeholder="Paste your access token"
-                    />
-                    <small className="field-note">
-                      Token entry is manual and is not persisted in localStorage.
-                    </small>
-                  </label>
-                </>
-              ) : null}
-
-              <label className="field field-site-urls">
-                <span>Site URLs</span>
-                <textarea
-                  className="textarea-input textarea-input-compact"
-                  value={dashboard.config.siteInputText}
-                  onChange={(event) => dashboard.setSiteInputText(event.target.value)}
-                  placeholder={
-                    'https://example.com\nhttps://www.example.org/products/widget'
-                  }
-                  rows={6}
-                />
-                <small className="field-note">
-                  One URL per line. Full URLs are reduced into lookup candidates
-                  automatically.
-                </small>
-              </label>
-            </div>
-            {isManagedConnection ? workspaceActionButtons('button-row settings-actions') : null}
-          </section>
-
-          <section className="panel panel-filters panel-tone-cool">
-            <div className="panel-header">
-              <div>
-                <h2>View Filters</h2>
-                <p>Select an off-site opportunity to review.</p>
-              </div>
-              <button className="ghost-button" onClick={dashboard.resetFilters} type="button">
-                Reset filters
-              </button>
+            <div className="workspace-nav">
+              <WorkspaceNavButton
+                active={activeWorkspace === 'opportunities'}
+                count={`${visibleOpportunityCount}`}
+                description="Backend opportunities, coverage, site state, sentiment rows, and extracted suggestions."
+                label="Opportunities"
+                onClick={() => setActiveWorkspace('opportunities')}
+              />
+              <WorkspaceNavButton
+                active={activeWorkspace === 'evaluation'}
+                count={`${pendingReviewCount}`}
+                description="Suggestion, sentiment, and SOV evaluation tables with selection and export actions."
+                label="Evaluation"
+                onClick={() => setActiveWorkspace('evaluation')}
+              />
+              <WorkspaceNavButton
+                active={activeWorkspace === 'wikipedia-check'}
+                count={
+                  wikipediaCheckResult ? wikipediaCheckResult.verdictLabel : 'Ad hoc'
+                }
+                description="Enter a domain and check whether the backend’s Wikipedia page looks aligned with it."
+                label="Wikipedia URL Check"
+                onClick={() => setActiveWorkspace('wikipedia-check')}
+              />
             </div>
 
-            <div className="filter-group">
-              <span className="filter-label">Opportunity types</span>
-              <div className="chip-row">
-                {TARGET_OPPORTUNITY_TYPES.map((type) => (
-                  <FilterChip
-                    key={type}
-                    active={dashboard.selectedTypes.includes(type)}
-                    label={type}
-                    count={dashboard.summary.typeCounts[type]}
-                    onClick={() => dashboard.toggleType(type)}
-                  />
-                ))}
+            <div className="workspace-sidebar-metrics">
+              <div className="workspace-sidebar-metric">
+                <span>Visible opportunities</span>
+                <strong>{visibleOpportunityCount}</strong>
+              </div>
+              <div className="workspace-sidebar-metric">
+                <span>Suggestions in view</span>
+                <strong>{visibleSuggestionCount}</strong>
+              </div>
+              <div className="workspace-sidebar-metric">
+                <span>Pending review</span>
+                <strong>{pendingReviewCount}</strong>
               </div>
             </div>
+          </aside>
 
-            <div className="filter-group">
-              <span className="filter-label">Sites</span>
-              <div className="chip-row">
-                {dashboard.configuredSites.map((site) => (
-                  <FilterChip
-                    key={site}
-                    active={dashboard.selectedSites.includes(site)}
-                    label={site}
-                    onClick={() => dashboard.toggleSite(site)}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="filter-group">
-              <span className="filter-label">Opportunity Type Order</span>
-              <div className="chip-row">
-                <FilterChip
-                  active={dashboard.typeSortOrder === 'default'}
-                  label="Default"
-                  onClick={() => dashboard.setTypeSortOrder('default')}
-                />
-                <FilterChip
-                  active={dashboard.typeSortOrder === 'asc'}
-                  label="A-Z"
-                  onClick={() => dashboard.setTypeSortOrder('asc')}
-                />
-                <FilterChip
-                  active={dashboard.typeSortOrder === 'desc'}
-                  label="Z-A"
-                  onClick={() => dashboard.setTypeSortOrder('desc')}
-                />
-              </div>
-            </div>
-          </section>
-        </section>
-
-        <section className="dashboard-secondary-grid">
-          <section className="panel panel-table panel-coverage panel-tone-neutral">
-            <div className="panel-header">
-              <div>
-                <h2>Opportunity coverage</h2>
-                <p>
-                  Per-site existence check for Reddit, YouTube, Cited URLs, and
-                  Wikipedia opportunities.
-                </p>
-              </div>
-
-              <div className="panel-header-actions">
-                <PanelToggleButton
-                  expanded={isCoverageExpanded}
-                  onClick={() => setIsCoverageExpanded((value) => !value)}
-                />
-              </div>
-            </div>
-
-            {isCoverageExpanded && <CoverageTable rows={dashboard.sitePresenceRows} />}
-          </section>
-
-          <section className="panel panel-sites panel-sites-inline panel-tone-neutral">
-            <div className="panel-header">
-              <div>
-                <h2>Sites</h2>
-                <p>Per-site sync state, lookup result, and inline API errors.</p>
-              </div>
-
-              <div className="panel-header-actions">
-                <PanelToggleButton
-                  expanded={isSitesExpanded}
-                  onClick={() => setIsSitesExpanded((value) => !value)}
-                />
-              </div>
-            </div>
-
-            {isSitesExpanded && (
-              <div className="site-grid">
-                {dashboard.siteCards.length === 0 ? (
-                  <div className="empty-panel">
-                    <h3>Add at least one site URL</h3>
-                    <p>The dashboard will create a card for each configured site.</p>
+          <div className="workspace-content">
+            {activeWorkspace === 'opportunities' && (
+              <div className="workspace-mode-stack">
+                <section className="panel panel-tone-data panel-mode-intro">
+                  <div className="panel-header">
+                    <div>
+                      <h2>Opportunity Feed</h2>
+                      <p>
+                        This lane keeps the direct backend output visible: workspace
+                        setup, filters, coverage checks, synced site cards, sentiment
+                        rows, and extracted suggestions.
+                      </p>
+                    </div>
                   </div>
-                ) : (
-                  dashboard.siteCards.map((site) => (
-                    <SiteCard
-                      key={site.requestSite}
-                      site={site}
-                      onRefresh={(requestSite) => void dashboard.refreshSite(requestSite)}
-                    />
-                  ))
-                )}
+                </section>
+
+                <section className="dashboard-overview-grid">
+                  <section className="panel panel-settings panel-settings-compact panel-tone-warm">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Workspace Setup</h2>
+                        <p>
+                          Define the site set for this workspace. Connection details
+                          stay out of the operating surface when the server handles them
+                          for you.
+                        </p>
+                      </div>
+                    </div>
+
+                    {isManagedConnection ? (
+                      <div className="managed-connection-note">
+                        <span className="managed-connection-pill">
+                          Managed connection active
+                        </span>
+                        <p>
+                          Authentication and endpoint routing are handled server-side
+                          for this deployment.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    <div
+                      className={`settings-grid ${
+                        isManagedConnection ? 'settings-grid-managed' : ''
+                      }`}
+                    >
+                      {!isManagedConnection ? (
+                        <>
+                          <label className="field">
+                            <span>Endpoint</span>
+                            <input
+                              className="text-input"
+                              type="text"
+                              value={dashboard.config.apiBaseUrl}
+                              onChange={(event) =>
+                                dashboard.setApiBaseUrl(event.target.value)
+                              }
+                              placeholder="https://api.example.com/v1"
+                            />
+                            <small className="field-note">
+                              Requests use this endpoint for site lookup and
+                              opportunity data.
+                            </small>
+                          </label>
+
+                          <label className="field">
+                            <span>Access token</span>
+                            <input
+                              className="text-input"
+                              type="password"
+                              value={dashboard.config.apiKey}
+                              onChange={(event) => dashboard.setApiKey(event.target.value)}
+                              placeholder="Paste your access token"
+                            />
+                            <small className="field-note">
+                              Token entry is manual and is not persisted in
+                              localStorage.
+                            </small>
+                          </label>
+                        </>
+                      ) : null}
+
+                      <label className="field field-site-urls">
+                        <span>Site URLs</span>
+                        <textarea
+                          className="textarea-input textarea-input-compact"
+                          value={dashboard.config.siteInputText}
+                          onChange={(event) =>
+                            dashboard.setSiteInputText(event.target.value)
+                          }
+                          placeholder={
+                            'https://example.com\nhttps://www.example.org/products/widget'
+                          }
+                          rows={6}
+                        />
+                        <small className="field-note">
+                          One URL per line. Full URLs are reduced into lookup
+                          candidates automatically.
+                        </small>
+                      </label>
+                    </div>
+                    {isManagedConnection
+                      ? workspaceActionButtons('button-row settings-actions')
+                      : null}
+                  </section>
+
+                  <section className="panel panel-filters panel-tone-cool">
+                    <div className="panel-header">
+                      <div>
+                        <h2>View Filters</h2>
+                        <p>Select an off-site opportunity to review.</p>
+                      </div>
+                      <button
+                        className="ghost-button"
+                        onClick={dashboard.resetFilters}
+                        type="button"
+                      >
+                        Reset filters
+                      </button>
+                    </div>
+
+                    <div className="filter-group">
+                      <span className="filter-label">Opportunity types</span>
+                      <div className="chip-row">
+                        {TARGET_OPPORTUNITY_TYPES.map((type) => (
+                          <FilterChip
+                            key={type}
+                            active={dashboard.selectedTypes.includes(type)}
+                            label={type}
+                            count={dashboard.summary.typeCounts[type]}
+                            onClick={() => dashboard.toggleType(type)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="filter-group">
+                      <span className="filter-label">Sites</span>
+                      <div className="chip-row">
+                        {dashboard.configuredSites.map((site) => (
+                          <FilterChip
+                            key={site}
+                            active={dashboard.selectedSites.includes(site)}
+                            label={site}
+                            onClick={() => dashboard.toggleSite(site)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="filter-group">
+                      <span className="filter-label">Opportunity Type Order</span>
+                      <div className="chip-row">
+                        <FilterChip
+                          active={dashboard.typeSortOrder === 'default'}
+                          label="Default"
+                          onClick={() => dashboard.setTypeSortOrder('default')}
+                        />
+                        <FilterChip
+                          active={dashboard.typeSortOrder === 'asc'}
+                          label="A-Z"
+                          onClick={() => dashboard.setTypeSortOrder('asc')}
+                        />
+                        <FilterChip
+                          active={dashboard.typeSortOrder === 'desc'}
+                          label="Z-A"
+                          onClick={() => dashboard.setTypeSortOrder('desc')}
+                        />
+                      </div>
+                    </div>
+                  </section>
+                </section>
+
+                <section className="dashboard-secondary-grid">
+                  <section className="panel panel-table panel-coverage panel-tone-neutral">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Opportunity coverage</h2>
+                        <p>
+                          Per-site existence check for Reddit, YouTube, Cited URLs,
+                          and Wikipedia opportunities.
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        <PanelToggleButton
+                          expanded={isCoverageExpanded}
+                          onClick={() => setIsCoverageExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isCoverageExpanded && <CoverageTable rows={dashboard.sitePresenceRows} />}
+                  </section>
+
+                  <section className="panel panel-sites panel-sites-inline panel-tone-neutral">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Sites</h2>
+                        <p>Per-site sync state, lookup result, and inline API errors.</p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        <PanelToggleButton
+                          expanded={isSitesExpanded}
+                          onClick={() => setIsSitesExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isSitesExpanded && (
+                      <div className="site-grid">
+                        {dashboard.siteCards.length === 0 ? (
+                          <div className="empty-panel">
+                            <h3>Add at least one site URL</h3>
+                            <p>The dashboard will create a card for each configured site.</p>
+                          </div>
+                        ) : (
+                          dashboard.siteCards.map((site) => (
+                            <SiteCard
+                              key={site.requestSite}
+                              site={site}
+                              onRefresh={(requestSite) =>
+                                void dashboard.refreshSite(requestSite)
+                              }
+                            />
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </section>
+                </section>
+
+                <div className="dashboard-data-stack">
+                  <section className="panel panel-table panel-table-wide panel-tone-data">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Sentiment &amp; Share of Voice</h2>
+                        <p>
+                          {visibleSentimentCount} URL entr
+                          {visibleSentimentCount === 1 ? 'y' : 'ies'} from{' '}
+                          {visibleSentimentOpportunityCount} opportunit
+                          {visibleSentimentOpportunityCount === 1 ? 'y' : 'ies'} across{' '}
+                          {visibleSentimentSiteCount} site
+                          {visibleSentimentSiteCount === 1 ? '' : 's'}.
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        {isSentimentExpanded && (
+                          <div className="table-controls">
+                            <label className="inline-field">
+                              <span>Rows per page</span>
+                              <select
+                                className="select-input"
+                                value={dashboard.pageSize}
+                                onChange={(event) =>
+                                  dashboard.setPageSize(
+                                    Number.parseInt(event.target.value, 10),
+                                  )
+                                }
+                              >
+                                {[25, 50, 100].map((size) => (
+                                  <option key={size} value={size}>
+                                    {size}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="pagination-controls">
+                              <button
+                                className="ghost-button"
+                                disabled={dashboard.page <= 1}
+                                onClick={() => dashboard.setPage(dashboard.page - 1)}
+                                type="button"
+                              >
+                                Previous
+                              </button>
+                              <span className="page-indicator">
+                                Page {dashboard.page} / {dashboard.totalPages}
+                              </span>
+                              <button
+                                className="ghost-button"
+                                disabled={dashboard.page >= dashboard.totalPages}
+                                onClick={() => dashboard.setPage(dashboard.page + 1)}
+                                type="button"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <PanelToggleButton
+                          expanded={isSentimentExpanded}
+                          onClick={() => setIsSentimentExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isSentimentExpanded && (
+                      <SentimentTable rows={dashboard.pagedOpportunityRows} />
+                    )}
+                  </section>
+
+                  <section className="panel panel-table panel-table-wide panel-tone-data">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Suggestions</h2>
+                        <p>
+                          {visibleSuggestionCount} suggestion
+                          {visibleSuggestionCount === 1 ? '' : 's'} across{' '}
+                          {visibleSuggestionOpportunityCount} opportunit
+                          {visibleSuggestionOpportunityCount === 1 ? 'y' : 'ies'} in the
+                          current filtered view.
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        <PanelToggleButton
+                          expanded={isSuggestionsExpanded}
+                          onClick={() => setIsSuggestionsExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isSuggestionsExpanded && (
+                      <SuggestionsTable rows={dashboard.pagedOpportunityRows} />
+                    )}
+                  </section>
+                </div>
               </div>
             )}
-          </section>
-        </section>
 
-        <div className="dashboard-data-stack">
-        <section className="panel panel-table panel-table-wide panel-tone-data">
-          <div className="panel-header">
-            <div>
-              <h2>Sentiment &amp; Share of Voice</h2>
-              <p>
-                {visibleSentimentCount} URL entr
-                {visibleSentimentCount === 1 ? 'y' : 'ies'} from{' '}
-                {visibleSentimentOpportunityCount} opportunit
-                {visibleSentimentOpportunityCount === 1 ? 'y' : 'ies'} across{' '}
-                {visibleSentimentSiteCount} site
-                {visibleSentimentSiteCount === 1 ? '' : 's'}.
-              </p>
-            </div>
-
-            <div className="panel-header-actions">
-              {isSentimentExpanded && (
-                <div className="table-controls">
-                  <label className="inline-field">
-                    <span>Rows per page</span>
-                    <select
-                      className="select-input"
-                      value={dashboard.pageSize}
-                      onChange={(event) =>
-                        dashboard.setPageSize(Number.parseInt(event.target.value, 10))
-                      }
-                    >
-                      {[25, 50, 100].map((size) => (
-                        <option key={size} value={size}>
-                          {size}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="pagination-controls">
-                    <button
-                      className="ghost-button"
-                      disabled={dashboard.page <= 1}
-                      onClick={() => dashboard.setPage(dashboard.page - 1)}
-                      type="button"
-                    >
-                      Previous
-                    </button>
-                    <span className="page-indicator">
-                      Page {dashboard.page} / {dashboard.totalPages}
-                    </span>
-                    <button
-                      className="ghost-button"
-                      disabled={dashboard.page >= dashboard.totalPages}
-                      onClick={() => dashboard.setPage(dashboard.page + 1)}
-                      type="button"
-                    >
-                      Next
-                    </button>
+            {activeWorkspace === 'evaluation' && (
+              <div className="workspace-mode-stack">
+                <section className="panel panel-tone-evaluate panel-mode-intro">
+                  <div className="panel-header">
+                    <div>
+                      <h2>Evaluation Workspace</h2>
+                      <p>
+                        Run suggestion, sentiment, and share-of-voice checks without
+                        mixing them into the raw opportunity feed.
+                      </p>
+                    </div>
                   </div>
+
+                  <div className="workspace-summary-grid">
+                    <StatsCard
+                      label="Suggestion evals"
+                      value={String(suggestionEvaluationSummary.evaluated)}
+                      detail={`${suggestionEvaluationSummary.review + suggestionEvaluationSummary.incorrect} require review`}
+                    />
+                    <StatsCard
+                      label="Sentiment evals"
+                      value={String(evaluationSummary.evaluated)}
+                      detail={`${evaluationSummary.review} require review`}
+                    />
+                    <StatsCard
+                      label="SOV evals"
+                      value={String(sovEvaluationSummary.evaluated)}
+                      detail={`${sovEvaluationSummary.review} require review`}
+                    />
+                  </div>
+                </section>
+
+                <div className="dashboard-data-stack">
+                  <section className="panel panel-table panel-table-wide panel-tone-evaluate">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Suggestion Evaluation</h2>
+                        <p>
+                          Validate {visibleSuggestionEvaluationCount} suggestion
+                          {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the
+                          current page against off-site evidence.
+                        </p>
+                        <p className="panel-summary">
+                          {suggestionEvaluationSummary.evaluated === 0
+                            ? 'No suggestion evaluation results yet on this page.'
+                            : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        {isSuggestionEvaluationExpanded && (
+                          <div className="table-controls">
+                            <button
+                              className="primary-button"
+                              disabled={
+                                dashboard.selectedVisibleSuggestionRowsCount === 0 ||
+                                dashboard.isEvaluatingSuggestions
+                              }
+                              onClick={() =>
+                                void dashboard.evaluateSuggestionRows(
+                                  dashboard.selectedVisibleSuggestionRowKeys,
+                                )
+                              }
+                              type="button"
+                            >
+                              {dashboard.isEvaluatingSuggestions
+                                ? 'Evaluating...'
+                                : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!dashboard.hasExportRows}
+                              onClick={dashboard.exportWikipediaSuggestionEvaluation}
+                              type="button"
+                            >
+                              Export Wikipedia Excel
+                            </button>
+                          </div>
+                        )}
+                        <PanelToggleButton
+                          expanded={isSuggestionEvaluationExpanded}
+                          onClick={() =>
+                            setIsSuggestionEvaluationExpanded((value) => !value)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {isSuggestionEvaluationExpanded && (
+                      <SuggestionEvaluationTable
+                        rows={dashboard.pagedOpportunityRows}
+                        selectedRowKeys={dashboard.selectedSuggestionRowKeys}
+                        onToggleRowSelection={dashboard.toggleSuggestionRowSelection}
+                        onSelectRows={dashboard.setSuggestionRowSelections}
+                        onEvaluateRow={(rowKey) =>
+                          void dashboard.evaluateSuggestionRows([rowKey])
+                        }
+                        isEvaluating={dashboard.isEvaluatingSuggestions}
+                      />
+                    )}
+                  </section>
+
+                  <section className="panel panel-table panel-table-wide panel-tone-evaluate">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Sentiment Evaluation</h2>
+                        <p>
+                          Independently re-check extracted sentiment for{' '}
+                          {visibleEvaluationCount} URL entr
+                          {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current
+                          page.
+                        </p>
+                        <p className="panel-summary">
+                          {evaluationSummary.evaluated === 0
+                            ? 'No evaluation results yet on this page.'
+                            : `Confirmed: ${evaluationSummary.confirmed} · Needs review: ${evaluationSummary.review} · Not evaluated: ${evaluationSummary.notEvaluated}`}
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        {isEvaluationExpanded && (
+                          <div className="table-controls">
+                            <button
+                              className="primary-button"
+                              disabled={
+                                visibleSelectedEvaluationRowsCount === 0 ||
+                                dashboard.isEvaluatingSentiment
+                              }
+                              onClick={() =>
+                                void dashboard.evaluateSentimentRows(
+                                  visibleSelectedEvaluationRowKeys,
+                                )
+                              }
+                              type="button"
+                            >
+                              {dashboard.isEvaluatingSentiment
+                                ? 'Evaluating...'
+                                : `Evaluate Selected Rows (${visibleSelectedEvaluationRowsCount})`}
+                            </button>
+                          </div>
+                        )}
+                        <PanelToggleButton
+                          expanded={isEvaluationExpanded}
+                          onClick={() => setIsEvaluationExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isEvaluationExpanded && (
+                      <EvaluationTable
+                        rows={evaluationOpportunityRows}
+                        selectedRowKeys={dashboard.selectedSentimentRowKeys}
+                        onToggleRowSelection={dashboard.toggleSentimentRowSelection}
+                        onSelectRows={dashboard.setSentimentRowSelections}
+                        onEvaluateRow={(rowKey) =>
+                          void dashboard.evaluateSentimentRows([rowKey])
+                        }
+                        isEvaluating={dashboard.isEvaluatingSentiment}
+                      />
+                    )}
+                  </section>
+
+                  <section className="panel panel-table panel-table-wide panel-tone-evaluate">
+                    <div className="panel-header">
+                      <div>
+                        <h2>SOV Evaluation</h2>
+                        <p>
+                          Re-check extracted share of voice for {visibleEvaluationCount}{' '}
+                          URL entr
+                          {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current
+                          page.
+                        </p>
+                        <p className="panel-summary">
+                          {sovEvaluationSummary.evaluated === 0
+                            ? 'No SOV evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
+                            : `Confirmed: ${sovEvaluationSummary.confirmed} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        {isSovEvaluationExpanded && (
+                          <div className="table-controls">
+                            <button
+                              className="primary-button"
+                              disabled={
+                                visibleSelectedSovEvaluationRowsCount === 0 ||
+                                dashboard.isEvaluatingSentiment
+                              }
+                              onClick={() =>
+                                void dashboard.evaluateSentimentRows(
+                                  visibleSelectedSovEvaluationRowKeys,
+                                )
+                              }
+                              type="button"
+                            >
+                              {dashboard.isEvaluatingSentiment
+                                ? 'Evaluating...'
+                                : `Evaluate Selected Rows (${visibleSelectedSovEvaluationRowsCount})`}
+                            </button>
+                          </div>
+                        )}
+                        <PanelToggleButton
+                          expanded={isSovEvaluationExpanded}
+                          onClick={() => setIsSovEvaluationExpanded((value) => !value)}
+                        />
+                      </div>
+                    </div>
+
+                    {isSovEvaluationExpanded && (
+                      <SovEvaluationTable
+                        rows={dashboard.pagedOpportunityRows}
+                        selectedRowKeys={dashboard.selectedSentimentRowKeys}
+                        onToggleRowSelection={dashboard.toggleSentimentRowSelection}
+                        onSelectRows={dashboard.setSentimentRowSelections}
+                        onEvaluateRow={(rowKey) =>
+                          void dashboard.evaluateSentimentRows([rowKey])
+                        }
+                        isEvaluating={dashboard.isEvaluatingSentiment}
+                      />
+                    )}
+                  </section>
                 </div>
-              )}
-              <PanelToggleButton
-                expanded={isSentimentExpanded}
-                onClick={() => setIsSentimentExpanded((value) => !value)}
-              />
-            </div>
-          </div>
+              </div>
+            )}
 
-          {isSentimentExpanded && (
-            <SentimentTable rows={dashboard.pagedOpportunityRows} />
-          )}
-        </section>
+            {activeWorkspace === 'wikipedia-check' && (
+              <div className="workspace-mode-stack">
+                <section className="panel panel-tone-warm panel-mode-intro">
+                  <div className="panel-header">
+                    <div>
+                      <h2>Wikipedia URL Check</h2>
+                      <p>
+                        Enter a domain to fetch its live backend opportunity payload and
+                        send the backend `wikipediaUrl` to Claude on Bedrock to judge
+                        whether it matches the site.
+                      </p>
+                    </div>
+                  </div>
+                </section>
 
-        <section className="panel panel-table panel-table-wide panel-tone-data">
-          <div className="panel-header">
-            <div>
-              <h2>Suggestions</h2>
-              <p>
-                {visibleSuggestionCount} suggestion
-                {visibleSuggestionCount === 1 ? '' : 's'} across{' '}
-                {visibleSuggestionOpportunityCount} opportunit
-                {visibleSuggestionOpportunityCount === 1 ? 'y' : 'ies'} in the
-                current filtered view.
-              </p>
-            </div>
+                <div className="wikipedia-check-layout">
+                  <section className="panel panel-tone-neutral">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Check Input</h2>
+                        <p>
+                          This check compares the backend Wikipedia title against the
+                          site domain. It does not validate article quality or content.
+                        </p>
+                      </div>
+                    </div>
 
-            <div className="panel-header-actions">
-              <PanelToggleButton
-                expanded={isSuggestionsExpanded}
-                onClick={() => setIsSuggestionsExpanded((value) => !value)}
-              />
-            </div>
-          </div>
+                    <form
+                      className="wikipedia-check-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void runWikipediaCheck();
+                      }}
+                    >
+                      <label className="field">
+                        <span>Site URL or domain</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          value={wikipediaCheckSiteInput}
+                          onChange={(event) =>
+                            setWikipediaCheckSiteInput(event.target.value)
+                          }
+                          placeholder="https://www.landrover.com or landrover.com"
+                        />
+                        <small className="field-note">
+                          The checker resolves the site through the same backend used by
+                          the dashboard, then evaluates only the returned
+                          `wikipediaUrl` field with Claude on Bedrock.
+                        </small>
+                      </label>
 
-          {isSuggestionsExpanded && <SuggestionsTable rows={dashboard.pagedOpportunityRows} />}
-        </section>
+                      <div className="button-row">
+                        <button
+                          className="primary-button"
+                          disabled={
+                            wikipediaCheckStatus === 'loading' ||
+                            !normalizeSiteInput(wikipediaCheckSiteInput) ||
+                            !canRunWikipediaCheck
+                          }
+                          type="submit"
+                        >
+                          {wikipediaCheckStatus === 'loading'
+                            ? 'Checking...'
+                            : 'Check Wikipedia URL'}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          onClick={() => {
+                            setWikipediaCheckSiteInput('');
+                            setWikipediaCheckStatus('idle');
+                            setWikipediaCheckError('');
+                            setWikipediaCheckResult(null);
+                          }}
+                          type="button"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </form>
 
-        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
-          <div className="panel-header">
-            <div>
-              <h2>Suggestion Evaluation</h2>
-              <p>
-                Validate {visibleSuggestionEvaluationCount} suggestion
-                {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the current
-                page against off-site evidence.
-              </p>
-              <p className="panel-summary">
-                {suggestionEvaluationSummary.evaluated === 0
-                  ? 'No suggestion evaluation results yet on this page.'
-                  : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
-              </p>
-            </div>
+                    <form
+                      className="wikipedia-check-form wikipedia-batch-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void runWikipediaBatchCheck();
+                      }}
+                    >
+                      <label className="field">
+                        <span>Batch site URLs or domains</span>
+                        <textarea
+                          className="textarea-input textarea-input-compact wikipedia-batch-input"
+                          value={wikipediaBatchInputText}
+                          onChange={(event) =>
+                            setWikipediaBatchInputText(event.target.value)
+                          }
+                          placeholder={
+                            'landroverusa.com\njaguarusa.com\nvolvocars.com'
+                          }
+                          rows={8}
+                        />
+                        <small className="field-note">
+                          One site per line. Paste 100 or more domains here to run a
+                          Bedrock-backed Wikipedia URL review pass and export the results.
+                        </small>
+                      </label>
 
-            <div className="panel-header-actions">
-              {isSuggestionEvaluationExpanded && (
-                <div className="table-controls">
-                  <button
-                    className="primary-button"
-                    disabled={
-                      dashboard.selectedVisibleSuggestionRowsCount === 0 ||
-                      dashboard.isEvaluatingSuggestions
-                    }
-                    onClick={() =>
-                      void dashboard.evaluateSuggestionRows(
-                        dashboard.selectedVisibleSuggestionRowKeys,
-                      )
-                    }
-                    type="button"
-                  >
-                    {dashboard.isEvaluatingSuggestions
-                      ? 'Evaluating...'
-                      : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    disabled={!dashboard.hasExportRows}
-                    onClick={dashboard.exportWikipediaSuggestionEvaluation}
-                    type="button"
-                  >
-                    Export Wikipedia Excel
-                  </button>
+                      <div className="button-row">
+                        <button
+                          className="primary-button"
+                          disabled={
+                            wikipediaBatchStatus === 'loading' ||
+                            wikipediaBatchSites.length === 0 ||
+                            !canRunWikipediaCheck
+                          }
+                          type="submit"
+                        >
+                          {wikipediaBatchStatus === 'loading'
+                            ? `Checking ${wikipediaBatchProgress.completed}/${wikipediaBatchProgress.total}...`
+                            : `Run Batch Check (${wikipediaBatchSites.length})`}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={wikipediaBatchResults.length === 0}
+                          onClick={() =>
+                            downloadWikipediaBatchResultsCsv(wikipediaBatchResults)
+                          }
+                          type="button"
+                        >
+                          Export Batch CSV
+                        </button>
+                        <button
+                          className="ghost-button"
+                          onClick={() => {
+                            setWikipediaBatchInputText('');
+                            setWikipediaBatchStatus('idle');
+                            setWikipediaBatchError('');
+                            setWikipediaBatchResults([]);
+                            setWikipediaBatchProgress({
+                              completed: 0,
+                              total: 0,
+                            });
+                          }}
+                          type="button"
+                        >
+                          Clear batch
+                        </button>
+                      </div>
+                    </form>
+
+                    {wikipediaQuickSites.length > 0 ? (
+                      <div className="filter-group">
+                        <span className="filter-label">Quick fill from current workspace</span>
+                        <div className="chip-row">
+                          {wikipediaQuickSites.map((site) => (
+                            <FilterChip
+                              key={site}
+                              active={normalizeSiteInput(wikipediaCheckSiteInput) === site}
+                              label={site}
+                              onClick={() => setWikipediaCheckSiteInput(site)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {wikipediaQuickSites.length > 0 ? (
+                      <div className="button-row">
+                        <button
+                          className="ghost-button"
+                          onClick={() =>
+                            setWikipediaBatchInputText(wikipediaQuickSites.join('\n'))
+                          }
+                          type="button"
+                        >
+                          Use current workspace sites ({wikipediaQuickSites.length})
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {!canRunWikipediaCheck ? (
+                      <div className="callout">
+                        <strong>Connection required</strong>
+                        <p>
+                          Configure the backend connection in the Opportunities lane
+                          before running an ad hoc Wikipedia URL check.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {wikipediaCheckStatus === 'error' && wikipediaCheckError ? (
+                      <div className="callout wikipedia-check-callout-error">
+                        <strong>Check failed</strong>
+                        <p>{wikipediaCheckError}</p>
+                      </div>
+                    ) : null}
+
+                    {wikipediaBatchStatus === 'error' && wikipediaBatchError ? (
+                      <div className="callout wikipedia-check-callout-error">
+                        <strong>Batch check failed</strong>
+                        <p>{wikipediaBatchError}</p>
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <section className="panel panel-tone-data">
+                      <div className="panel-header">
+                      <div>
+                        <h2>Check Result</h2>
+                        <p>
+                          Result details for the latest selected site and any batch run
+                          using the single backend `wikipediaUrl` value Claude evaluated.
+                        </p>
+                      </div>
+                    </div>
+
+                    {wikipediaCheckResult ? (
+                      <div className="wikipedia-check-result-stack">
+                        {(() => {
+                          const correctCount = wikipediaBatchResults.filter(
+                            (result) => result.verdict === 'Correct',
+                          ).length;
+                          const reviewCount = wikipediaBatchResults.filter(
+                            (result) => result.verdict === 'Needs Review',
+                          ).length;
+                          const incorrectCount = wikipediaBatchResults.filter(
+                            (result) => result.verdict === 'Incorrect',
+                          ).length;
+                          const unavailableCount = wikipediaBatchResults.filter(
+                            (result) => !isClaudeWikipediaVerdict(result.verdict),
+                          ).length;
+
+                          return wikipediaBatchResults.length > 0 ? (
+                            <div className="callout">
+                              <strong>Batch summary</strong>
+                              <p>
+                                {wikipediaBatchResults.length} sites checked. Correct:{' '}
+                                {correctCount} · Needs review: {reviewCount} · Incorrect:{' '}
+                                {incorrectCount} · Missing/failed: {unavailableCount}
+                              </p>
+                            </div>
+                          ) : null;
+                        })()}
+
+                        <div className="wikipedia-check-status-row">
+                          <span
+                            className={`status-pill status-pill-${getWikipediaStatusTone(
+                              wikipediaCheckResult.verdict,
+                            )}`}
+                          >
+                            {wikipediaCheckResult.verdictLabel}
+                          </span>
+                          {wikipediaCheckResult.confidence ? (
+                            <span className="wikipedia-check-score">
+                              Confidence {wikipediaCheckResult.confidence}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <p className="wikipedia-check-summary">
+                          {wikipediaCheckResult.summary}
+                        </p>
+
+                        <div className="wikipedia-check-result-grid">
+                          <article className="wikipedia-check-card">
+                            <h3>Backend match</h3>
+                            <dl className="wikipedia-check-definition-list">
+                              <div>
+                                <dt>Requested site</dt>
+                                <dd>{wikipediaCheckResult.requestedSite}</dd>
+                              </div>
+                              <div>
+                                <dt>Resolved site</dt>
+                                <dd>
+                                  {wikipediaCheckResult.resolvedSiteUrl ??
+                                    'No resolved site returned'}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Site ID</dt>
+                                <dd>{wikipediaCheckResult.siteId ?? 'No site ID returned'}</dd>
+                              </div>
+                              <div>
+                                <dt>Opportunity ID</dt>
+                                <dd>
+                                  {wikipediaCheckResult.opportunityId ??
+                                    'No Wikipedia opportunity ID'}
+                                </dd>
+                              </div>
+                            </dl>
+                          </article>
+
+                          <article className="wikipedia-check-card">
+                            <h3>Wikipedia URL</h3>
+                            <dl className="wikipedia-check-definition-list">
+                              <div>
+                                <dt>Primary backend URL</dt>
+                                <dd>
+                                  {wikipediaCheckResult.backendWikipediaUrl ? (
+                                    <a
+                                      className="metric-link"
+                                      href={wikipediaCheckResult.backendWikipediaUrl}
+                                      rel="noreferrer"
+                                      target="_blank"
+                                    >
+                                      {wikipediaCheckResult.backendWikipediaUrl}
+                                    </a>
+                                  ) : (
+                                    'No Wikipedia URL found'
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Extracted title</dt>
+                                <dd>
+                                  {wikipediaCheckResult.extractedTitle ||
+                                    'Could not derive a title from the backend URL'}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Wikipedia opportunities</dt>
+                                <dd>{wikipediaCheckResult.wikipediaOpportunityCount}</dd>
+                              </div>
+                              <div>
+                                <dt>Wikipedia suggestions</dt>
+                                <dd>{wikipediaCheckResult.wikipediaSuggestionCount}</dd>
+                              </div>
+                            </dl>
+                          </article>
+
+                          <article className="wikipedia-check-card">
+                            <h3>Why this verdict</h3>
+                            <p className="wikipedia-check-summary">
+                              {wikipediaCheckResult.rationale}
+                            </p>
+                            {wikipediaCheckResult.evidenceSnippet ? (
+                              <>
+                                <h4>Evidence</h4>
+                                <p className="wikipedia-check-summary">
+                                  {wikipediaCheckResult.evidenceSnippet}
+                                </p>
+                              </>
+                            ) : null}
+                          </article>
+                        </div>
+
+                        {wikipediaBatchResults.length > 0 ? (
+                          <article className="wikipedia-check-card wikipedia-batch-results-card">
+                            <div className="panel-header">
+                              <div>
+                                <h3>Batch Results</h3>
+                                <p className="wikipedia-check-summary">
+                                  Review the table to see Claude verdicts versus sites where
+                                  the backend did not expose a usable `wikipediaUrl`.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="table-wrapper">
+                              <table className="dashboard-table wikipedia-batch-table">
+                                <thead>
+                                  <tr>
+                                    <th>Site</th>
+                                    <th>Verdict</th>
+                                    <th>Confidence</th>
+                                    <th>Wikipedia URL</th>
+                                    <th>Title</th>
+                                    <th>Rationale</th>
+                                    <th>Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {wikipediaBatchResults.map((result) => (
+                                    <tr key={result.requestedSite}>
+                                      <td>{result.requestedSite}</td>
+                                      <td>
+                                        <span
+                                          className={`status-pill status-pill-${getWikipediaStatusTone(
+                                            result.verdict,
+                                          )}`}
+                                        >
+                                          {result.verdictLabel}
+                                        </span>
+                                      </td>
+                                      <td>{result.confidence ?? ' - '}</td>
+                                      <td>
+                                        {result.backendWikipediaUrl ? (
+                                          <a
+                                            className="metric-link"
+                                            href={result.backendWikipediaUrl}
+                                            rel="noreferrer"
+                                            target="_blank"
+                                          >
+                                            {result.backendWikipediaUrl}
+                                          </a>
+                                        ) : (
+                                          ' - '
+                                        )}
+                                      </td>
+                                      <td>{result.extractedTitle ?? ' - '}</td>
+                                      <td>
+                                        <span className="metric-copy">{result.rationale}</span>
+                                      </td>
+                                      <td>
+                                        <button
+                                          className="ghost-button"
+                                          onClick={() => setWikipediaCheckResult(result)}
+                                          type="button"
+                                        >
+                                          View
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </article>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="empty-panel">
+                        <h3>No check result yet</h3>
+                        <p>
+                          Submit one domain or run a batch to fetch backend data and
+                          inspect the returned `wikipediaUrl` verdicts.
+                        </p>
+                      </div>
+                    )}
+                  </section>
                 </div>
-              )}
-              <PanelToggleButton
-                expanded={isSuggestionEvaluationExpanded}
-                onClick={() => setIsSuggestionEvaluationExpanded((value) => !value)}
-              />
-            </div>
+              </div>
+            )}
           </div>
-
-          {isSuggestionEvaluationExpanded && (
-            <SuggestionEvaluationTable
-              rows={dashboard.pagedOpportunityRows}
-              selectedRowKeys={dashboard.selectedSuggestionRowKeys}
-              onToggleRowSelection={dashboard.toggleSuggestionRowSelection}
-              onSelectRows={dashboard.setSuggestionRowSelections}
-              onEvaluateRow={(rowKey) => void dashboard.evaluateSuggestionRows([rowKey])}
-              isEvaluating={dashboard.isEvaluatingSuggestions}
-            />
-          )}
         </section>
-
-        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
-          <div className="panel-header">
-            <div>
-              <h2>Sentiment Evaluation</h2>
-              <p>
-                Independently re-check extracted sentiment for{' '}
-                {visibleEvaluationCount} URL entr
-                {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
-              </p>
-              <p className="panel-summary">
-                {evaluationSummary.evaluated === 0
-                  ? 'No evaluation results yet on this page.'
-                  : `Confirmed: ${evaluationSummary.confirmed} · Needs review: ${evaluationSummary.review} · Not evaluated: ${evaluationSummary.notEvaluated}`}
-              </p>
-            </div>
-
-            <div className="panel-header-actions">
-              {isEvaluationExpanded && (
-                <div className="table-controls">
-                  <button
-                    className="primary-button"
-                    disabled={
-                      visibleSelectedEvaluationRowsCount === 0 ||
-                      dashboard.isEvaluatingSentiment
-                    }
-                    onClick={() =>
-                      void dashboard.evaluateSentimentRows(
-                        visibleSelectedEvaluationRowKeys,
-                      )
-                    }
-                    type="button"
-                  >
-                    {dashboard.isEvaluatingSentiment
-                      ? 'Evaluating...'
-                      : `Evaluate Selected Rows (${visibleSelectedEvaluationRowsCount})`}
-                  </button>
-                </div>
-              )}
-              <PanelToggleButton
-                expanded={isEvaluationExpanded}
-                onClick={() => setIsEvaluationExpanded((value) => !value)}
-              />
-            </div>
-          </div>
-
-          {isEvaluationExpanded && (
-            <EvaluationTable
-              rows={evaluationOpportunityRows}
-              selectedRowKeys={dashboard.selectedSentimentRowKeys}
-              onToggleRowSelection={dashboard.toggleSentimentRowSelection}
-              onSelectRows={dashboard.setSentimentRowSelections}
-              onEvaluateRow={(rowKey) => void dashboard.evaluateSentimentRows([rowKey])}
-              isEvaluating={dashboard.isEvaluatingSentiment}
-            />
-          )}
-        </section>
-
-        <section className="panel panel-table panel-table-wide panel-tone-evaluate">
-          <div className="panel-header">
-            <div>
-              <h2>SOV Evaluation</h2>
-              <p>
-                Re-check extracted share of voice for {visibleEvaluationCount} URL entr
-                {visibleEvaluationCount === 1 ? 'y' : 'ies'} on the current page.
-              </p>
-              <p className="panel-summary">
-                {sovEvaluationSummary.evaluated === 0
-                  ? 'No SOV evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
-                  : `Confirmed: ${sovEvaluationSummary.confirmed} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
-              </p>
-            </div>
-
-            <div className="panel-header-actions">
-              {isSovEvaluationExpanded && (
-                <div className="table-controls">
-                  <button
-                    className="primary-button"
-                    disabled={
-                      visibleSelectedSovEvaluationRowsCount === 0 ||
-                      dashboard.isEvaluatingSentiment
-                    }
-                    onClick={() =>
-                      void dashboard.evaluateSentimentRows(
-                        visibleSelectedSovEvaluationRowKeys,
-                      )
-                    }
-                    type="button"
-                  >
-                    {dashboard.isEvaluatingSentiment
-                      ? 'Evaluating...'
-                      : `Evaluate Selected Rows (${visibleSelectedSovEvaluationRowsCount})`}
-                  </button>
-                </div>
-              )}
-              <PanelToggleButton
-                expanded={isSovEvaluationExpanded}
-                onClick={() => setIsSovEvaluationExpanded((value) => !value)}
-              />
-            </div>
-          </div>
-
-          {isSovEvaluationExpanded && (
-            <SovEvaluationTable
-              rows={dashboard.pagedOpportunityRows}
-              selectedRowKeys={dashboard.selectedSentimentRowKeys}
-              onToggleRowSelection={dashboard.toggleSentimentRowSelection}
-              onSelectRows={dashboard.setSentimentRowSelections}
-              onEvaluateRow={(rowKey) => void dashboard.evaluateSentimentRows([rowKey])}
-              isEvaluating={dashboard.isEvaluatingSentiment}
-            />
-          )}
-        </section>
-        </div>
       </main>
     </div>
   );

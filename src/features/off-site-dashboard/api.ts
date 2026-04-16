@@ -14,6 +14,7 @@ import {
   SPACECAT_PROXY_API_PATH,
   SPACECAT_PROXY_CONFIG_API_PATH,
   SUGGESTION_EVALUATOR_API_PATH,
+  WIKIPEDIA_URL_EVALUATOR_API_PATH,
 } from './constants';
 import type {
   FetchSiteParams,
@@ -25,6 +26,8 @@ import type {
   SuggestionRecord,
   SuggestionEvaluationRequest,
   SuggestionEvaluationResult,
+  WikipediaUrlEvaluationRequest,
+  WikipediaUrlEvaluationResult,
 } from './types';
 
 const API_HEADERS = {
@@ -424,7 +427,7 @@ async function fetchSuggestionsForOpportunity(
 ) {
   const shouldFetchSuggestionEndpoint =
     opportunity.opportunityType === 'Wikipedia' ||
-    (opportunity.suggestions.length === 0 && opportunity.sentimentItems.length === 0);
+    opportunity.suggestions.length === 0;
 
   if (!shouldFetchSuggestionEndpoint) {
     return opportunity;
@@ -561,6 +564,15 @@ export async function evaluateSuggestionRow(
 ): Promise<SuggestionEvaluationResult> {
   return requestLocalJson<SuggestionEvaluationResult>(
     SUGGESTION_EVALUATOR_API_PATH,
+    payload,
+  );
+}
+
+export async function evaluateWikipediaUrl(
+  payload: WikipediaUrlEvaluationRequest,
+): Promise<WikipediaUrlEvaluationResult> {
+  return requestLocalJson<WikipediaUrlEvaluationResult>(
+    WIKIPEDIA_URL_EVALUATOR_API_PATH,
     payload,
   );
 }

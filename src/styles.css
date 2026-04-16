@@ -312,6 +312,140 @@ a {
   gap: 26px;
 }
 
+.workspace-shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.workspace-sidebar {
+  position: sticky;
+  top: 24px;
+  align-content: start;
+}
+
+.workspace-sidebar-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-sidebar-copy h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  letter-spacing: -0.02em;
+}
+
+.workspace-sidebar-copy p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+.workspace-nav,
+.workspace-content,
+.workspace-mode-stack {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+.workspace-nav {
+  gap: 10px;
+}
+
+.workspace-nav-button {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.workspace-nav-button:hover {
+  transform: translateY(-1px);
+}
+
+.workspace-nav-button-active {
+  border-color: rgba(15, 118, 110, 0.2);
+  background: linear-gradient(180deg, rgba(13, 122, 115, 0.12), rgba(255, 255, 255, 0.8));
+  box-shadow: 0 14px 30px rgba(13, 122, 115, 0.08);
+}
+
+.workspace-nav-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-nav-label {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.workspace-nav-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(17, 27, 36, 0.06);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workspace-nav-description {
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.workspace-sidebar-metrics {
+  display: grid;
+  gap: 12px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(17, 27, 36, 0.08);
+}
+
+.workspace-sidebar-metric {
+  display: grid;
+  gap: 4px;
+}
+
+.workspace-sidebar-metric span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.workspace-sidebar-metric strong {
+  color: var(--ink-strong);
+  font-size: 1.2rem;
+  letter-spacing: -0.03em;
+}
+
+.panel-mode-intro {
+  gap: 16px;
+}
+
+.workspace-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .dashboard-overview-grid {
   display: grid;
   grid-template-columns: minmax(340px, 1.18fr) minmax(280px, 0.82fr);
@@ -624,6 +758,125 @@ a {
 .site-grid {
   display: grid;
   gap: 14px;
+}
+
+.wikipedia-check-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.88fr) minmax(0, 1.12fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.wikipedia-check-form,
+.wikipedia-check-result-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.wikipedia-batch-form {
+  padding-top: 8px;
+  border-top: 1px solid rgba(31, 41, 55, 0.08);
+}
+
+.wikipedia-batch-input {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    Liberation Mono,
+    Courier New,
+    monospace;
+  line-height: 1.55;
+}
+
+.wikipedia-check-callout-error {
+  border-color: rgba(180, 35, 24, 0.14);
+  background: rgba(180, 35, 24, 0.06);
+}
+
+.wikipedia-check-status-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.wikipedia-check-score {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.wikipedia-check-summary {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.wikipedia-check-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.wikipedia-check-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.wikipedia-check-card h3,
+.wikipedia-check-card h4 {
+  margin: 0;
+}
+
+.wikipedia-check-card h3 {
+  font-size: 0.96rem;
+}
+
+.wikipedia-check-card h4 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.wikipedia-check-definition-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.wikipedia-check-definition-list div {
+  display: grid;
+  gap: 4px;
+}
+
+.wikipedia-check-definition-list dt {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wikipedia-check-definition-list dd {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.wikipedia-batch-results-card {
+  gap: 18px;
+}
+
+.wikipedia-batch-table td {
+  vertical-align: top;
 }
 
 .panel-sites-inline .site-grid {
@@ -1261,7 +1514,17 @@ a {
 @media (max-width: 1140px) {
   .dashboard-hero,
   .dashboard-overview-grid,
-  .dashboard-secondary-grid {
+  .dashboard-secondary-grid,
+  .workspace-shell,
+  .wikipedia-check-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-sidebar {
+    position: static;
+  }
+
+  .workspace-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1282,7 +1545,8 @@ a {
 
   .hero-copy,
   .hero-command,
-  .panel {
+  .panel,
+  .workspace-nav-button {
     border-radius: 22px;
   }
 
@@ -1307,7 +1571,9 @@ a {
   }
 
   .site-card-header,
-  .panel-header {
+  .panel-header,
+  .workspace-nav-label-row,
+  .wikipedia-check-status-row {
     flex-direction: column;
     align-items: stretch;
   }

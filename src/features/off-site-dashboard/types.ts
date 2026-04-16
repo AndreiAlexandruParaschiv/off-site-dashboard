@@ -28,6 +28,10 @@ export type SentimentEvaluationFetchStatus =
   | 'insufficient_evidence'
   | 'fetch_failed';
 export type SuggestionEvaluationVerdict = 'Correct' | 'Incorrect' | 'Needs Review';
+export type WikipediaUrlEvaluationVerdict =
+  | 'Correct'
+  | 'Incorrect'
+  | 'Needs Review';
 export type YouTubeTranscriptStatus =
   | 'available_and_used'
   | 'available_but_not_used'
@@ -120,6 +124,26 @@ export interface SuggestionEvaluationResult {
   targetBrand: string;
 }
 
+export interface WikipediaUrlEvaluationRequest {
+  site: string;
+  resolvedSiteUrl?: string;
+  siteId?: string;
+  opportunityId?: string;
+  wikipediaUrl: string;
+}
+
+export interface WikipediaUrlEvaluationResult {
+  verdict: WikipediaUrlEvaluationVerdict;
+  confidence: 'high' | 'medium' | 'low';
+  rationale: string;
+  evidenceSnippet: string;
+  wikipediaTitle: string;
+  evaluatedAt: string;
+  evaluatorVersion: string;
+  evaluatorProvider: 'bedrock';
+  evaluatorModel: string;
+}
+
 export interface SuggestionEvidenceRow {
   item: string;
   sov: string;
@@ -177,6 +201,7 @@ export interface OpportunityRecord {
   opportunityType: CanonicalOpportunityType;
   opportunityStatus: string;
   rawType: string;
+  wikipediaUrl?: string;
   suggestions: SuggestionRecord[];
   sentimentItems: SentimentItemRecord[];
 }

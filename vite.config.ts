@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { runOffsiteEvaluation } from './server/offsite-evaluate';
 import { runOffsiteSuggestionEvaluation } from './server/offsite-evaluate-suggestion';
+import { runWikipediaUrlEvaluation } from './server/offsite-evaluate-wikipedia-url';
 import {
   handleSpacecatProxyConfigRequest,
   handleSpacecatProxyRequest,
@@ -77,7 +78,8 @@ function evaluationDevMiddleware(env: Record<string, string>) {
 
         if (
           requestUrl !== '/api/offsite-evaluate' &&
-          requestUrl !== '/api/offsite-evaluate-suggestion'
+          requestUrl !== '/api/offsite-evaluate-suggestion' &&
+          requestUrl !== '/api/offsite-evaluate-wikipedia-url'
         ) {
           next();
           return;
@@ -127,7 +129,9 @@ function evaluationDevMiddleware(env: Record<string, string>) {
             const result =
               req.url === '/api/offsite-evaluate-suggestion'
                 ? await runOffsiteSuggestionEvaluation(payload, sharedEnv)
-                : await runOffsiteEvaluation(payload, sharedEnv);
+                : req.url === '/api/offsite-evaluate-wikipedia-url'
+                  ? await runWikipediaUrlEvaluation(payload, sharedEnv)
+                  : await runOffsiteEvaluation(payload, sharedEnv);
 
             res.statusCode = 200;
             res.setHeader('content-type', 'application/json; charset=utf-8');

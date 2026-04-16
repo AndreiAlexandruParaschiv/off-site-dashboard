@@ -1296,6 +1296,7 @@ function extractAnalyticsInsightsSentimentItems(
 
       return {
         item,
+        ...(title && title !== item ? { title } : {}),
         sov,
         sentiment,
         ...(typeof citations === 'number' && Number.isFinite(citations)
@@ -1316,6 +1317,128 @@ function extractAnalyticsInsightsSentimentItems(
   return items.filter(
     (item) => item.timesCited === undefined || item.timesCited > 0,
   );
+}
+
+function truncateAnalysisText(value: string, maxLength = 320) {
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= maxLength) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function extractAnalyticsInsightsTopicEvidence(
+  record: Record<string, unknown>,
+  opportunityType: CanonicalOpportunityType,
+): string[] {
+  const data = record.data;
+  if (!isRecord(data)) return [];
+  const dashboard = data.dashboard;
+  if (!isRecord(dashboard)) return [];
+  const analytics = dashboard.analytics;
+  if (!isRecord(analytics)) return [];
+  const performance = analytics.performance;
+  if (!isRecord(performance)) return [];
+  const insights = performance.insights;
+  if (!isRecord(insights)) return [];
+
+  const evidence: string[] = [];
+  const sectionKeys = [...ANALYTICS_INSIGHTS_SECTION_KEYS, 'comments'] as const;
+
+  for (const sectionKey of sectionKeys) {
+    const section = insights[sectionKey];
+    if (!isRecord(section)) continue;
+    const topics = Array.isArray(section.topics) ? section.topics.filter(isRecord) : [];
+    if (topics.length === 0) continue;
+
+    const sectionLabel = sectionKey === 'combined' ? '' : ` (${sectionKey})`;
+
+    for (const topic of topics) {
+      const title = getStringValue(topic, ['title']) ?? '';
+      if (!title) continue;
+
+      const sentimentRecord = isRecord(topic.sentiment) ? topic.sentiment : null;
+      const sentimentLabel = sentimentRecord
+        ? (getStringValue(sentimentRecord, ['label']) ?? '')
+        : '';
+      const sentimentScore = sentimentRecord
+        ? getNumberValue(sentimentRecord, ['score'])
+        : undefined;
+      const mentionsRecord = isRecord(topic.mentions) ? topic.mentions : null;
+      const brandMentions =
+        mentionsRecord && isRecord(mentionsRecord.brand) ? mentionsRecord.brand : null;
+      const brandMentionCount = brandMentions
+        ? getNumberValue(brandMentions, ['mentions'])
+        : undefined;
+      const brandMentionName = brandMentions
+        ? (getStringValue(brandMentions, ['name']) ?? '')
+        : '';
+
+      const headerParts = [`${opportunityType} topic${sectionLabel}: ${title}`];
+      if (sentimentLabel) {
+        const scoreSuffix =
+          typeof sentimentScore === 'number'
+            ? ` (${sentimentScore.toFixed(2)})`
+            : '';
+        headerParts.push(`sentiment=${sentimentLabel}${scoreSuffix}`);
+      }
+      if (typeof brandMentionCount === 'number' && brandMentionName) {
+        headerParts.push(`${brandMentionName} mentions=${brandMentionCount}`);
+      }
+      evidence.push(headerParts.join(' | '));
+
+      const analysis = getStringValue(topic, ['analysis']) ?? '';
+      if (analysis) {
+        evidence.push(
+          `${opportunityType} topic "${title}" analysis: ${truncateAnalysisText(analysis)}`,
+        );
+      }
+
+      const bindings = isRecord(topic.bindings) ? topic.bindings : null;
+      const boundSources = bindings && Array.isArray(bindings.sources)
+        ? bindings.sources.filter(isRecord)
+        : [];
+
+      if (boundSources.length > 0) {
+        const formattedSources = boundSources
+          .slice(0, 12)
+          .map((source) => {
+            const url = getStringValue(source, ['url']) ?? '';
+            const sourceTitle = getStringValue(source, ['title']) ?? '';
+            if (sourceTitle && url) return `"${sourceTitle}" (${url})`;
+            return sourceTitle || url;
+          })
+          .filter(Boolean);
+
+        if (formattedSources.length > 0) {
+          const overflow =
+            boundSources.length > formattedSources.length
+              ? ` + ${boundSources.length - formattedSources.length} more`
+              : '';
+          evidence.push(
+            `${opportunityType} topic "${title}" threads: ${formattedSources.join('; ')}${overflow}`,
+          );
+        }
+      }
+
+      const boundSuggestions = bindings && Array.isArray(bindings.suggestions)
+        ? bindings.suggestions.filter(isRecord)
+        : [];
+      if (boundSuggestions.length > 0) {
+        const suggestionTitles = boundSuggestions
+          .map((suggestion) => getStringValue(suggestion, ['title']) ?? '')
+          .filter(Boolean)
+          .slice(0, 6);
+        if (suggestionTitles.length > 0) {
+          evidence.push(
+            `${opportunityType} topic "${title}" related suggestions: ${suggestionTitles.join('; ')}`,
+          );
+        }
+      }
+    }
+  }
+
+  return evidence;
 }
 
 function isNormalizedWikipediaUrl(value: string) {
@@ -1807,7 +1930,9 @@ function normalizeOpportunity(record: Record<string, unknown>, index: number) {
   const opportunityEvidenceItems =
     opportunityType === 'Wikipedia'
       ? buildWikipediaOpportunityEvidenceItems(record)
-      : [];
+      : SENTIMENT_TABLE_TYPES.has(opportunityType)
+        ? extractAnalyticsInsightsTopicEvidence(record, opportunityType)
+        : [];
   const suggestionsWithOpportunityEvidence = suggestions.map((suggestion) => ({
     ...suggestion,
     evidenceItems: Array.from(

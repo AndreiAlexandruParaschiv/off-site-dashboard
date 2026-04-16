@@ -160,6 +160,7 @@ function buildExportableOpportunityRows(
           ),
           sentimentRows: opportunity.sentimentItems.map((item) => ({
             item: item.item,
+            title: item.title,
             sov: item.sov,
             sentiment: item.sentiment,
             timesCited: item.timesCited,
@@ -564,6 +565,7 @@ export function useOffSiteDashboard() {
             evidenceItems: buildSuggestionEvidenceItems(suggestion, row.sentimentItems),
             sentimentRows: row.sentimentItems.map((item) => ({
               item: item.item,
+              title: item.title,
               sov: item.sov,
               sentiment: item.sentiment,
               timesCited: item.timesCited,

@@ -65,6 +65,7 @@ export interface SuggestionRecord {
 
 export interface SentimentItemRecord {
   item: string;
+  title?: string;
   sov: string;
   sentiment: string;
   timesCited?: number;
@@ -146,6 +147,7 @@ export interface WikipediaUrlEvaluationResult {
 
 export interface SuggestionEvidenceRow {
   item: string;
+  title?: string;
   sov: string;
   sentiment: string;
   timesCited?: number;

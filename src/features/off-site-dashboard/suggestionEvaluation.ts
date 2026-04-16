@@ -132,6 +132,7 @@ export function buildSuggestionEvaluationRequestFingerprint(
   const normalizedSentimentRows = request.sentimentRows
     .map((row) => ({
       item: normalizeFingerprintValue(row.item),
+      title: normalizeFingerprintValue(row.title ?? ''),
       sov: normalizeFingerprintValue(row.sov),
       sentiment: normalizeFingerprintValue(row.sentiment),
       timesCited:
@@ -140,8 +141,8 @@ export function buildSuggestionEvaluationRequestFingerprint(
           : null,
     }))
     .sort((leftRow, rightRow) =>
-      `${leftRow.item}::${leftRow.sov}::${leftRow.sentiment}::${leftRow.timesCited}`.localeCompare(
-        `${rightRow.item}::${rightRow.sov}::${rightRow.sentiment}::${rightRow.timesCited}`,
+      `${leftRow.item}::${leftRow.title}::${leftRow.sov}::${leftRow.sentiment}::${leftRow.timesCited}`.localeCompare(
+        `${rightRow.item}::${rightRow.title}::${rightRow.sov}::${rightRow.sentiment}::${rightRow.timesCited}`,
       ),
     );
 
@@ -169,6 +170,7 @@ export function buildSuggestionEvaluationRequest(input: {
   evidenceItems: string[];
   sentimentRows: Array<{
     item: string;
+    title?: string;
     sov: string;
     sentiment: string;
     timesCited?: number;
@@ -196,15 +198,19 @@ export function buildSuggestionEvaluationRequest(input: {
     suggestionUrl: input.suggestionUrl?.trim() || undefined,
     evidenceItems: input.evidenceItems,
     sentimentRows: input.sentimentRows
-      .map((row) => ({
-        item: row.item.trim(),
-        sov: row.sov.trim(),
-        sentiment: row.sentiment.trim(),
-        timesCited:
-          typeof row.timesCited === 'number' && Number.isFinite(row.timesCited)
-            ? row.timesCited
-            : undefined,
-      }))
-      .filter((row) => row.item || row.sov || row.sentiment),
+      .map((row) => {
+        const title = row.title?.trim();
+        return {
+          item: row.item.trim(),
+          ...(title ? { title } : {}),
+          sov: row.sov.trim(),
+          sentiment: row.sentiment.trim(),
+          timesCited:
+            typeof row.timesCited === 'number' && Number.isFinite(row.timesCited)
+              ? row.timesCited
+              : undefined,
+        };
+      })
+      .filter((row) => row.item || row.title || row.sov || row.sentiment),
   };
 }

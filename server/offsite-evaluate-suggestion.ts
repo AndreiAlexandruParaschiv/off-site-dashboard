@@ -505,8 +505,10 @@ function normalizeRequestPayload(value: unknown): SuggestionEvaluationRequest | 
               entry,
             ): entry is {
               item: string;
+              title?: unknown;
               sov: string;
               sentiment: string;
+              timesCited?: unknown;
             } =>
               Boolean(entry) &&
               typeof entry === 'object' &&
@@ -515,11 +517,21 @@ function normalizeRequestPayload(value: unknown): SuggestionEvaluationRequest | 
               typeof (entry as { sov?: unknown }).sov === 'string' &&
               typeof (entry as { sentiment?: unknown }).sentiment === 'string',
           )
-          .map((entry) => ({
-            item: entry.item.trim(),
-            sov: entry.sov.trim(),
-            sentiment: entry.sentiment.trim(),
-          }))
+          .map((entry) => {
+            const title =
+              typeof entry.title === 'string' ? entry.title.trim() : '';
+            const timesCited =
+              typeof entry.timesCited === 'number' && Number.isFinite(entry.timesCited)
+                ? entry.timesCited
+                : undefined;
+            return {
+              item: entry.item.trim(),
+              ...(title ? { title } : {}),
+              sov: entry.sov.trim(),
+              sentiment: entry.sentiment.trim(),
+              ...(typeof timesCited === 'number' ? { timesCited } : {}),
+            };
+          })
       : [],
   };
 }
@@ -643,18 +655,26 @@ function buildSentimentRowSummary(rows: SuggestionEvaluationRequest['sentimentRo
 }
 
 function buildLocalSuggestionContext(payload: SuggestionEvaluationRequest) {
+  const isWikipedia = payload.opportunityType === 'Wikipedia';
   const evidenceItemLines = payload.evidenceItems
-    .slice(0, payload.opportunityType === 'Wikipedia' ? 20 : 8)
+    .slice(0, isWikipedia ? 40 : 60)
     .map((item, index) => `Evidence item ${index + 1}: ${item}`);
   const summaryLines = buildSentimentRowSummary(payload.sentimentRows).map(
     (line) => `Summary: ${line}`,
   );
   const rowLines = payload.sentimentRows
-    .slice(0, 8)
-    .map(
-      (row, index) =>
-        `Row ${index + 1}: URL=${row.item || 'Unknown'} | Extracted SOV=${row.sov || 'Unknown'} | Extracted Sentiment=${row.sentiment || 'Unknown'}${typeof row.timesCited === 'number' ? ` | Times Cited=${row.timesCited}` : ''}`,
-    );
+    .slice(0, isWikipedia ? 8 : 40)
+    .map((row, index) => {
+      const parts = [`Row ${index + 1}`];
+      if (row.item) parts.push(`URL=${row.item}`);
+      if (row.title) parts.push(`Title=${row.title}`);
+      if (row.sov) parts.push(`Extracted SOV=${row.sov}`);
+      if (row.sentiment) parts.push(`Extracted Sentiment=${row.sentiment}`);
+      if (typeof row.timesCited === 'number') {
+        parts.push(`Times Cited=${row.timesCited}`);
+      }
+      return parts.join(' | ');
+    });
   const sourceHints = extractUrlCandidatesFromText(payload.suggestionText)
     .slice(0, 8)
     .map((url) => `Mentioned source: ${url}`);
@@ -2250,6 +2270,11 @@ function buildSuggestionPrompt(
     'For count-based claims, use the local extracted rows and their Times Cited values as the source of truth for URL counts and citation totals.',
     'Do not mark a suggestion incorrect just because fetched third-party pages do not expose citation totals; citation counts may come from the originating extracted dataset.',
     'Use fetched third-party pages primarily to verify whether those sources do or do not mention the target brand and whether the recommendation is directionally justified.',
+    'For Reddit / YouTube / Cited URLs opportunities the local context contains:',
+    '  (a) sentiment/SOV rows for the opportunity sources, each with URL, Title, Extracted SOV, Extracted Sentiment, and Times Cited — the Title is the single most reliable topical signal (e.g., a thread titled "Manulife RRSP" plainly concerns Manulife retirement plans even if the post body was not fetched);',
+    '  (b) topic-level evidence items of the form `<Type> topic: <Topic title> | sentiment=... | <Brand> mentions=N`, plus `<Type> topic "X" analysis: <narrative>` and `<Type> topic "X" threads: <list of titles+URLs>`. These topic aggregates are derived from the whole opportunity dataset, not just the fetched pages, and they cover sources whose bodies may not appear in the fetched evidence.',
+    'When a suggestion claims a topical area exists (e.g., favorable stock/dividend discussion, ETF comparison threads, employer retirement plan conversations), FIRST check the opportunity sources\' Titles and the topic evidence items for that theme. If a matching Title or topic exists in the opportunity context, the suggestion is grounded — mark Correct with MEDIUM or HIGH confidence, and cite the matching Title(s) in evidenceSnippet. Do not mark the suggestion hallucinated just because the fetched page bodies (limited to a few top-cited URLs) do not discuss that theme.',
+    'Only mark a Reddit/YouTube/Cited URLs suggestion Incorrect when the opportunity context (sources + topics + fetched pages) together contradict the claim or offer no supporting thread title, topic, or analysis.',
     '',
     `Site URL: ${payload.site}`,
     `Site ID: ${payload.siteId ?? 'Unknown'}`,

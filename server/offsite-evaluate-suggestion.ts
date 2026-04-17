@@ -1849,6 +1849,89 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
   }
 }
 
+async function buildYoutubeEvidenceFromHtml(
+  itemUrl: string,
+  html: string,
+): Promise<SourceEvidence> {
+  const title =
+    extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
+    extractMetaTagValue(html, /<title>([^<]+)<\/title>/i);
+  const description =
+    extractMetaTagValue(html, /"shortDescription":"([^"]+)"/i) ||
+    extractMetaTagValue(html, /<meta\s+name="description"\s+content="([^"]+)"/i);
+  const playerResponseJson =
+    extractBalancedObjectLiteral(html, 'ytInitialPlayerResponse =') ??
+    extractBalancedObjectLiteral(html, 'var ytInitialPlayerResponse =');
+  let transcript = '';
+  let transcriptStatus: SourceEvidence['transcriptStatus'] = 'unknown';
+
+  if (playerResponseJson) {
+    try {
+      const playerResponse = JSON.parse(playerResponseJson) as {
+        captions?: {
+          playerCaptionsTracklistRenderer?: {
+            captionTracks?: Array<{
+              baseUrl?: string;
+              languageCode?: string;
+              kind?: string;
+            }>;
+          };
+        };
+      };
+      const captionTracks =
+        playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+      const transcriptTrack =
+        captionTracks.find((track) => track.languageCode?.toLowerCase().startsWith('en')) ??
+        captionTracks.find((track) => track.kind !== 'asr') ??
+        captionTracks[0];
+
+      if (!transcriptTrack?.baseUrl) {
+        transcriptStatus = 'not_available';
+      }
+
+      if (transcriptTrack?.baseUrl) {
+        const transcriptPayload = await fetchText(transcriptTrack.baseUrl);
+        transcript = parseYouTubeTranscriptPayload(transcriptPayload);
+        transcriptStatus =
+          transcript.length >= MIN_EVIDENCE_CHARACTERS
+            ? 'available_and_used'
+            : 'available_but_not_used';
+      }
+    } catch {
+      transcript = '';
+      transcriptStatus = 'unknown';
+    }
+  } else {
+    transcriptStatus = 'unknown';
+  }
+
+  const evidenceText = clampEvidenceText(
+    trimMultilineText(
+      [
+        title ? `Title: ${title}` : '',
+        description ? `Description: ${description}` : '',
+        transcript ? `Transcript:\n${transcript}` : '',
+      ].join('\n\n'),
+    ),
+  );
+  const usedTranscript = transcript.length >= MIN_EVIDENCE_CHARACTERS;
+
+  return {
+    sourceType: 'youtube',
+    sourceUrl: itemUrl,
+    usedTranscript,
+    transcriptStatus,
+    status:
+      evidenceText.length < MIN_EVIDENCE_CHARACTERS
+        ? 'insufficient_evidence'
+        : usedTranscript
+          ? 'success'
+          : 'partial',
+    evidenceText,
+    fallbackSnippet: title || description || 'YouTube evidence could not be extracted.',
+  };
+}
+
 async function fetchYoutubeEvidence(
   itemUrl: string,
   env: ServerEnv,
@@ -1884,89 +1967,26 @@ async function fetchYoutubeEvidence(
           // Fall through to direct fetch if both Bright Data paths failed.
         }
       }
-      // Fall through to direct fetch if Bright Data is unavailable for this item.
+      // Fall through to HTML-based fallbacks if Bright Data datasets were unavailable.
+    }
+  }
+
+  if (getBrightDataApiKey(env)) {
+    try {
+      const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
+      const unlockerEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, unlockerHtml);
+
+      if (unlockerEvidence.evidenceText.length >= MIN_EVIDENCE_CHARACTERS) {
+        return unlockerEvidence;
+      }
+    } catch {
+      // Fall through to direct fetch.
     }
   }
 
   try {
     const html = await fetchText(itemUrl);
-    const title =
-      extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
-      extractMetaTagValue(html, /<title>([^<]+)<\/title>/i);
-    const description =
-      extractMetaTagValue(html, /"shortDescription":"([^"]+)"/i) ||
-      extractMetaTagValue(html, /<meta\s+name="description"\s+content="([^"]+)"/i);
-    const playerResponseJson =
-      extractBalancedObjectLiteral(html, 'ytInitialPlayerResponse =') ??
-      extractBalancedObjectLiteral(html, 'var ytInitialPlayerResponse =');
-    let transcript = '';
-    let transcriptStatus: SourceEvidence['transcriptStatus'] = 'unknown';
-
-    if (playerResponseJson) {
-      try {
-        const playerResponse = JSON.parse(playerResponseJson) as {
-          captions?: {
-            playerCaptionsTracklistRenderer?: {
-              captionTracks?: Array<{
-                baseUrl?: string;
-                languageCode?: string;
-                kind?: string;
-              }>;
-            };
-          };
-        };
-        const captionTracks =
-          playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-        const transcriptTrack =
-          captionTracks.find((track) => track.languageCode?.toLowerCase().startsWith('en')) ??
-          captionTracks.find((track) => track.kind !== 'asr') ??
-          captionTracks[0];
-
-        if (!transcriptTrack?.baseUrl) {
-          transcriptStatus = 'not_available';
-        }
-
-        if (transcriptTrack?.baseUrl) {
-          const transcriptPayload = await fetchText(transcriptTrack.baseUrl);
-          transcript = parseYouTubeTranscriptPayload(transcriptPayload);
-          transcriptStatus =
-            transcript.length >= MIN_EVIDENCE_CHARACTERS
-              ? 'available_and_used'
-              : 'available_but_not_used';
-        }
-      } catch {
-        transcript = '';
-        transcriptStatus = 'unknown';
-      }
-    } else {
-      transcriptStatus = 'unknown';
-    }
-
-    const evidenceText = clampEvidenceText(
-      trimMultilineText(
-        [
-          title ? `Title: ${title}` : '',
-          description ? `Description: ${description}` : '',
-          transcript ? `Transcript:\n${transcript}` : '',
-        ].join('\n\n'),
-      ),
-    );
-    const usedTranscript = transcript.length >= MIN_EVIDENCE_CHARACTERS;
-
-    return {
-      sourceType: 'youtube',
-      sourceUrl: itemUrl,
-      usedTranscript,
-      transcriptStatus,
-      status:
-        evidenceText.length < MIN_EVIDENCE_CHARACTERS
-          ? 'insufficient_evidence'
-          : usedTranscript
-            ? 'success'
-            : 'partial',
-      evidenceText,
-      fallbackSnippet: title || description || 'YouTube evidence could not be extracted.',
-    };
+    return await buildYoutubeEvidenceFromHtml(itemUrl, html);
   } catch {
     return {
       sourceType: 'youtube',

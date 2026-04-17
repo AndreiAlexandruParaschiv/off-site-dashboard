@@ -678,6 +678,7 @@ export function useOffSiteDashboard() {
     configuredSites.length > 0;
 
   const exportableRows = allOpportunityRows;
+  const filteredExportableRows = filteredOpportunityRows;
 
   const isEvaluatingSentiment = Object.values(sentimentEvaluationStatuses).some(
     (status) => status === 'running',
@@ -723,20 +724,20 @@ export function useOffSiteDashboard() {
   }, [exportableRows]);
 
   const exportWikipediaSuggestionEvaluation = useCallback(() => {
-    downloadWikipediaSuggestionEvaluationExcel(exportableRows);
-  }, [exportableRows]);
+    downloadWikipediaSuggestionEvaluationExcel(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const exportOffsiteSuggestionEvaluation = useCallback(() => {
-    downloadOffsiteSuggestionEvaluationExcel(exportableRows);
-  }, [exportableRows]);
+    downloadOffsiteSuggestionEvaluationExcel(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const exportSentimentEvaluation = useCallback(() => {
-    downloadSentimentEvaluationExcel(exportableRows);
-  }, [exportableRows]);
+    downloadSentimentEvaluationExcel(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const exportSovEvaluation = useCallback(() => {
-    downloadSovEvaluationExcel(exportableRows);
-  }, [exportableRows]);
+    downloadSovEvaluationExcel(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const toggleSentimentRowSelection = useCallback((rowKey: string) => {
     setSelectedSentimentRowKeys((currentKeys) =>

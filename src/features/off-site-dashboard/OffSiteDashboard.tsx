@@ -424,7 +424,51 @@ function compareEvaluationSortOrder(
   return 0;
 }
 
-function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[] {
+type EvaluationSortColumn = 'confidence' | 'verdict';
+type EvaluationSortState = {
+  column: EvaluationSortColumn;
+  direction: 'asc' | 'desc';
+} | null;
+type EvaluationVariant = 'sentiment' | 'sov';
+
+function getEvaluationSortKeys(
+  item: SentimentItemRecord,
+  variant: EvaluationVariant,
+) {
+  const result = item.evaluationResult;
+  if (variant === 'sov') {
+    return {
+      confidence:
+        typeof result?.sovConfidence === 'number' ? result.sovConfidence : -1,
+      verdictRank: getVerdictSortRank(
+        deriveSovVerdict({
+          extractedSov: item.sov,
+          evaluationResult: result,
+          evaluationError: item.evaluationError,
+        }),
+      ),
+    };
+  }
+  return {
+    confidence:
+      typeof result?.sentimentConfidence === 'number'
+        ? result.sentimentConfidence
+        : -1,
+    verdictRank: getVerdictSortRank(
+      deriveSentimentVerdict({
+        extractedSentiment: item.sentiment,
+        evaluationResult: result,
+        evaluationError: item.evaluationError,
+      }),
+    ),
+  };
+}
+
+function buildEvaluationRows(
+  rows: GroupedOpportunityRow[],
+  sortState?: EvaluationSortState,
+  variant: EvaluationVariant = 'sentiment',
+): EvaluationRowEntry[] {
   return filterEvaluationOpportunityRows(rows)
     .flatMap((row) =>
       row.sentimentItems.map((item, index) => ({
@@ -437,6 +481,23 @@ function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[
       })),
     )
     .sort((leftRow, rightRow) => {
+      if (sortState) {
+        const direction = sortState.direction === 'desc' ? -1 : 1;
+        const leftKeys = getEvaluationSortKeys(leftRow.item, variant);
+        const rightKeys = getEvaluationSortKeys(rightRow.item, variant);
+        let columnOrder = 0;
+
+        if (sortState.column === 'confidence') {
+          columnOrder = (leftKeys.confidence - rightKeys.confidence) * direction;
+        } else if (sortState.column === 'verdict') {
+          columnOrder = (leftKeys.verdictRank - rightKeys.verdictRank) * direction;
+        }
+
+        if (columnOrder !== 0) {
+          return columnOrder;
+        }
+      }
+
       const evaluatedAtOrder = compareEvaluationSortOrder(
         leftRow.item.evaluationResult?.evaluatedAt,
         rightRow.item.evaluationResult?.evaluatedAt,
@@ -450,11 +511,8 @@ function buildEvaluationRows(rows: GroupedOpportunityRow[]): EvaluationRowEntry[
     });
 }
 
-type SuggestionEvaluationSortColumn = 'confidence' | 'verdict';
-type SuggestionEvaluationSortState = {
-  column: SuggestionEvaluationSortColumn;
-  direction: 'asc' | 'desc';
-} | null;
+type SuggestionEvaluationSortColumn = EvaluationSortColumn;
+type SuggestionEvaluationSortState = EvaluationSortState;
 
 const VERDICT_SORT_RANK: Record<string, number> = {
   correct: 3,
@@ -1225,7 +1283,8 @@ function EvaluationTable(props: {
   onEvaluateRow: (rowKey: string) => void;
   isEvaluating: boolean;
 }) {
-  const evaluationRows = buildEvaluationRows(props.rows);
+  const [sortState, setSortState] = useState<EvaluationSortState>(null);
+  const evaluationRows = buildEvaluationRows(props.rows, sortState, 'sentiment');
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const toggleExpandedRow = (rowKey: string) => {
     setExpandedRowKeys((currentRowKeys) =>
@@ -1233,6 +1292,17 @@ function EvaluationTable(props: {
         ? currentRowKeys.filter((currentRowKey) => currentRowKey !== rowKey)
         : [...currentRowKeys, rowKey],
     );
+  };
+  const toggleSort = (column: EvaluationSortColumn) => {
+    setSortState((current) => {
+      if (current?.column !== column) {
+        return { column, direction: 'desc' };
+      }
+      if (current.direction === 'desc') {
+        return { column, direction: 'asc' };
+      }
+      return null;
+    });
   };
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.item.canEvaluate && row.item.rowKey)
@@ -1286,8 +1356,46 @@ function EvaluationTable(props: {
             <th>Opportunity</th>
             <th>URL</th>
             <th>Extracted Sentiment</th>
-            <th>Confidence</th>
-            <th>Evaluator</th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('confidence')}
+              aria-sort={
+                sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Confidence
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('verdict')}
+              aria-sort={
+                sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Evaluator
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
             <th>Evaluated At</th>
             <th>Action</th>
             <th>Details</th>
@@ -1518,7 +1626,8 @@ function SovEvaluationTable(props: {
   onEvaluateRow: (rowKey: string) => void;
   isEvaluating: boolean;
 }) {
-  const evaluationRows = buildEvaluationRows(props.rows);
+  const [sortState, setSortState] = useState<EvaluationSortState>(null);
+  const evaluationRows = buildEvaluationRows(props.rows, sortState, 'sov');
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const toggleExpandedRow = (rowKey: string) => {
     setExpandedRowKeys((currentRowKeys) =>
@@ -1526,6 +1635,17 @@ function SovEvaluationTable(props: {
         ? currentRowKeys.filter((currentRowKey) => currentRowKey !== rowKey)
         : [...currentRowKeys, rowKey],
     );
+  };
+  const toggleSort = (column: EvaluationSortColumn) => {
+    setSortState((current) => {
+      if (current?.column !== column) {
+        return { column, direction: 'desc' };
+      }
+      if (current.direction === 'desc') {
+        return { column, direction: 'asc' };
+      }
+      return null;
+    });
   };
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.item.canEvaluate && row.item.rowKey)
@@ -1579,8 +1699,46 @@ function SovEvaluationTable(props: {
             <th>Opportunity</th>
             <th>URL</th>
             <th>Extracted SOV</th>
-            <th>Confidence</th>
-            <th>Evaluator</th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('confidence')}
+              aria-sort={
+                sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Confidence
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'confidence'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
+            <th
+              className="sortable-column-header"
+              onClick={() => toggleSort('verdict')}
+              aria-sort={
+                sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? 'descending'
+                    : 'ascending'
+                  : 'none'
+              }
+            >
+              Evaluator
+              <span className="sort-arrow" aria-hidden="true">
+                {sortState?.column === 'verdict'
+                  ? sortState.direction === 'desc'
+                    ? ' ▼'
+                    : ' ▲'
+                  : ' ⇅'}
+              </span>
+            </th>
             <th>Evaluated At</th>
             <th>Action</th>
             <th>Details</th>

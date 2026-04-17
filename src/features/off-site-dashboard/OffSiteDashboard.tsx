@@ -2337,7 +2337,6 @@ export function OffSiteDashboard() {
     <div className="dashboard-shell">
       <header className="dashboard-hero">
         <div className="hero-copy">
-          <span className="eyebrow">Off-site workspace</span>
           <h1>Off-Site Opportunity Monitor</h1>
           <p>
             Resolve site IDs, pull fresh off-site opportunity rows, and verify

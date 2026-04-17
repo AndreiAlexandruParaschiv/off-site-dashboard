@@ -36,6 +36,9 @@ type ServerEnv = {
   BRIGHTDATA_WEB_UNLOCKER_ZONE?: string;
   BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?: string;
   BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?: string;
+  BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?: string;
+  BRIGHTDATA_YOUTUBE_ASYNC_FALLBACK?: string;
+  BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?: string;
   BRIGHTDATA_REDDIT_POST_DATASET_ID?: string;
   BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?: string;
   OPENAI_API_KEY?: string;
@@ -748,50 +751,11 @@ async function fetchBrightDataUnlockerBody(
   return payload.body;
 }
 
-async function fetchBrightDataYoutubeEvidence(
+async function buildYoutubeSourceEvidenceFromBrightData(
   itemUrl: string,
+  firstResult: Record<string, unknown>,
   env: ServerEnv,
 ): Promise<SourceEvidence> {
-  const apiKey = getBrightDataApiKey(env);
-
-  if (!apiKey) {
-    throw new Error('BRIGHTDATA_API_KEY is missing.');
-  }
-
-  const response = await fetch(
-    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
-      getBrightDataYoutubeVideoDatasetId(env),
-    )}&notify=false&include_errors=true`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        input: [
-          {
-            url: itemUrl,
-            country: '',
-            transcription_language: '',
-          },
-        ],
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
-  }
-
-  const payload = (await response.json()) as Array<Record<string, unknown>>;
-  const firstResult = payload[0];
-
-  if (!firstResult || typeof firstResult !== 'object') {
-    throw new Error('Bright Data YouTube scrape returned no results.');
-  }
-
   const title = trimMultilineText(String(firstResult.title ?? ''));
   const description = trimMultilineText(String(firstResult.description ?? ''));
   const transcript = trimMultilineText(
@@ -843,6 +807,159 @@ async function fetchBrightDataYoutubeEvidence(
       comments[0] ||
       'Bright Data YouTube evidence could not be extracted.',
   };
+}
+
+async function fetchBrightDataYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeVideoDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            country: '',
+            transcription_language:
+              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const firstResult = payload[0];
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube scrape returned no results.');
+  }
+
+  return buildYoutubeSourceEvidenceFromBrightData(itemUrl, firstResult, env);
+}
+
+async function fetchBrightDataYoutubeEvidenceAsync(
+  itemUrl: string,
+  env: ServerEnv,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const datasetId = getBrightDataYoutubeVideoDatasetId(env);
+  const triggerResponse = await fetch(
+    `https://api.brightdata.com/datasets/v3/trigger?dataset_id=${encodeURIComponent(
+      datasetId,
+    )}&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify([
+        {
+          url: itemUrl,
+          country: '',
+          transcription_language:
+            env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+        },
+      ]),
+    },
+  );
+
+  if (!triggerResponse.ok) {
+    const errorText = await triggerResponse.text();
+    throw new Error(
+      errorText ||
+        `Bright Data YouTube async trigger failed with ${triggerResponse.status}`,
+    );
+  }
+
+  const triggerPayload = (await triggerResponse.json()) as { snapshot_id?: string };
+  const snapshotId = triggerPayload.snapshot_id;
+
+  if (!snapshotId) {
+    throw new Error('Bright Data YouTube async trigger returned no snapshot_id.');
+  }
+
+  const parsedTimeout = Number.parseInt(
+    env.BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?.trim() ?? '',
+    10,
+  );
+  const timeoutMs =
+    Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 45000;
+  const pollIntervalMs = 4000;
+  const deadlineMs = Date.now() + timeoutMs;
+
+  let firstResult: Record<string, unknown> | undefined;
+
+  while (Date.now() < deadlineMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const progressResponse = await fetch(
+      `https://api.brightdata.com/datasets/v3/progress/${encodeURIComponent(snapshotId)}`,
+      { headers: { authorization: `Bearer ${apiKey}` } },
+    );
+
+    if (!progressResponse.ok) {
+      throw new Error(
+        `Bright Data YouTube progress check failed with ${progressResponse.status}`,
+      );
+    }
+
+    const progress = (await progressResponse.json()) as { status?: string };
+
+    if (progress.status === 'ready') {
+      const snapshotResponse = await fetch(
+        `https://api.brightdata.com/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`,
+        { headers: { authorization: `Bearer ${apiKey}` } },
+      );
+
+      if (!snapshotResponse.ok) {
+        throw new Error(
+          `Bright Data YouTube snapshot download failed with ${snapshotResponse.status}`,
+        );
+      }
+
+      const snapshot = (await snapshotResponse.json()) as unknown;
+      firstResult = Array.isArray(snapshot)
+        ? (snapshot[0] as Record<string, unknown> | undefined)
+        : (snapshot as Record<string, unknown> | undefined);
+      break;
+    }
+
+    if (progress.status === 'failed') {
+      throw new Error('Bright Data YouTube async crawl failed.');
+    }
+  }
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube async crawl timed out.');
+  }
+
+  return buildYoutubeSourceEvidenceFromBrightData(itemUrl, firstResult, env);
 }
 
 function extractBrightDataCommentText(entry: Record<string, unknown>) {
@@ -1737,9 +1854,36 @@ async function fetchYoutubeEvidence(
   env: ServerEnv,
 ): Promise<SourceEvidence> {
   if (getBrightDataApiKey(env)) {
+    const asyncFallbackEnabled =
+      (env.BRIGHTDATA_YOUTUBE_ASYNC_FALLBACK ?? '').trim().toLowerCase() === 'true';
+
     try {
-      return await fetchBrightDataYoutubeEvidence(itemUrl, env);
+      const syncEvidence = await fetchBrightDataYoutubeEvidence(itemUrl, env);
+
+      if (
+        asyncFallbackEnabled &&
+        syncEvidence.transcriptStatus !== 'available_and_used' &&
+        syncEvidence.transcriptStatus !== 'available_but_not_used'
+      ) {
+        try {
+          const asyncEvidence = await fetchBrightDataYoutubeEvidenceAsync(itemUrl, env);
+          return asyncEvidence.evidenceText.length > syncEvidence.evidenceText.length
+            ? asyncEvidence
+            : syncEvidence;
+        } catch {
+          return syncEvidence;
+        }
+      }
+
+      return syncEvidence;
     } catch {
+      if (asyncFallbackEnabled) {
+        try {
+          return await fetchBrightDataYoutubeEvidenceAsync(itemUrl, env);
+        } catch {
+          // Fall through to direct fetch if both Bright Data paths failed.
+        }
+      }
       // Fall through to direct fetch if Bright Data is unavailable for this item.
     }
   }

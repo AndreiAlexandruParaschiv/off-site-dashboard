@@ -35,6 +35,7 @@ type ServerEnv = {
   BRIGHTDATA_WEB_UNLOCKER_ZONE?: string;
   BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?: string;
   BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?: string;
+  BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?: string;
   BRIGHTDATA_REDDIT_POST_DATASET_ID?: string;
   BRIGHTDATA_REDDIT_COMMENT_DATASET_ID?: string;
   OPENAI_API_KEY?: string;
@@ -362,7 +363,8 @@ async function fetchBrightDataYoutubeEvidence(
           {
             url: itemUrl,
             country: '',
-            transcription_language: '',
+            transcription_language:
+              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
           },
         ],
       }),

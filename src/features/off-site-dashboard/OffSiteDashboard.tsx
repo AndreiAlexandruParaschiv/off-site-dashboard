@@ -218,6 +218,9 @@ function getSentimentLabel(value?: string) {
   return (value ?? '').replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '').trim();
 }
 
+const MISSING_EXTRACTED_SENTIMENT_TOOLTIP =
+  'Backend did not extract a sentiment for this source';
+
 function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
@@ -875,17 +878,19 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                   <td>
                     {(() => {
                       const sentimentLabel = getSentimentLabel(item.sentiment);
+                      const displayLabel = trimSuggestionText(sentimentLabel);
+                      const hasLabel = displayLabel.length > 0;
 
                       return (
                         <span
                           className={`sentiment-pill sentiment-pill-${getSentimentTone(
                             item.sentiment,
                           )}`}
-                          title={sentimentLabel || item.sentiment}
+                          title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
                         >
                           <span className="sentiment-dot" aria-hidden="true" />
                           <span className="sentiment-copy">
-                            {trimSuggestionText(sentimentLabel) || ' - '}
+                            {hasLabel ? displayLabel : '—'}
                           </span>
                         </span>
                       );
@@ -1356,17 +1361,19 @@ function EvaluationTable(props: {
                 <td>
                   {(() => {
                     const sentimentLabel = getSentimentLabel(row.item.sentiment);
+                    const displayLabel = trimSuggestionText(sentimentLabel);
+                    const hasLabel = displayLabel.length > 0;
 
                     return (
                       <span
                         className={`sentiment-pill sentiment-pill-${getSentimentTone(
                           row.item.sentiment,
                         )}`}
-                        title={sentimentLabel || row.item.sentiment}
+                        title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
                       >
                         <span className="sentiment-dot" aria-hidden="true" />
                         <span className="sentiment-copy">
-                          {trimSuggestionText(sentimentLabel) || ' - '}
+                          {hasLabel ? displayLabel : '—'}
                         </span>
                       </span>
                     );

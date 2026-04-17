@@ -2208,10 +2208,17 @@ async function fetchEvidenceForSuggestionRequest(
 
   const evidenceSections = sources
     .filter((source) => source.evidenceText)
-    .map(
-      (source, index) =>
-        `Source ${index + 1} (${source.sourceType} | ${source.sourceUrl}):\n${source.evidenceText}`,
-    );
+    .map((source, index) => {
+      const metadataParts: string[] = [`status=${source.status}`];
+      if (source.transcriptStatus && source.transcriptStatus !== 'not_applicable') {
+        metadataParts.push(`transcript=${source.transcriptStatus}`);
+      }
+      if (source.usedComments) {
+        metadataParts.push('comments=included');
+      }
+      metadataParts.push(`evidence_chars=${source.evidenceText.length}`);
+      return `Source ${index + 1} (${source.sourceType} | ${source.sourceUrl}) [${metadataParts.join(', ')}]:\n${source.evidenceText}`;
+    });
   const combinedEvidenceText = clampEvidenceText(evidenceSections.join('\n\n---\n\n'));
   const fallbackSnippet =
     sources.map((source) => source.fallbackSnippet).find(Boolean) ||
@@ -2331,6 +2338,12 @@ function buildSuggestionPrompt(
     '  (b) topic-level evidence items of the form `<Type> topic: <Topic title> | sentiment=... | <Brand> mentions=N`, plus `<Type> topic "X" analysis: <narrative>` and `<Type> topic "X" threads: <list of titles+URLs>`. These topic aggregates are derived from the whole opportunity dataset, not just the fetched pages, and they cover sources whose bodies may not appear in the fetched evidence.',
     'When a suggestion claims a topical area exists (e.g., favorable stock/dividend discussion, ETF comparison threads, employer retirement plan conversations), FIRST check the opportunity sources\' Titles and the topic evidence items for that theme. If a matching Title or topic exists in the opportunity context, the suggestion is grounded — mark Correct with MEDIUM or HIGH confidence, and cite the matching Title(s) in evidenceSnippet. Do not mark the suggestion hallucinated just because the fetched page bodies (limited to a few top-cited URLs) do not discuss that theme.',
     'Only mark a Reddit/YouTube/Cited URLs suggestion Incorrect when the opportunity context (sources + topics + fetched pages) together contradict the claim or offer no supporting thread title, topic, or analysis.',
+    '',
+    'About the fetched-evidence metadata header on each source (e.g., [status=success, transcript=not_available, evidence_chars=240]):',
+    '  - This tells you what the fetch layer actually returned. A YouTube video with transcript=not_available means the video has no captions OR the captions were not captured; the fetched body is then limited to title + description + channel + comments.',
+    '  - A thin fetched body for YouTube is common and expected (Shorts, no-caption videos, music videos). Do NOT treat a thin transcript as proof that the suggestion is ungrounded.',
+    '  - `evidenceSufficient` reflects overall grounding (fetched body + local opportunity context + structured evidence items together), NOT fetched-body length. Set evidenceSufficient = true if the combined inputs — video title/description + opportunity topic context + relevant source titles — support judging the suggestion\'s central claim. Reserve evidenceSufficient = false for the case where ALL inputs are too sparse to judge in any direction.',
+    '  - When you mark evidenceSufficient = false, state in your rationale exactly which inputs you looked at and why each was insufficient (e.g., "No matching topic, no fetched transcript, thin description, no relevant source titles").',
     '',
     `Site URL: ${payload.site}`,
     `Site ID: ${payload.siteId ?? 'Unknown'}`,

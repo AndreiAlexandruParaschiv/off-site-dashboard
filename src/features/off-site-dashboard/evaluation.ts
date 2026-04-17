@@ -44,6 +44,103 @@ export function canEvaluateSentimentItem(item: string) {
   return URL_LIKE_PATTERN.test(item.trim());
 }
 
+export type DerivedEvaluationVerdict =
+  | 'Correct'
+  | 'Incorrect'
+  | 'Needs Review'
+  | 'Not evaluated';
+
+const SENTIMENT_SOV_TOLERANCE_POINTS = 2;
+
+function normalizeDerivedComparableValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function parsePercentageValue(value: string): number | null {
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasInsufficientFetchStatus(status?: string) {
+  return status === 'fetch_failed' || status === 'insufficient_evidence';
+}
+
+export function deriveSentimentVerdict(input: {
+  extractedSentiment: string;
+  evaluationResult?: SentimentEvaluationResult;
+  evaluationError?: string;
+}): DerivedEvaluationVerdict {
+  if (!input.evaluationResult && !input.evaluationError) {
+    return 'Not evaluated';
+  }
+
+  if (input.evaluationError) {
+    return 'Needs Review';
+  }
+
+  const result = input.evaluationResult;
+  if (!result) {
+    return 'Not evaluated';
+  }
+
+  const evaluatedValue = normalizeDerivedComparableValue(result.evaluatedSentiment);
+  const extractedValue = normalizeDerivedComparableValue(input.extractedSentiment);
+
+  if (evaluatedValue === 'needs review' || hasInsufficientFetchStatus(result.fetch.status)) {
+    return 'Needs Review';
+  }
+
+  if (!evaluatedValue || !extractedValue) {
+    return 'Needs Review';
+  }
+
+  return evaluatedValue === extractedValue ? 'Correct' : 'Incorrect';
+}
+
+export function deriveSovVerdict(input: {
+  extractedSov: string;
+  evaluationResult?: SentimentEvaluationResult;
+  evaluationError?: string;
+}): DerivedEvaluationVerdict {
+  if (!input.evaluationResult && !input.evaluationError) {
+    return 'Not evaluated';
+  }
+
+  if (input.evaluationError) {
+    return 'Needs Review';
+  }
+
+  const result = input.evaluationResult;
+  if (!result) {
+    return 'Not evaluated';
+  }
+
+  if (
+    normalizeDerivedComparableValue(result.evaluatedSov) === 'needs review' ||
+    hasInsufficientFetchStatus(result.fetch.status)
+  ) {
+    return 'Needs Review';
+  }
+
+  const extractedPct = parsePercentageValue(input.extractedSov);
+  const evaluatedPct =
+    typeof result.evaluatedTargetBrandSharePct === 'number'
+      ? result.evaluatedTargetBrandSharePct
+      : parsePercentageValue(result.evaluatedSov);
+
+  if (extractedPct === null || evaluatedPct === null) {
+    return 'Needs Review';
+  }
+
+  return Math.abs(extractedPct - evaluatedPct) <= SENTIMENT_SOV_TOLERANCE_POINTS
+    ? 'Correct'
+    : 'Incorrect';
+}
+
 export function buildSentimentRowKey(input: {
   site: string;
   siteId?: string;

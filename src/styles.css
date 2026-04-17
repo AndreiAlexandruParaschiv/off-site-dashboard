@@ -199,6 +199,50 @@ a:hover {
   font-size: 2.2rem !important;
 }
 
+/* Workspace summary KPIs: stack label → value → detail tightly per card */
+.workspace-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  column-gap: 28px !important;
+  row-gap: 0 !important;
+  align-items: stretch !important;
+}
+
+.workspace-summary-grid .stats-card {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+  padding: 6px 24px 6px 0 !important;
+  border-bottom: 0 !important;
+  border-right: 1px solid rgba(17, 27, 36, 0.08);
+  min-width: 0;
+}
+
+.workspace-summary-grid .stats-card:last-child {
+  border-right: 0;
+  padding-right: 0 !important;
+}
+
+.workspace-summary-grid .stats-card-copy {
+  display: contents;
+}
+
+.workspace-summary-grid .stats-label {
+  order: 1;
+}
+
+.workspace-summary-grid .stats-value {
+  order: 2;
+  font-size: 2.4rem !important;
+  margin-top: 2px;
+}
+
+.workspace-summary-grid .stats-detail {
+  order: 3;
+  margin-top: 2px;
+}
+
 .hero-command-notes {
   gap: 14px !important;
 }
@@ -1302,6 +1346,10 @@ a:hover {
 
 .evaluation-col-confidence {
   width: 180px;
+}
+
+.evaluation-col-verdict {
+  width: 150px;
 }
 
 .evaluation-col-evaluated {

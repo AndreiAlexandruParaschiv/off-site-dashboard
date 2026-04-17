@@ -5,7 +5,12 @@ import {
   SpacecatApiError,
 } from './api';
 import { TARGET_OPPORTUNITY_TYPES } from './constants';
-import { getConfidenceBand, getConfidenceLabel } from './evaluation';
+import {
+  deriveSentimentVerdict,
+  deriveSovVerdict,
+  getConfidenceBand,
+  getConfidenceLabel,
+} from './evaluation';
 import { useOffSiteDashboard } from './useOffSiteDashboard';
 import {
   formatTimestamp,
@@ -1245,6 +1250,7 @@ function EvaluationTable(props: {
           <col className="evaluation-col-url" />
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
+          <col className="evaluation-col-verdict" />
           <col className="evaluation-col-evaluated" />
           <col className="evaluation-col-rationale" />
           <col className="evaluation-col-evaluated-at" />
@@ -1269,6 +1275,7 @@ function EvaluationTable(props: {
             <th>URL</th>
             <th>Extracted Sentiment</th>
             <th>Confidence</th>
+            <th>Verdict</th>
             <th>Evaluator Sentiment</th>
             <th>Rationale / Evidence</th>
             <th>Evaluated At</th>
@@ -1383,6 +1390,24 @@ function EvaluationTable(props: {
                   )}
                 </td>
                 <td>
+                  {(() => {
+                    const sentimentVerdict = deriveSentimentVerdict({
+                      extractedSentiment: row.item.sentiment,
+                      evaluationResult,
+                      evaluationError: row.item.evaluationError,
+                    });
+                    return (
+                      <span
+                        className={`status-pill status-pill-${getSuggestionVerdictTone(
+                          sentimentVerdict,
+                        )}`}
+                      >
+                        {sentimentVerdict}
+                      </span>
+                    );
+                  })()}
+                </td>
+                <td>
                   <span className="metric-copy metric-card" title={evaluationOutput}>
                     {evaluationOutput}
                   </span>
@@ -1456,6 +1481,7 @@ function SovEvaluationTable(props: {
           <col className="evaluation-col-url" />
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
+          <col className="evaluation-col-verdict" />
           <col className="evaluation-col-evaluated" />
           <col className="evaluation-col-rationale" />
           <col className="evaluation-col-evaluated-at" />
@@ -1480,6 +1506,7 @@ function SovEvaluationTable(props: {
             <th>URL</th>
             <th>Extracted SOV</th>
             <th>Confidence</th>
+            <th>Verdict</th>
             <th>Evaluator SOV</th>
             <th>Rationale / Evidence</th>
             <th>Evaluated At</th>
@@ -1578,6 +1605,24 @@ function SovEvaluationTable(props: {
                       {isRunning ? 'Evaluating...' : 'Not evaluated'}
                     </span>
                   )}
+                </td>
+                <td>
+                  {(() => {
+                    const sovVerdict = deriveSovVerdict({
+                      extractedSov: row.item.sov,
+                      evaluationResult,
+                      evaluationError: row.item.evaluationError,
+                    });
+                    return (
+                      <span
+                        className={`status-pill status-pill-${getSuggestionVerdictTone(
+                          sovVerdict,
+                        )}`}
+                      >
+                        {sovVerdict}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td>
                   <span className="metric-copy metric-card" title={evaluationOutput}>

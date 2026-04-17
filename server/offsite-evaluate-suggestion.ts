@@ -1852,6 +1852,7 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
 async function buildYoutubeEvidenceFromHtml(
   itemUrl: string,
   html: string,
+  transcriptFetcher?: (url: string) => Promise<string>,
 ): Promise<SourceEvidence> {
   const title =
     extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
@@ -1890,7 +1891,7 @@ async function buildYoutubeEvidenceFromHtml(
       }
 
       if (transcriptTrack?.baseUrl) {
-        const transcriptPayload = await fetchText(transcriptTrack.baseUrl);
+        const transcriptPayload = await (transcriptFetcher ?? fetchText)(transcriptTrack.baseUrl);
         transcript = parseYouTubeTranscriptPayload(transcriptPayload);
         transcriptStatus =
           transcript.length >= MIN_EVIDENCE_CHARACTERS
@@ -1974,7 +1975,11 @@ async function fetchYoutubeEvidence(
   if (getBrightDataApiKey(env)) {
     try {
       const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-      const unlockerEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, unlockerHtml);
+      const unlockerEvidence = await buildYoutubeEvidenceFromHtml(
+        itemUrl,
+        unlockerHtml,
+        (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
+      );
 
       if (unlockerEvidence.evidenceText.length >= MIN_EVIDENCE_CHARACTERS) {
         return unlockerEvidence;

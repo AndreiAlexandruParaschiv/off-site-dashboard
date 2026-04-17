@@ -1241,6 +1241,7 @@ function buildSovConfidenceScore(input: {
 async function buildYoutubeEvidenceFromHtml(
   itemUrl: string,
   html: string,
+  transcriptFetcher?: (url: string) => Promise<string>,
 ): Promise<SourceEvidence> {
   const title =
     extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
@@ -1280,7 +1281,7 @@ async function buildYoutubeEvidenceFromHtml(
       }
 
       if (transcriptTrack?.baseUrl) {
-        const transcriptPayload = await fetchText(transcriptTrack.baseUrl);
+        const transcriptPayload = await (transcriptFetcher ?? fetchText)(transcriptTrack.baseUrl);
         transcript = parseYouTubeTranscriptPayload(transcriptPayload);
         transcriptStatus =
           transcript.length >= MIN_EVIDENCE_CHARACTERS
@@ -1340,7 +1341,11 @@ async function fetchYoutubeEvidence(
 
       try {
         const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-        const unlockerEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, unlockerHtml);
+        const unlockerEvidence = await buildYoutubeEvidenceFromHtml(
+          itemUrl,
+          unlockerHtml,
+          (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
+        );
 
         if (
           unlockerEvidence.transcriptStatus === 'available_and_used' ||
@@ -1356,7 +1361,11 @@ async function fetchYoutubeEvidence(
     } catch {
       try {
         const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-        return await buildYoutubeEvidenceFromHtml(itemUrl, unlockerHtml);
+        return await buildYoutubeEvidenceFromHtml(
+          itemUrl,
+          unlockerHtml,
+          (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
+        );
       } catch {
         // Fall through to direct fetch if both Bright Data paths failed.
       }

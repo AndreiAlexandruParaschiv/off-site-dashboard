@@ -13,12 +13,11 @@ import {
   TARGET_OPPORTUNITY_TYPES,
 } from './constants';
 import {
-  downloadOffsiteSuggestionEvaluationExcel,
   downloadRowsAsCsv,
   downloadRowsAsExcel,
   downloadSentimentEvaluationExcel,
   downloadSovEvaluationExcel,
-  downloadWikipediaSuggestionEvaluationExcel,
+  downloadSuggestionEvaluationExcel,
 } from './csv';
 import {
   SpacecatApiError,
@@ -723,12 +722,8 @@ export function useOffSiteDashboard() {
     downloadRowsAsExcel(exportableRows);
   }, [exportableRows]);
 
-  const exportWikipediaSuggestionEvaluation = useCallback(() => {
-    downloadWikipediaSuggestionEvaluationExcel(filteredExportableRows);
-  }, [filteredExportableRows]);
-
-  const exportOffsiteSuggestionEvaluation = useCallback(() => {
-    downloadOffsiteSuggestionEvaluationExcel(filteredExportableRows);
+  const exportSuggestionEvaluation = useCallback(() => {
+    downloadSuggestionEvaluationExcel(filteredExportableRows);
   }, [filteredExportableRows]);
 
   const exportSentimentEvaluation = useCallback(() => {
@@ -973,8 +968,7 @@ export function useOffSiteDashboard() {
     clearResults,
     exportRows,
     exportExcel,
-    exportWikipediaSuggestionEvaluation,
-    exportOffsiteSuggestionEvaluation,
+    exportSuggestionEvaluation,
     exportSentimentEvaluation,
     exportSovEvaluation,
     toggleSentimentRowSelection,

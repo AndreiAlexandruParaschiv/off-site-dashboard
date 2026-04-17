@@ -673,13 +673,10 @@ function buildSuggestionEvaluationSheet(
     );
 }
 
-export function downloadWikipediaSuggestionEvaluationExcel(
+export function downloadSuggestionEvaluationExcel(
   rows: GroupedOpportunityRow[],
 ) {
-  const dataRows = buildSuggestionEvaluationSheet(
-    rows,
-    (type) => type === 'Wikipedia',
-  );
+  const dataRows = buildSuggestionEvaluationSheet(rows, (type) => !!type);
 
   if (dataRows.length === 0) {
     return;
@@ -693,35 +690,7 @@ export function downloadWikipediaSuggestionEvaluationExcel(
       expandRows: true,
       wrapText: true,
     }),
-    'WikipediaSuggestions',
-  );
-
-  XLSX.writeFile(workbook, 'Wikipedia Suggestion Evaluation.xlsx', {
-    cellStyles: true,
-  });
-}
-
-export function downloadOffsiteSuggestionEvaluationExcel(
-  rows: GroupedOpportunityRow[],
-) {
-  const dataRows = buildSuggestionEvaluationSheet(
-    rows,
-    (type) => !!type && type !== 'Wikipedia',
-  );
-
-  if (dataRows.length === 0) {
-    return;
-  }
-
-  const workbook = XLSX.utils.book_new();
-
-  XLSX.utils.book_append_sheet(
-    workbook,
-    buildExcelSheet(SUGGESTION_EVAL_HEADERS, dataRows, {
-      expandRows: true,
-      wrapText: true,
-    }),
-    'OffsiteSuggestions',
+    'Suggestions',
   );
 
   XLSX.writeFile(workbook, 'Off-Site Suggestion Evaluation.xlsx', {

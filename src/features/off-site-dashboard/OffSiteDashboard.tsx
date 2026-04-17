@@ -2852,18 +2852,10 @@ export function OffSiteDashboard() {
                             <button
                               className="ghost-button"
                               disabled={!dashboard.hasExportRows}
-                              onClick={dashboard.exportOffsiteSuggestionEvaluation}
+                              onClick={dashboard.exportSuggestionEvaluation}
                               type="button"
                             >
                               Export Suggestion Excel
-                            </button>
-                            <button
-                              className="ghost-button"
-                              disabled={!dashboard.hasExportRows}
-                              onClick={dashboard.exportWikipediaSuggestionEvaluation}
-                              type="button"
-                            >
-                              Export Wikipedia Excel
                             </button>
                           </div>
                         )}

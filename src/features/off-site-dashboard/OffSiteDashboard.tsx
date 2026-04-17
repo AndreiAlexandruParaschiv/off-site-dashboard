@@ -661,7 +661,7 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
           <tr>
             <th>Site</th>
             <th>Site ID</th>
-            <th>Opportunity Type</th>
+            <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>Suggestions</th>
           </tr>
@@ -807,7 +807,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
           <tr>
             <th>Site</th>
             <th>Site ID</th>
-            <th>Opportunity Type</th>
+            <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>URL</th>
             <th>SOV</th>
@@ -985,7 +985,7 @@ function SuggestionEvaluationTable(props: {
               </label>
             </th>
             <th>Site</th>
-            <th>Opportunity Type</th>
+            <th>Opportunity</th>
             <th>Suggestion</th>
             <th
               className="sortable-column-header"
@@ -1018,7 +1018,7 @@ function SuggestionEvaluationTable(props: {
                   : 'none'
               }
             >
-              Verdict
+              Evaluator
               <span className="sort-arrow" aria-hidden="true">
                 {sortState?.column === 'verdict'
                   ? sortState.direction === 'desc'
@@ -1226,6 +1226,14 @@ function EvaluationTable(props: {
   isEvaluating: boolean;
 }) {
   const evaluationRows = buildEvaluationRows(props.rows);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+  const toggleExpandedRow = (rowKey: string) => {
+    setExpandedRowKeys((currentRowKeys) =>
+      currentRowKeys.includes(rowKey)
+        ? currentRowKeys.filter((currentRowKey) => currentRowKey !== rowKey)
+        : [...currentRowKeys, rowKey],
+    );
+  };
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.item.canEvaluate && row.item.rowKey)
     .map((row) => row.item.rowKey as string);
@@ -1255,11 +1263,10 @@ function EvaluationTable(props: {
           <col className="evaluation-col-url" />
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
-          <col className="evaluation-col-verdict" />
           <col className="evaluation-col-evaluated" />
-          <col className="evaluation-col-rationale" />
           <col className="evaluation-col-evaluated-at" />
           <col className="evaluation-col-action" />
+          <col className="suggestion-evaluation-col-details" />
         </colgroup>
         <thead>
           <tr>
@@ -1276,15 +1283,14 @@ function EvaluationTable(props: {
               </label>
             </th>
             <th>Site</th>
-            <th>Opportunity Type</th>
+            <th>Opportunity</th>
             <th>URL</th>
             <th>Extracted Sentiment</th>
             <th>Confidence</th>
-            <th>Verdict</th>
-            <th>Evaluator Sentiment</th>
-            <th>Rationale / Evidence</th>
+            <th>Evaluator</th>
             <th>Evaluated At</th>
             <th>Action</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -1315,133 +1321,187 @@ function EvaluationTable(props: {
                     .join('\n\n')
                 : 'Run evaluation to score sentiment.';
 
-            return (
-              <tr
-                key={row.id}
-                className={isRunning ? 'evaluation-row-running' : undefined}
-              >
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    disabled={!row.item.canEvaluate || isRunning}
-                    onChange={() =>
-                      row.item.rowKey
-                        ? props.onToggleRowSelection(row.item.rowKey)
-                        : undefined
-                    }
-                  />
-                </td>
-                <td>
-                  <div className="evaluation-site-stack">
-                    <span>{row.site}</span>
-                    <span className="evaluation-site-meta">
-                      {row.siteId ?? row.opportunityId}
-                    </span>
-                  </div>
-                </td>
-                <td>{row.opportunityType}</td>
-                <td>
-                  {isUrl ? (
-                    <a
-                      className="metric-link metric-card"
-                      href={itemValue}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={itemValue}
-                    >
-                      {getDisplayUrl(itemValue)}
-                    </a>
-                  ) : (
-                    <span className="metric-copy metric-card" title={itemValue}>
-                      {itemValue || ' - '}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {(() => {
-                    const sentimentLabel = getSentimentLabel(row.item.sentiment);
-                    const displayLabel = trimSuggestionText(sentimentLabel);
-                    const hasLabel = displayLabel.length > 0;
+            const sentimentVerdict = deriveSentimentVerdict({
+              extractedSentiment: row.item.sentiment,
+              evaluationResult,
+              evaluationError: row.item.evaluationError,
+            });
+            const evaluatorSentimentLabel = evaluationResult
+              ? evaluationResult.evaluatedSentiment || 'Needs Review'
+              : 'Not evaluated';
+            const extractedSentimentLabel =
+              trimSuggestionText(getSentimentLabel(row.item.sentiment)) || '—';
 
-                    return (
-                      <span
-                        className={`sentiment-pill sentiment-pill-${getSentimentTone(
-                          row.item.sentiment,
-                        )}`}
-                        title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
-                      >
-                        <span className="sentiment-dot" aria-hidden="true" />
-                        <span className="sentiment-copy">
-                          {hasLabel ? displayLabel : '—'}
-                        </span>
-                      </span>
-                    );
-                  })()}
-                </td>
-                <td>
-                  {evaluationResult ? (
-                    <div className="confidence-stack">
-                      <span
-                        className={`confidence-pill confidence-pill-${getConfidenceBand(
-                          evaluationResult.sentimentConfidence,
-                        )}`}
-                      >
-                        {getConfidenceLabel(evaluationResult.sentimentConfidence) || ' - '}
+            const isExpanded = row.item.rowKey
+              ? expandedRowKeys.includes(row.item.rowKey)
+              : false;
+            const rowClassName = [
+              isExpanded ? 'suggestion-evaluation-row-expanded' : '',
+              isRunning ? 'evaluation-row-running' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
+
+            return (
+              <Fragment key={row.id}>
+                <tr className={rowClassName || undefined}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={!row.item.canEvaluate || isRunning}
+                      onChange={() =>
+                        row.item.rowKey
+                          ? props.onToggleRowSelection(row.item.rowKey)
+                          : undefined
+                      }
+                    />
+                  </td>
+                  <td>
+                    <div className="evaluation-site-stack">
+                      <span>{row.site}</span>
+                      <span className="evaluation-site-meta">
+                        {row.siteId ?? row.opportunityId}
                       </span>
                     </div>
-                  ) : (
-                    <span className="metric-copy metric-card">
-                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {(() => {
-                    const sentimentVerdict = deriveSentimentVerdict({
-                      extractedSentiment: row.item.sentiment,
-                      evaluationResult,
-                      evaluationError: row.item.evaluationError,
-                    });
-                    return (
-                      <span
-                        className={`status-pill status-pill-${getSuggestionVerdictTone(
-                          sentimentVerdict,
-                        )}`}
+                  </td>
+                  <td>{row.opportunityType}</td>
+                  <td>
+                    {isUrl ? (
+                      <a
+                        className="metric-link metric-card"
+                        href={itemValue}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={itemValue}
                       >
-                        {sentimentVerdict}
+                        {getDisplayUrl(itemValue)}
+                      </a>
+                    ) : (
+                      <span className="metric-copy metric-card" title={itemValue}>
+                        {itemValue || ' - '}
                       </span>
-                    );
-                  })()}
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={evaluationOutput}>
-                    {evaluationOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={rationaleOutput}>
-                    {rationaleOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card">
-                    {formatTimestamp(evaluationResult?.evaluatedAt)}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="ghost-button"
-                    disabled={isActionDisabled}
-                    onClick={() =>
-                      row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
-                    }
-                    type="button"
-                  >
-                    {isRunning ? 'Evaluating...' : 'Evaluate'}
-                  </button>
-                </td>
-              </tr>
+                    )}
+                  </td>
+                  <td>
+                    {(() => {
+                      const sentimentLabel = getSentimentLabel(row.item.sentiment);
+                      const displayLabel = trimSuggestionText(sentimentLabel);
+                      const hasLabel = displayLabel.length > 0;
+
+                      return (
+                        <span
+                          className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                            row.item.sentiment,
+                          )}`}
+                          title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
+                        >
+                          <span className="sentiment-dot" aria-hidden="true" />
+                          <span className="sentiment-copy">
+                            {hasLabel ? displayLabel : '—'}
+                          </span>
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td>
+                    {evaluationResult ? (
+                      <div className="confidence-stack">
+                        <span
+                          className={`confidence-pill confidence-pill-${getConfidenceBand(
+                            evaluationResult.sentimentConfidence,
+                          )}`}
+                        >
+                          {getConfidenceLabel(evaluationResult.sentimentConfidence) || ' - '}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="metric-copy metric-card">
+                        {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {(() => {
+                      const tooltip =
+                        sentimentVerdict === 'Correct'
+                          ? `Evaluator said ${evaluatorSentimentLabel}; matches extracted ${extractedSentimentLabel}.`
+                          : sentimentVerdict === 'Incorrect'
+                            ? `Evaluator said ${evaluatorSentimentLabel}; disagrees with extracted ${extractedSentimentLabel}.`
+                            : sentimentVerdict === 'Needs Review'
+                              ? 'Evaluator could not judge. Open Details for rationale.'
+                              : 'This row has not been evaluated yet.';
+                      return (
+                        <span
+                          className={`status-pill status-pill-${getSuggestionVerdictTone(
+                            sentimentVerdict,
+                          )}`}
+                          title={tooltip}
+                        >
+                          {sentimentVerdict}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td>
+                    <span className="metric-copy metric-card">
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      className="ghost-button"
+                      disabled={isActionDisabled}
+                      onClick={() =>
+                        row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
+                      }
+                      type="button"
+                    >
+                      {isRunning ? 'Evaluating...' : 'Evaluate'}
+                    </button>
+                  </td>
+                  <td>
+                    {row.item.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr className="suggestion-evaluation-detail-row">
+                    <td colSpan={10}>
+                      <div className="suggestion-evaluation-detail-grid">
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Evaluator&apos;s call</h4>
+                          <p className="metric-copy">
+                            Evaluator sentiment:{' '}
+                            <strong>{evaluatorSentimentLabel}</strong>
+                          </p>
+                          <p className="metric-copy">
+                            Extracted sentiment:{' '}
+                            <strong>{extractedSentimentLabel}</strong>
+                          </p>
+                          <p className="metric-copy">
+                            Verdict: <strong>{sentimentVerdict}</strong>
+                          </p>
+                        </div>
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Rationale / Evidence</h4>
+                          <p className="metric-copy">{rationaleOutput}</p>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -1459,6 +1519,14 @@ function SovEvaluationTable(props: {
   isEvaluating: boolean;
 }) {
   const evaluationRows = buildEvaluationRows(props.rows);
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+  const toggleExpandedRow = (rowKey: string) => {
+    setExpandedRowKeys((currentRowKeys) =>
+      currentRowKeys.includes(rowKey)
+        ? currentRowKeys.filter((currentRowKey) => currentRowKey !== rowKey)
+        : [...currentRowKeys, rowKey],
+    );
+  };
   const visibleEvaluableRowKeys = evaluationRows
     .filter((row) => row.item.canEvaluate && row.item.rowKey)
     .map((row) => row.item.rowKey as string);
@@ -1488,11 +1556,10 @@ function SovEvaluationTable(props: {
           <col className="evaluation-col-url" />
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
-          <col className="evaluation-col-verdict" />
           <col className="evaluation-col-evaluated" />
-          <col className="evaluation-col-rationale" />
           <col className="evaluation-col-evaluated-at" />
           <col className="evaluation-col-action" />
+          <col className="suggestion-evaluation-col-details" />
         </colgroup>
         <thead>
           <tr>
@@ -1509,15 +1576,14 @@ function SovEvaluationTable(props: {
               </label>
             </th>
             <th>Site</th>
-            <th>Opportunity Type</th>
+            <th>Opportunity</th>
             <th>URL</th>
             <th>Extracted SOV</th>
             <th>Confidence</th>
-            <th>Verdict</th>
-            <th>Evaluator SOV</th>
-            <th>Rationale / Evidence</th>
+            <th>Evaluator</th>
             <th>Evaluated At</th>
             <th>Action</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -1548,117 +1614,170 @@ function SovEvaluationTable(props: {
                     .join('\n\n')
                 : 'Run sentiment evaluation above to score share of voice.';
 
+            const sovVerdict = deriveSovVerdict({
+              extractedSov: row.item.sov,
+              evaluationResult,
+              evaluationError: row.item.evaluationError,
+            });
+            const evaluatorSovLabel = evaluationResult
+              ? evaluationResult.evaluatedSov || 'Needs Review'
+              : 'Not evaluated';
+            const extractedSovLabel = trimSuggestionText(row.item.sov) || '—';
+
+            const isExpanded = row.item.rowKey
+              ? expandedRowKeys.includes(row.item.rowKey)
+              : false;
+            const rowClassName = [
+              isExpanded ? 'suggestion-evaluation-row-expanded' : '',
+              isRunning ? 'evaluation-row-running' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
+
             return (
-              <tr
-                key={`${row.id}-sov`}
-                className={isRunning ? 'evaluation-row-running' : undefined}
-              >
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    disabled={!row.item.canEvaluate || isRunning}
-                    onChange={() =>
-                      row.item.rowKey
-                        ? props.onToggleRowSelection(row.item.rowKey)
-                        : undefined
-                    }
-                  />
-                </td>
-                <td>
-                  <div className="evaluation-site-stack">
-                    <span>{row.site}</span>
-                    <span className="evaluation-site-meta">
-                      {row.siteId ?? row.opportunityId}
-                    </span>
-                  </div>
-                </td>
-                <td>{row.opportunityType}</td>
-                <td>
-                  {isUrl ? (
-                    <a
-                      className="metric-link metric-card"
-                      href={itemValue}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={itemValue}
-                    >
-                      {getDisplayUrl(itemValue)}
-                    </a>
-                  ) : (
-                    <span className="metric-copy metric-card" title={itemValue}>
-                      {itemValue || ' - '}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={row.item.sov}>
-                    {trimSuggestionText(row.item.sov) || ' - '}
-                  </span>
-                </td>
-                <td>
-                  {evaluationResult ? (
-                    <div className="confidence-stack">
-                      <span
-                        className={`confidence-pill confidence-pill-${getConfidenceBand(
-                          evaluationResult.sovConfidence,
-                        )}`}
-                      >
-                        {getConfidenceLabel(evaluationResult.sovConfidence) || ' - '}
+              <Fragment key={`${row.id}-sov`}>
+                <tr className={rowClassName || undefined}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={!row.item.canEvaluate || isRunning}
+                      onChange={() =>
+                        row.item.rowKey
+                          ? props.onToggleRowSelection(row.item.rowKey)
+                          : undefined
+                      }
+                    />
+                  </td>
+                  <td>
+                    <div className="evaluation-site-stack">
+                      <span>{row.site}</span>
+                      <span className="evaluation-site-meta">
+                        {row.siteId ?? row.opportunityId}
                       </span>
                     </div>
-                  ) : (
-                    <span className="metric-copy metric-card">
-                      {isRunning ? 'Evaluating...' : 'Not evaluated'}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {(() => {
-                    const sovVerdict = deriveSovVerdict({
-                      extractedSov: row.item.sov,
-                      evaluationResult,
-                      evaluationError: row.item.evaluationError,
-                    });
-                    return (
-                      <span
-                        className={`status-pill status-pill-${getSuggestionVerdictTone(
-                          sovVerdict,
-                        )}`}
+                  </td>
+                  <td>{row.opportunityType}</td>
+                  <td>
+                    {isUrl ? (
+                      <a
+                        className="metric-link metric-card"
+                        href={itemValue}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={itemValue}
                       >
-                        {sovVerdict}
+                        {getDisplayUrl(itemValue)}
+                      </a>
+                    ) : (
+                      <span className="metric-copy metric-card" title={itemValue}>
+                        {itemValue || ' - '}
                       </span>
-                    );
-                  })()}
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={evaluationOutput}>
-                    {evaluationOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card" title={rationaleOutput}>
-                    {rationaleOutput}
-                  </span>
-                </td>
-                <td>
-                  <span className="metric-copy metric-card">
-                    {formatTimestamp(evaluationResult?.evaluatedAt)}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="ghost-button"
-                    disabled={isActionDisabled}
-                    onClick={() =>
-                      row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
-                    }
-                    type="button"
-                  >
-                    {isRunning ? 'Evaluating...' : 'Evaluate'}
-                  </button>
-                </td>
-              </tr>
+                    )}
+                  </td>
+                  <td>
+                    <span className="metric-copy metric-card" title={row.item.sov}>
+                      {trimSuggestionText(row.item.sov) || ' - '}
+                    </span>
+                  </td>
+                  <td>
+                    {evaluationResult ? (
+                      <div className="confidence-stack">
+                        <span
+                          className={`confidence-pill confidence-pill-${getConfidenceBand(
+                            evaluationResult.sovConfidence,
+                          )}`}
+                        >
+                          {getConfidenceLabel(evaluationResult.sovConfidence) || ' - '}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="metric-copy metric-card">
+                        {isRunning ? 'Evaluating...' : 'Not evaluated'}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {(() => {
+                      const tooltip =
+                        sovVerdict === 'Correct'
+                          ? `Evaluator said ${evaluatorSovLabel}; matches extracted ${extractedSovLabel}.`
+                          : sovVerdict === 'Incorrect'
+                            ? `Evaluator said ${evaluatorSovLabel}; disagrees with extracted ${extractedSovLabel}.`
+                            : sovVerdict === 'Needs Review'
+                              ? 'Evaluator could not judge. Open Details for rationale.'
+                              : 'This row has not been evaluated yet.';
+                      return (
+                        <span
+                          className={`status-pill status-pill-${getSuggestionVerdictTone(
+                            sovVerdict,
+                          )}`}
+                          title={tooltip}
+                        >
+                          {sovVerdict}
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  <td>
+                    <span className="metric-copy metric-card">
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      className="ghost-button"
+                      disabled={isActionDisabled}
+                      onClick={() =>
+                        row.item.rowKey ? props.onEvaluateRow(row.item.rowKey) : undefined
+                      }
+                      type="button"
+                    >
+                      {isRunning ? 'Evaluating...' : 'Evaluate'}
+                    </button>
+                  </td>
+                  <td>
+                    {row.item.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr className="suggestion-evaluation-detail-row">
+                    <td colSpan={10}>
+                      <div className="suggestion-evaluation-detail-grid">
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Evaluator&apos;s call</h4>
+                          <p className="metric-copy">
+                            Evaluator SOV:{' '}
+                            <strong>{evaluatorSovLabel}</strong>
+                          </p>
+                          <p className="metric-copy">
+                            Extracted SOV:{' '}
+                            <strong>{extractedSovLabel}</strong>
+                          </p>
+                          <p className="metric-copy">
+                            Verdict: <strong>{sovVerdict}</strong>
+                          </p>
+                        </div>
+                        <div className="suggestion-evaluation-detail-card">
+                          <h4>Rationale / Evidence</h4>
+                          <p className="metric-copy">{rationaleOutput}</p>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -2690,7 +2809,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-data">
                     <div className="panel-header">
                       <div>
-                        <h2>Sentiment &amp; Share of Voice</h2>
+                        <h2>Sentiment &amp; SOV</h2>
                         <p>
                           {visibleSentimentCount} URL entr
                           {visibleSentimentCount === 1 ? 'y' : 'ies'} from{' '}
@@ -2822,7 +2941,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-evaluate">
                     <div className="panel-header">
                       <div>
-                        <h2>Suggestion Evaluation</h2>
+                        <h2>Suggestions</h2>
                         <p>
                           Validate {visibleSuggestionEvaluationCount} suggestion
                           {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the
@@ -2891,7 +3010,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-evaluate">
                     <div className="panel-header">
                       <div>
-                        <h2>Sentiment Evaluation</h2>
+                        <h2>Sentiment</h2>
                         <p>
                           Independently re-check extracted sentiment for{' '}
                           {visibleEvaluationCount} URL entr
@@ -2959,7 +3078,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-evaluate">
                     <div className="panel-header">
                       <div>
-                        <h2>SOV Evaluation</h2>
+                        <h2>SOV</h2>
                         <p>
                           Re-check extracted share of voice for {visibleEvaluationCount}{' '}
                           URL entr

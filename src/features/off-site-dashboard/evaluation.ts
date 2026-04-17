@@ -94,7 +94,19 @@ export function deriveSentimentVerdict(input: {
     return 'Needs Review';
   }
 
-  if (!evaluatedValue || !extractedValue) {
+  const evaluatedIsNoBrandMentions = evaluatedValue === 'no brand mentions';
+
+  if (!extractedValue) {
+    if (evaluatedIsNoBrandMentions) {
+      return 'Correct';
+    }
+    if (evaluatedValue) {
+      return 'Incorrect';
+    }
+    return 'Needs Review';
+  }
+
+  if (!evaluatedValue) {
     return 'Needs Review';
   }
 
@@ -132,7 +144,14 @@ export function deriveSovVerdict(input: {
       ? result.evaluatedTargetBrandSharePct
       : parsePercentageValue(result.evaluatedSov);
 
-  if (extractedPct === null || evaluatedPct === null) {
+  if (extractedPct === null) {
+    if (evaluatedPct === null) {
+      return 'Needs Review';
+    }
+    return evaluatedPct <= SENTIMENT_SOV_TOLERANCE_POINTS ? 'Correct' : 'Incorrect';
+  }
+
+  if (evaluatedPct === null) {
     return 'Needs Review';
   }
 

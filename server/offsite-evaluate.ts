@@ -1821,7 +1821,12 @@ async function fetchRedditEvidence(
 async function fetchWebEvidence(
   itemUrl: string,
   env: ServerEnv,
+  site?: string,
 ): Promise<SourceEvidence> {
+  const brandKey = site ? extractBrandKey(site) : '';
+  const urlBrandKey = extractBrandKey(itemUrl);
+  const isBrandOwned = Boolean(brandKey && urlBrandKey && brandKey === urlBrandKey) || undefined;
+
   if (getBrightDataApiKey(env)) {
     try {
       const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
@@ -1837,6 +1842,7 @@ async function fetchWebEvidence(
           status: 'success',
           evidenceText: pageText,
           fallbackSnippet: pageText.slice(0, 280),
+          isBrandOwned,
         };
       }
     } catch {
@@ -1875,6 +1881,7 @@ async function fetchWebEvidence(
           : 'insufficient_evidence',
       evidenceText,
       fallbackSnippet: title || description || 'Page evidence could not be extracted.',
+      isBrandOwned,
     };
   } catch {
     return {
@@ -1886,6 +1893,7 @@ async function fetchWebEvidence(
       status: 'fetch_failed',
       evidenceText: '',
       fallbackSnippet: 'Failed to fetch page content.',
+      isBrandOwned,
     };
   }
 }
@@ -1902,7 +1910,7 @@ async function fetchEvidenceForRequest(
     return fetchRedditEvidence(payload.item, env);
   }
 
-  return fetchWebEvidence(payload.item, env);
+  return fetchWebEvidence(payload.item, env, payload.site);
 }
 
 function buildLlmPrompt(
@@ -2322,12 +2330,18 @@ export async function runOffsiteEvaluation(
 
   const evidence = await fetchEvidenceForRequest(payload, env);
 
-  // Brand-owned YouTube channel: sentiment is inherently favorable — skip LLM.
-  // Viewer comments (if fetched) are included in evidenceText for context.
-  if (evidence.isBrandOwned && evidence.sourceType === 'youtube') {
-    const commentNote = evidence.usedComments
-      ? ' Viewer comments are included in the evidence for context.'
-      : ' No viewer comments were available.';
+  // Brand-owned source: sentiment is inherently favorable — skip LLM.
+  if (evidence.isBrandOwned) {
+    const sourceLabel =
+      evidence.sourceType === 'youtube'
+        ? "the brand's own YouTube channel"
+        : "the brand's own website";
+    const commentNote =
+      evidence.sourceType === 'youtube' && evidence.usedComments
+        ? ' Viewer comments are included in the evidence for context.'
+        : evidence.sourceType === 'youtube'
+          ? ' No viewer comments were available.'
+          : '';
 
     return {
       evaluatedSentiment: 'Favorable',
@@ -2336,7 +2350,7 @@ export async function runOffsiteEvaluation(
       sovConfidence: 20,
       evaluatedTargetBrandSharePct: -1,
       rationale:
-        `This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand.${commentNote}`,
+        `This content is published on ${sourceLabel}. Brand-produced content is inherently favorable toward the brand.${commentNote}`,
       evidenceSnippet: evidence.fallbackSnippet,
       evaluatedAt: new Date().toISOString(),
       evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,

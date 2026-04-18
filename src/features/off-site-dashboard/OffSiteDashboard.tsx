@@ -398,6 +398,10 @@ function getEvaluationEvidenceContextLines(
     ];
   }
 
+  if (fetch.isBrandOwned) {
+    return ['Evidence source: brand site'];
+  }
+
   return ['Evidence source: web page'];
 }
 
@@ -1560,9 +1564,15 @@ function EvaluationTable(props: {
                           {evaluationResult?.fetch?.isBrandOwned && (
                             <span
                               className="status-pill status-pill-success evaluator-brand-badge"
-                              title="This video is published on the brand's own YouTube channel"
+                              title={
+                                evaluationResult.fetch.sourceType === 'youtube'
+                                  ? "This video is published on the brand's own YouTube channel"
+                                  : "This URL is on the brand's own website"
+                              }
                             >
-                              Brand channel
+                              {evaluationResult.fetch.sourceType === 'youtube'
+                                ? 'Brand channel'
+                                : 'Brand site'}
                             </span>
                           )}
                         </div>
@@ -1610,10 +1620,16 @@ function EvaluationTable(props: {
                           {evaluationResult?.fetch?.isBrandOwned && (
                             <span
                               className="status-pill status-pill-success"
-                              title="This video is published on the brand's own YouTube channel"
+                              title={
+                                evaluationResult.fetch.sourceType === 'youtube'
+                                  ? "This video is published on the brand's own YouTube channel"
+                                  : "This URL is on the brand's own website"
+                              }
                               style={{ display: 'inline-block', marginBottom: '0.5rem' }}
                             >
-                              Brand channel
+                              {evaluationResult.fetch.sourceType === 'youtube'
+                                ? 'Brand channel'
+                                : 'Brand site'}
                             </span>
                           )}
                           <p className="metric-copy">

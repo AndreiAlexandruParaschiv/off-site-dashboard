@@ -59,6 +59,7 @@ type SourceEvidence = {
   status: 'success' | 'partial' | 'insufficient_evidence' | 'fetch_failed';
   evidenceText: string;
   fallbackSnippet: string;
+  isBrandOwned?: boolean;
 };
 
 type LlmEvaluation = {
@@ -88,6 +89,25 @@ function trimMultilineText(value: string) {
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .join('\n');
+}
+
+function extractBrandKey(site: string): string {
+  try {
+    const trimmed = site.trim();
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    return url.hostname.replace(/^www\./i, '').split('.')[0].toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isBrandChannel(channelName: string, brandKey: string): boolean {
+  if (!brandKey || !channelName) {
+    return false;
+  }
+  const normalizedChannel = channelName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedBrand = brandKey.replace(/[^a-z0-9]/g, '');
+  return normalizedChannel.includes(normalizedBrand);
 }
 
 function stripHtmlTags(value: string) {
@@ -341,6 +361,7 @@ async function fetchBrightDataUnlockerBody(
 async function fetchBrightDataYoutubeEvidence(
   itemUrl: string,
   env: ServerEnv,
+  site?: string,
 ): Promise<SourceEvidence> {
   const apiKey = getBrightDataApiKey(env);
 
@@ -391,13 +412,19 @@ async function fetchBrightDataYoutubeEvidence(
   const channelName = trimMultilineText(String(firstResult.youtuber ?? ''));
   const channelUrl = trimMultilineText(String(firstResult.channel_url ?? ''));
 
+  const brandKey = site ? extractBrandKey(site) : '';
+  const brandOwned = Boolean(brandKey && isBrandChannel(channelName, brandKey));
+
   const evidenceText = clampEvidenceText(
     trimMultilineText(
       [
         title ? `Title: ${title}` : '',
         description ? `Description: ${description}` : '',
-        channelName ? `Channel: ${channelName}` : '',
+        channelName ? `Channel: ${channelName}${brandOwned ? ' (brand channel)' : ''}` : '',
         channelUrl ? `Channel URL: ${channelUrl}` : '',
+        brandOwned
+          ? "Note: This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand."
+          : '',
         transcript ? `Transcript:\n${transcript}` : '',
       ].join('\n\n'),
     ),
@@ -425,6 +452,7 @@ async function fetchBrightDataYoutubeEvidence(
       title ||
       description ||
       'Bright Data YouTube evidence could not be extracted.',
+    isBrandOwned: brandOwned,
   };
 }
 
@@ -1327,41 +1355,41 @@ async function buildYoutubeEvidenceFromHtml(
 async function fetchYoutubeEvidence(
   itemUrl: string,
   env: ServerEnv,
+  site?: string,
 ): Promise<SourceEvidence> {
+  let videoEvidence: SourceEvidence | null = null;
+
   if (getBrightDataApiKey(env)) {
     try {
-      const datasetEvidence = await fetchBrightDataYoutubeEvidence(itemUrl, env);
+      const datasetEvidence = await fetchBrightDataYoutubeEvidence(itemUrl, env, site);
 
       if (
         datasetEvidence.transcriptStatus === 'available_and_used' ||
         datasetEvidence.transcriptStatus === 'available_but_not_used'
       ) {
-        return datasetEvidence;
-      }
+        videoEvidence = datasetEvidence;
+      } else {
+        try {
+          const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
+          const unlockerEvidence = await buildYoutubeEvidenceFromHtml(
+            itemUrl,
+            unlockerHtml,
+            (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
+          );
 
-      try {
-        const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-        const unlockerEvidence = await buildYoutubeEvidenceFromHtml(
-          itemUrl,
-          unlockerHtml,
-          (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
-        );
-
-        if (
-          unlockerEvidence.transcriptStatus === 'available_and_used' ||
-          unlockerEvidence.evidenceText.length > datasetEvidence.evidenceText.length
-        ) {
-          return unlockerEvidence;
+          videoEvidence =
+            unlockerEvidence.transcriptStatus === 'available_and_used' ||
+            unlockerEvidence.evidenceText.length > datasetEvidence.evidenceText.length
+              ? { ...unlockerEvidence, isBrandOwned: datasetEvidence.isBrandOwned }
+              : datasetEvidence;
+        } catch {
+          videoEvidence = datasetEvidence;
         }
-      } catch {
-        // Fall back to the dataset evidence if the unlocker attempt fails.
       }
-
-      return datasetEvidence;
     } catch {
       try {
         const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-        return await buildYoutubeEvidenceFromHtml(
+        videoEvidence = await buildYoutubeEvidenceFromHtml(
           itemUrl,
           unlockerHtml,
           (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
@@ -1369,6 +1397,38 @@ async function fetchYoutubeEvidence(
       } catch {
         // Fall through to direct fetch if both Bright Data paths failed.
       }
+    }
+
+    if (videoEvidence && !videoEvidence.usedTranscript) {
+      // No transcript — fetch comments as supplementary evidence.
+      try {
+        const commentTexts = await fetchBrightDataYoutubeCommentTexts(itemUrl, env);
+
+        if (commentTexts.length > 0) {
+          const commentsSection = `Comments:\n${commentTexts.join('\n')}`;
+          const combinedEvidence = clampEvidenceText(
+            trimMultilineText(
+              [videoEvidence.evidenceText, commentsSection].filter(Boolean).join('\n\n'),
+            ),
+          );
+
+          videoEvidence = {
+            ...videoEvidence,
+            usedComments: true,
+            evidenceText: combinedEvidence,
+            status:
+              combinedEvidence.length < MIN_EVIDENCE_CHARACTERS
+                ? 'insufficient_evidence'
+                : 'partial',
+          };
+        }
+      } catch {
+        // Comments are supplementary; don't fail if they can't be fetched.
+      }
+    }
+
+    if (videoEvidence) {
+      return videoEvidence;
     }
   }
 
@@ -1680,7 +1740,7 @@ async function fetchEvidenceForRequest(
   env: ServerEnv,
 ): Promise<SourceEvidence> {
   if (payload.opportunityType === 'YouTube') {
-    return fetchYoutubeEvidence(payload.item, env);
+    return fetchYoutubeEvidence(payload.item, env, payload.site);
   }
 
   if (payload.opportunityType === 'Reddit') {
@@ -2098,6 +2158,31 @@ export async function runOffsiteEvaluation(
     evidence.status === 'fetch_failed' ||
     evidence.status === 'insufficient_evidence'
   ) {
+    if (evidence.status === 'insufficient_evidence' && evidence.isBrandOwned) {
+      return {
+        evaluatedSentiment: 'Favorable',
+        sentimentConfidence: 55,
+        evaluatedSov: 'Needs Review',
+        sovConfidence: 20,
+        evaluatedTargetBrandSharePct: -1,
+        rationale:
+          "This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand. No transcript or comments were available to verify further.",
+        evidenceSnippet: evidence.fallbackSnippet,
+        evaluatedAt: new Date().toISOString(),
+        evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
+        fetch: {
+          status: evidence.status,
+          sourceType: evidence.sourceType,
+          sourceUrl: evidence.sourceUrl,
+          usedTranscript: evidence.usedTranscript,
+          usedComments: evidence.usedComments,
+          transcriptStatus: evidence.transcriptStatus,
+          evidenceCharacters: evidence.evidenceText.length,
+        },
+        targetBrand: '',
+      };
+    }
+
     const weakEvidenceScore =
       evidence.status === 'fetch_failed' ? 12 : 28;
     const blockedBySource =

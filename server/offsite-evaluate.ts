@@ -124,6 +124,20 @@ function stripHtmlTags(value: string) {
   );
 }
 
+function stripNavigationNoise(text: string): string {
+  return trimMultilineText(
+    text
+      // Remove markdown skip-nav links: [Skip to X](#anchor)
+      .replace(/\[skip to [^\]]+\]\([^)]*\)/gi, '')
+      // Remove plain "Skip to X" text fragments
+      .replace(/\bskip to \S+(?:\s+\S+){0,4}/gi, '')
+      // Remove leading navigation bullet lists (* [Label](/path))
+      .replace(/^(?:\*\s+\[[^\]]*\]\([^)]+\)\s*\n)+/m, '')
+      // Collapse runs of whitespace/empty fragments left by removals
+      .replace(/[ \t]{2,}/g, ' '),
+  );
+}
+
 function decodeHtmlEntities(value: string) {
   const namedEntities: Record<string, string> = {
     amp: '&',
@@ -1830,7 +1844,7 @@ async function fetchWebEvidence(
   if (getBrightDataApiKey(env)) {
     try {
       const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
-      const pageText = clampEvidenceText(trimMultilineText(brightDataBody));
+      const pageText = clampEvidenceText(stripNavigationNoise(brightDataBody));
 
       if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
         return {

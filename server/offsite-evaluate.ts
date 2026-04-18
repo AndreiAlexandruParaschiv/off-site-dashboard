@@ -358,52 +358,11 @@ async function fetchBrightDataUnlockerBody(
   return payload.body;
 }
 
-async function fetchBrightDataYoutubeEvidence(
+function buildYoutubeEvidenceFromBrightDataEntry(
   itemUrl: string,
-  env: ServerEnv,
+  firstResult: Record<string, unknown>,
   site?: string,
-): Promise<SourceEvidence> {
-  const apiKey = getBrightDataApiKey(env);
-
-  if (!apiKey) {
-    throw new Error('BRIGHTDATA_API_KEY is missing.');
-  }
-
-  const response = await fetch(
-    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
-      getBrightDataYoutubeVideoDatasetId(env),
-    )}&notify=false&include_errors=true`,
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        input: [
-          {
-            url: itemUrl,
-            country: '',
-            transcription_language:
-              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
-          },
-        ],
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
-  }
-
-  const payload = (await response.json()) as Array<Record<string, unknown>>;
-  const firstResult = payload[0];
-
-  if (!firstResult || typeof firstResult !== 'object') {
-    throw new Error('Bright Data YouTube scrape returned no results.');
-  }
-
+): SourceEvidence {
   const title = trimMultilineText(String(firstResult.title ?? ''));
   const description = trimMultilineText(String(firstResult.description ?? ''));
   const transcript = trimMultilineText(
@@ -454,6 +413,160 @@ async function fetchBrightDataYoutubeEvidence(
       'Bright Data YouTube evidence could not be extracted.',
     isBrandOwned: brandOwned,
   };
+}
+
+async function fetchBrightDataYoutubeEvidence(
+  itemUrl: string,
+  env: ServerEnv,
+  site?: string,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const response = await fetch(
+    `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(
+      getBrightDataYoutubeVideoDatasetId(env),
+    )}&notify=false&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: [
+          {
+            url: itemUrl,
+            country: '',
+            transcription_language:
+              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+          },
+        ],
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const firstResult = payload[0];
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube scrape returned no results.');
+  }
+
+  return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, firstResult, site);
+}
+
+async function fetchBrightDataYoutubeEvidenceAsync(
+  itemUrl: string,
+  env: ServerEnv,
+  site?: string,
+): Promise<SourceEvidence> {
+  const apiKey = getBrightDataApiKey(env);
+
+  if (!apiKey) {
+    throw new Error('BRIGHTDATA_API_KEY is missing.');
+  }
+
+  const datasetId = getBrightDataYoutubeVideoDatasetId(env);
+  const triggerResponse = await fetch(
+    `https://api.brightdata.com/datasets/v3/trigger?dataset_id=${encodeURIComponent(
+      datasetId,
+    )}&include_errors=true`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify([
+        {
+          url: itemUrl,
+          country: '',
+          transcription_language:
+            env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+        },
+      ]),
+    },
+  );
+
+  if (!triggerResponse.ok) {
+    const errorText = await triggerResponse.text();
+    throw new Error(
+      errorText || `Bright Data YouTube async trigger failed with ${triggerResponse.status}`,
+    );
+  }
+
+  const triggerPayload = (await triggerResponse.json()) as { snapshot_id?: string };
+  const snapshotId = triggerPayload.snapshot_id;
+
+  if (!snapshotId) {
+    throw new Error('Bright Data YouTube async trigger returned no snapshot_id.');
+  }
+
+  const parsedTimeout = Number.parseInt(
+    env.BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?.trim() ?? '',
+    10,
+  );
+  const timeoutMs =
+    Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 30000;
+  const pollIntervalMs = 4000;
+  const deadlineMs = Date.now() + timeoutMs;
+
+  let firstResult: Record<string, unknown> | undefined;
+
+  while (Date.now() < deadlineMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const progressResponse = await fetch(
+      `https://api.brightdata.com/datasets/v3/progress/${encodeURIComponent(snapshotId)}`,
+      { headers: { authorization: `Bearer ${apiKey}` } },
+    );
+
+    if (!progressResponse.ok) {
+      throw new Error(
+        `Bright Data YouTube progress check failed with ${progressResponse.status}`,
+      );
+    }
+
+    const progress = (await progressResponse.json()) as { status?: string };
+
+    if (progress.status === 'ready') {
+      const snapshotResponse = await fetch(
+        `https://api.brightdata.com/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`,
+        { headers: { authorization: `Bearer ${apiKey}` } },
+      );
+
+      if (!snapshotResponse.ok) {
+        throw new Error(
+          `Bright Data YouTube snapshot download failed with ${snapshotResponse.status}`,
+        );
+      }
+
+      const snapshot = (await snapshotResponse.json()) as unknown;
+      firstResult = Array.isArray(snapshot)
+        ? (snapshot[0] as Record<string, unknown> | undefined)
+        : (snapshot as Record<string, unknown> | undefined);
+      break;
+    }
+
+    if (progress.status === 'failed') {
+      throw new Error('Bright Data YouTube async crawl failed.');
+    }
+  }
+
+  if (!firstResult || typeof firstResult !== 'object') {
+    throw new Error('Bright Data YouTube async crawl timed out.');
+  }
+
+  return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, firstResult, site);
 }
 
 function extractBrightDataCommentText(entry: Record<string, unknown>) {
@@ -1363,30 +1476,32 @@ async function fetchYoutubeEvidence(
     try {
       const datasetEvidence = await fetchBrightDataYoutubeEvidence(itemUrl, env, site);
 
-      if (
+      if (datasetEvidence.isBrandOwned) {
+        // Brand channel: no transcript scraping needed — sentiment is inherently favorable.
+        // Only fetch viewer comments as context.
+        videoEvidence = datasetEvidence;
+      } else if (
         datasetEvidence.transcriptStatus === 'available_and_used' ||
         datasetEvidence.transcriptStatus === 'available_but_not_used'
       ) {
+        // Sync scrape returned a transcript — fast path, no async needed.
         videoEvidence = datasetEvidence;
       } else {
+        // Sync returned metadata only — try async scrape for a fresh transcript.
         try {
-          const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
-          const unlockerEvidence = await buildYoutubeEvidenceFromHtml(
-            itemUrl,
-            unlockerHtml,
-            (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
-          );
-
+          const asyncEvidence = await fetchBrightDataYoutubeEvidenceAsync(itemUrl, env, site);
           videoEvidence =
-            unlockerEvidence.transcriptStatus === 'available_and_used' ||
-            unlockerEvidence.evidenceText.length > datasetEvidence.evidenceText.length
-              ? { ...unlockerEvidence, isBrandOwned: datasetEvidence.isBrandOwned }
+            asyncEvidence.transcriptStatus === 'available_and_used' ||
+            asyncEvidence.evidenceText.length > datasetEvidence.evidenceText.length
+              ? asyncEvidence
               : datasetEvidence;
         } catch {
+          // Async failed — fall back to the sync result.
           videoEvidence = datasetEvidence;
         }
       }
     } catch {
+      // Dataset paths failed — try Web Unlocker for metadata.
       try {
         const unlockerHtml = await fetchBrightDataUnlockerBody(itemUrl, env, 'raw');
         videoEvidence = await buildYoutubeEvidenceFromHtml(
@@ -1395,7 +1510,7 @@ async function fetchYoutubeEvidence(
           (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
         );
       } catch {
-        // Fall through to direct fetch if both Bright Data paths failed.
+        // Fall through to direct fetch.
       }
     }
 
@@ -1405,7 +1520,7 @@ async function fetchYoutubeEvidence(
         const commentTexts = await fetchBrightDataYoutubeCommentTexts(itemUrl, env);
 
         if (commentTexts.length > 0) {
-          const commentsSection = `Comments:\n${commentTexts.join('\n')}`;
+          const commentsSection = `Viewer comments:\n${commentTexts.join('\n')}`;
           const combinedEvidence = clampEvidenceText(
             trimMultilineText(
               [videoEvidence.evidenceText, commentsSection].filter(Boolean).join('\n\n'),
@@ -2154,35 +2269,41 @@ export async function runOffsiteEvaluation(
 
   const evidence = await fetchEvidenceForRequest(payload, env);
 
+  // Brand-owned YouTube channel: sentiment is inherently favorable — skip LLM.
+  // Viewer comments (if fetched) are included in evidenceText for context.
+  if (evidence.isBrandOwned && evidence.sourceType === 'youtube') {
+    const commentNote = evidence.usedComments
+      ? ' Viewer comments are included in the evidence for context.'
+      : ' No viewer comments were available.';
+
+    return {
+      evaluatedSentiment: 'Favorable',
+      sentimentConfidence: 65,
+      evaluatedSov: 'Needs Review',
+      sovConfidence: 20,
+      evaluatedTargetBrandSharePct: -1,
+      rationale:
+        `This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand.${commentNote}`,
+      evidenceSnippet: evidence.fallbackSnippet,
+      evaluatedAt: new Date().toISOString(),
+      evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
+      fetch: {
+        status: evidence.status,
+        sourceType: evidence.sourceType,
+        sourceUrl: evidence.sourceUrl,
+        usedTranscript: evidence.usedTranscript,
+        usedComments: evidence.usedComments,
+        transcriptStatus: evidence.transcriptStatus,
+        evidenceCharacters: evidence.evidenceText.length,
+      },
+      targetBrand: '',
+    };
+  }
+
   if (
     evidence.status === 'fetch_failed' ||
     evidence.status === 'insufficient_evidence'
   ) {
-    if (evidence.status === 'insufficient_evidence' && evidence.isBrandOwned) {
-      return {
-        evaluatedSentiment: 'Favorable',
-        sentimentConfidence: 55,
-        evaluatedSov: 'Needs Review',
-        sovConfidence: 20,
-        evaluatedTargetBrandSharePct: -1,
-        rationale:
-          "This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand. No transcript or comments were available to verify further.",
-        evidenceSnippet: evidence.fallbackSnippet,
-        evaluatedAt: new Date().toISOString(),
-        evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
-        fetch: {
-          status: evidence.status,
-          sourceType: evidence.sourceType,
-          sourceUrl: evidence.sourceUrl,
-          usedTranscript: evidence.usedTranscript,
-          usedComments: evidence.usedComments,
-          transcriptStatus: evidence.transcriptStatus,
-          evidenceCharacters: evidence.evidenceText.length,
-        },
-        targetBrand: '',
-      };
-    }
-
     const weakEvidenceScore =
       evidence.status === 'fetch_failed' ? 12 : 28;
     const blockedBySource =

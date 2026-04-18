@@ -2308,6 +2308,7 @@ export async function runOffsiteEvaluation(
         usedComments: evidence.usedComments,
         transcriptStatus: evidence.transcriptStatus,
         evidenceCharacters: evidence.evidenceText.length,
+        isBrandOwned: evidence.isBrandOwned,
       },
       targetBrand: '',
     };
@@ -2352,6 +2353,7 @@ export async function runOffsiteEvaluation(
         usedComments: evidence.usedComments,
         transcriptStatus: evidence.transcriptStatus,
         evidenceCharacters: evidence.evidenceText.length,
+        isBrandOwned: evidence.isBrandOwned,
       },
       targetBrand: '',
     };
@@ -2402,6 +2404,7 @@ export async function runOffsiteEvaluation(
       usedComments: evidence.usedComments,
       transcriptStatus: evidence.transcriptStatus,
       evidenceCharacters: evidence.evidenceText.length,
+      isBrandOwned: evidence.isBrandOwned,
     },
     targetBrand: llmResult.targetBrand,
   };

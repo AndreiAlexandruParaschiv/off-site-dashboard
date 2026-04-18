@@ -365,11 +365,19 @@ function getEvaluationEvidenceContextLines(
   }
 
   if (fetch.sourceType === 'youtube') {
-    if (fetch.usedTranscript) {
-      return ['Evidence source: transcript/captions'];
+    if (fetch.isBrandOwned) {
+      const lines = ['Evidence source: brand channel'];
+      if (fetch.usedComments) {
+        lines.push('Viewer comments included for context.');
+      }
+      return lines;
     }
 
-    const lines = ['Evidence source: metadata only'];
+    if (fetch.usedTranscript) {
+      return [fetch.usedComments ? 'Evidence source: transcript + comments' : 'Evidence source: transcript/captions'];
+    }
+
+    const lines = [fetch.usedComments ? 'Evidence source: metadata + comments' : 'Evidence source: metadata only'];
 
     if (
       fetch.transcriptStatus === 'available_but_not_used' ||
@@ -1589,6 +1597,15 @@ function EvaluationTable(props: {
                       <div className="suggestion-evaluation-detail-grid">
                         <div className="suggestion-evaluation-detail-card">
                           <h4>Evaluator&apos;s call</h4>
+                          {evaluationResult?.fetch?.isBrandOwned && (
+                            <span
+                              className="status-pill status-pill-success"
+                              title="This video is published on the brand's own YouTube channel"
+                              style={{ display: 'inline-block', marginBottom: '0.5rem' }}
+                            >
+                              Brand channel
+                            </span>
+                          )}
                           <p className="metric-copy">
                             Evaluator sentiment:{' '}
                             <strong>{evaluatorSentimentLabel}</strong>

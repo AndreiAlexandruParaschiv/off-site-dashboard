@@ -84,6 +84,7 @@ export interface SentimentEvaluationFetchMetadata {
   usedComments?: boolean;
   transcriptStatus?: YouTubeTranscriptStatus;
   evidenceCharacters: number;
+  isBrandOwned?: boolean;
 }
 
 export interface SentimentEvaluationResult {

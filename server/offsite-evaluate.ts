@@ -1902,6 +1902,19 @@ function buildLlmPrompt(
     '  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of EACH brand in "Extracted SOV brands", plus a separate targetBrandMentionCount for the target brand.',
     '  3. Judge the sentiment of the fetched content toward the target brand: "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if the target brand is never referenced, or "Needs Review" if the evidence is too sparse to support a confident judgment.',
     '  4. Return integer mention counts — do NOT compute percentages. The system derives SOV percentages from your counts and compares them against the backend\'s extracted values.',
+  );
+
+  if (evidence.usedComments) {
+    promptLines.push(
+      '  5. When "Viewer comments:" section is present in the evidence, assess comment sentiment toward the target brand SEPARATELY from the video content sentiment.',
+      '  6. In your rationale explicitly state:',
+      '     - Video content sentiment: [your assessment from title/description/transcript]',
+      '     - Viewer comment sentiment: [your assessment from the comments — note if comments are mostly positive, negative, neutral, or mixed toward the brand, and cite 1-2 specific examples]',
+      '     - Combined verdict: [the overall sentiment label you chose and why]',
+    );
+  }
+
+  promptLines.push(
     '',
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - If the target brand is NOT mentioned in the evidence but Extracted SOV claims a non-zero share, that is a backend error: return targetBrandMentionCount = 0, evaluatedSentiment = "No brand mentions", confidence = "high". The system will correctly flag this as a large SOV disagreement.',

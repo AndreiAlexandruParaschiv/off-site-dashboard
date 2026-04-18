@@ -1414,10 +1414,12 @@ async function buildYoutubeEvidenceFromHtml(
     extractBalancedObjectLiteral(html, 'var ytInitialPlayerResponse =');
   let transcript = '';
   let transcriptStatus: SourceEvidence['transcriptStatus'] = 'unknown';
+  let htmlChannelName = '';
 
   if (playerResponseJson) {
     try {
       const playerResponse = JSON.parse(playerResponseJson) as {
+        videoDetails?: { author?: string; channelId?: string };
         captions?: {
           playerCaptionsTracklistRenderer?: {
             captionTracks?: Array<{
@@ -1428,6 +1430,7 @@ async function buildYoutubeEvidenceFromHtml(
           };
         };
       };
+      htmlChannelName = trimMultilineText(String(playerResponse.videoDetails?.author ?? ''));
       const captionTracks =
         playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
       const transcriptTrack =
@@ -1460,6 +1463,7 @@ async function buildYoutubeEvidenceFromHtml(
       [
         title ? `Title: ${title}` : '',
         description ? `Description: ${description}` : '',
+        htmlChannelName ? `Channel: ${htmlChannelName}` : '',
         transcript ? `Transcript:\n${transcript}` : '',
       ].join('\n\n'),
     ),
@@ -1479,7 +1483,9 @@ async function buildYoutubeEvidenceFromHtml(
           ? 'success'
           : 'partial',
     evidenceText,
-    fallbackSnippet: title || description || 'YouTube evidence could not be extracted.',
+    fallbackSnippet:
+      [htmlChannelName, title, description].filter(Boolean).join(' | ') ||
+      'YouTube evidence could not be extracted.',
   };
 }
 
@@ -1560,6 +1566,15 @@ async function fetchYoutubeEvidence(
       }
     }
 
+    // Title-based brand detection fallback: when the dataset path failed and we only
+    // have Web Unlocker output (no channel field), infer brand ownership from the title.
+    if (videoEvidence && videoEvidence.isBrandOwned === undefined && site) {
+      const brandKey = extractBrandKey(site);
+      if (brandKey && isBrandChannel(videoEvidence.fallbackSnippet, brandKey)) {
+        videoEvidence = { ...videoEvidence, isBrandOwned: true };
+      }
+    }
+
     if (videoEvidence) {
       return videoEvidence;
     }
@@ -1567,7 +1582,14 @@ async function fetchYoutubeEvidence(
 
   try {
     const html = await fetchText(itemUrl);
-    return await buildYoutubeEvidenceFromHtml(itemUrl, html);
+    let directEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, html);
+    if (directEvidence.isBrandOwned === undefined && site) {
+      const brandKey = extractBrandKey(site);
+      if (brandKey && isBrandChannel(directEvidence.fallbackSnippet, brandKey)) {
+        directEvidence = { ...directEvidence, isBrandOwned: true };
+      }
+    }
+    return directEvidence;
   } catch {
     return {
       sourceType: 'youtube',

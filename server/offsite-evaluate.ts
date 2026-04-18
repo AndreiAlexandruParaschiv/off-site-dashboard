@@ -368,11 +368,29 @@ function buildYoutubeEvidenceFromBrightDataEntry(
   const transcript = trimMultilineText(
     String(firstResult.formatted_transcript ?? firstResult.transcript ?? ''),
   );
-  const channelName = trimMultilineText(String(firstResult.youtuber ?? ''));
+  const channelName = trimMultilineText(
+    String(
+      firstResult.youtuber ??
+        firstResult.channel ??
+        firstResult.channel_name ??
+        firstResult.author ??
+        firstResult.uploader ??
+        '',
+    ),
+  );
   const channelUrl = trimMultilineText(String(firstResult.channel_url ?? ''));
 
   const brandKey = site ? extractBrandKey(site) : '';
-  const brandOwned = Boolean(brandKey && isBrandChannel(channelName, brandKey));
+  // Brand detection: channel name match OR title/description prominently features the brand
+  // with no competing brand references (handles cases where channel name is missing).
+  const brandOwnedByChannel = Boolean(brandKey && isBrandChannel(channelName, brandKey));
+  const brandOwnedByContent = Boolean(
+    brandKey &&
+      !brandOwnedByChannel &&
+      !channelName &&
+      (isBrandChannel(title, brandKey) || isBrandChannel(description, brandKey)),
+  );
+  const brandOwned = brandOwnedByChannel || brandOwnedByContent;
 
   const evidenceText = clampEvidenceText(
     trimMultilineText(

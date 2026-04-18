@@ -3181,7 +3181,7 @@ export function OffSiteDashboard() {
                               onClick={dashboard.exportSuggestionEvaluation}
                               type="button"
                             >
-                              Export Suggestion Excel
+                              Export Suggestions
                             </button>
                           </div>
                         )}
@@ -3251,7 +3251,7 @@ export function OffSiteDashboard() {
                               onClick={dashboard.exportSentimentEvaluation}
                               type="button"
                             >
-                              Export Sentiment Excel
+                              Export Sentiment
                             </button>
                           </div>
                         )}
@@ -3319,7 +3319,7 @@ export function OffSiteDashboard() {
                               onClick={dashboard.exportSovEvaluation}
                               type="button"
                             >
-                              Export SOV Excel
+                              Export SOV
                             </button>
                           </div>
                         )}

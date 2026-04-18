@@ -2207,8 +2207,8 @@ function downloadWikipediaBatchResultsCsv(results: WikipediaUrlCheckResult[]) {
     'Summary',
     'Rationale',
     'Evidence Snippet',
-    'Evaluator Provider',
-    'Evaluator Model',
+    'Evaluator',
+    'Model',
   ];
 
   const lines = [
@@ -2528,7 +2528,7 @@ export function OffSiteDashboard() {
         verdictLabel: 'No Wikipedia opportunity',
         summary: 'The backend did not return a Wikipedia opportunity for this site.',
         rationale:
-          'There is no Wikipedia opportunity in the backend response, so Claude could not evaluate a backend wikipediaUrl.',
+          'There is no Wikipedia opportunity in the backend response, so the AI evaluator could not assess a backend wikipediaUrl.',
       });
     }
 
@@ -3355,7 +3355,7 @@ export function OffSiteDashboard() {
                       <h2>Wikipedia URL Check</h2>
                       <p>
                         Enter a domain to fetch its live backend opportunity payload and
-                        send the backend `wikipediaUrl` to Claude on Bedrock to judge
+                        send the backend `wikipediaUrl` to an AI evaluator to judge
                         whether it matches the site.
                       </p>
                     </div>
@@ -3395,7 +3395,7 @@ export function OffSiteDashboard() {
                         <small className="field-note">
                           The checker resolves the site through the same backend used by
                           the dashboard, then evaluates only the returned
-                          `wikipediaUrl` field with Claude on Bedrock.
+                          `wikipediaUrl` field with the AI evaluator.
                         </small>
                       </label>
 
@@ -3450,7 +3450,7 @@ export function OffSiteDashboard() {
                         />
                         <small className="field-note">
                           One site per line. Paste 100 or more domains here to run a
-                          Bedrock-backed Wikipedia URL review pass and export the results.
+                          AI-backed Wikipedia URL review pass and export the results.
                         </small>
                       </label>
 
@@ -3558,7 +3558,7 @@ export function OffSiteDashboard() {
                         <h2>Check Result</h2>
                         <p>
                           Result details for the latest selected site and any batch run
-                          using the single backend `wikipediaUrl` value Claude evaluated.
+                          using the single backend `wikipediaUrl` value the AI evaluator assessed.
                         </p>
                       </div>
                     </div>
@@ -3699,7 +3699,7 @@ export function OffSiteDashboard() {
                               <div>
                                 <h3>Batch Results</h3>
                                 <p className="wikipedia-check-summary">
-                                  Review the table to see Claude verdicts versus sites where
+                                  Review the table to see AI evaluator verdicts versus sites where
                                   the backend did not expose a usable `wikipediaUrl`.
                                 </p>
                               </div>

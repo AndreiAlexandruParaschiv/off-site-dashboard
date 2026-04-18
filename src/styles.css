@@ -1363,7 +1363,7 @@ a:hover {
 }
 
 .evaluation-col-evaluated {
-  width: 220px;
+  width: 150px;
 }
 
 .evaluation-col-rationale {
@@ -1668,6 +1668,17 @@ a:hover {
 .confidence-stack {
   display: grid;
   gap: 8px;
+}
+
+.evaluator-verdict-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.evaluator-brand-badge {
+  font-size: 0.72em;
 }
 
 .confidence-pill {

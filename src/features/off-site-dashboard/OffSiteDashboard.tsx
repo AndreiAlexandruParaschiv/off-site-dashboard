@@ -1548,14 +1548,24 @@ function EvaluationTable(props: {
                               ? 'Evaluator could not judge. Open Details for rationale.'
                               : 'This row has not been evaluated yet.';
                       return (
-                        <span
-                          className={`status-pill status-pill-${getSuggestionVerdictTone(
-                            sentimentVerdict,
-                          )}`}
-                          title={tooltip}
-                        >
-                          {sentimentVerdict}
-                        </span>
+                        <div className="evaluator-verdict-stack">
+                          <span
+                            className={`status-pill status-pill-${getSuggestionVerdictTone(
+                              sentimentVerdict,
+                            )}`}
+                            title={tooltip}
+                          >
+                            {sentimentVerdict}
+                          </span>
+                          {evaluationResult?.fetch?.isBrandOwned && (
+                            <span
+                              className="status-pill status-pill-success evaluator-brand-badge"
+                              title="This video is published on the brand's own YouTube channel"
+                            >
+                              Brand channel
+                            </span>
+                          )}
+                        </div>
                       );
                     })()}
                   </td>

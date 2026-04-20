@@ -866,8 +866,6 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
       <table className="dashboard-table sentiment-table">
         <colgroup>
           <col className="sentiment-col-site" />
-          <col className="sentiment-col-site-id" />
-          <col className="sentiment-col-site-id" />
           <col className="sentiment-col-type" />
           <col className="sentiment-col-opportunity-id" />
           <col className="sentiment-col-url" />
@@ -877,7 +875,6 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
         <thead>
           <tr>
             <th>Site</th>
-            <th>Site ID</th>
             <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>URL</th>
@@ -890,8 +887,14 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
             if (row.sentimentItems.length === 0) {
               return (
                 <tr key={`${row.id}-sentiment-empty`}>
-                  <td>{row.site}</td>
-                  <td>{row.siteId ?? ' - '}</td>
+                  <td>
+                    <div className="sentiment-site-cell">
+                      <span className="sentiment-site-name">{row.site}</span>
+                      {row.siteId && (
+                        <span className="sentiment-site-id">{row.siteId}</span>
+                      )}
+                    </div>
+                  </td>
                   <td>{row.opportunityType ?? ' - '}</td>
                   <td>{row.opportunityId ?? ' - '}</td>
                   <td>
@@ -918,8 +921,14 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                 <tr key={item.rowKey ?? `${row.id}-sentiment-${index}`}>
                   {index === 0 && (
                     <>
-                      <td rowSpan={rowSpan}>{row.site}</td>
-                      <td rowSpan={rowSpan}>{row.siteId ?? ' - '}</td>
+                      <td rowSpan={rowSpan}>
+                        <div className="sentiment-site-cell">
+                          <span className="sentiment-site-name">{row.site}</span>
+                          {row.siteId && (
+                            <span className="sentiment-site-id">{row.siteId}</span>
+                          )}
+                        </div>
+                      </td>
                       <td rowSpan={rowSpan}>{row.opportunityType ?? ' - '}</td>
                       <td rowSpan={rowSpan}>{row.opportunityId ?? ' - '}</td>
                     </>

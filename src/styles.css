@@ -1307,15 +1307,11 @@ a:hover {
 }
 
 .sentiment-col-site {
-  width: 150px;
-}
-
-.sentiment-col-site-id {
-  width: 170px;
+  width: 200px;
 }
 
 .sentiment-col-type {
-  width: 140px;
+  width: 130px;
 }
 
 .sentiment-col-opportunity-id {
@@ -1332,6 +1328,23 @@ a:hover {
 
 .sentiment-col-sentiment {
   width: 160px;
+}
+
+.sentiment-site-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.sentiment-site-name {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.sentiment-site-id {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  word-break: break-all;
+  opacity: 0.75;
 }
 
 .evaluation-col-select {

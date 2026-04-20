@@ -1046,9 +1046,9 @@ function SuggestionEvaluationTable(props: {
           <col className="suggestion-evaluation-col-suggestion" />
           <col className="suggestion-evaluation-col-confidence" />
           <col className="suggestion-evaluation-col-verdict" />
-          <col className="evaluation-col-evaluated-at" />
-          <col className="evaluation-col-action" />
           <col className="suggestion-evaluation-col-details" />
+          <col className="evaluation-col-action" />
+          <col className="evaluation-col-evaluated-at" />
         </colgroup>
         <thead>
           <tr>
@@ -1107,9 +1107,9 @@ function SuggestionEvaluationTable(props: {
                   : ' ⇅'}
               </span>
             </th>
-            <th>Evaluated At</th>
-            <th>Action</th>
             <th>Details</th>
+            <th>Action</th>
+            <th>Evaluated At</th>
           </tr>
         </thead>
         <tbody>
@@ -1218,9 +1218,18 @@ function SuggestionEvaluationTable(props: {
                     </span>
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
-                      {formatTimestamp(evaluationResult?.evaluatedAt)}
-                    </span>
+                    {row.suggestion.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.suggestion.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
                   </td>
                   <td>
                     <button
@@ -1237,18 +1246,9 @@ function SuggestionEvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    {row.suggestion.rowKey ? (
-                      <button
-                        className="ghost-button suggestion-detail-toggle"
-                        onClick={() => toggleExpandedRow(row.suggestion.rowKey as string)}
-                        type="button"
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? 'Hide' : 'Show'}
-                      </button>
-                    ) : (
-                      <span className="metric-copy"> - </span>
-                    )}
+                    <span className="metric-copy metric-card">
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
+                    </span>
                   </td>
                 </tr>
                 {isExpanded && (
@@ -1356,9 +1356,9 @@ function EvaluationTable(props: {
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
           <col className="evaluation-col-evaluated" />
-          <col className="evaluation-col-evaluated-at" />
-          <col className="evaluation-col-action" />
           <col className="suggestion-evaluation-col-details" />
+          <col className="evaluation-col-action" />
+          <col className="evaluation-col-evaluated-at" />
         </colgroup>
         <thead>
           <tr>
@@ -1418,9 +1418,9 @@ function EvaluationTable(props: {
                   : ' ⇅'}
               </span>
             </th>
-            <th>Evaluated At</th>
-            <th>Action</th>
             <th>Details</th>
+            <th>Action</th>
+            <th>Evaluated At</th>
           </tr>
         </thead>
         <tbody>
@@ -1590,9 +1590,18 @@ function EvaluationTable(props: {
                     })()}
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
-                      {formatTimestamp(evaluationResult?.evaluatedAt)}
-                    </span>
+                    {row.item.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
                   </td>
                   <td>
                     <button
@@ -1607,18 +1616,9 @@ function EvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    {row.item.rowKey ? (
-                      <button
-                        className="ghost-button suggestion-detail-toggle"
-                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
-                        type="button"
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? 'Hide' : 'Show'}
-                      </button>
-                    ) : (
-                      <span className="metric-copy"> - </span>
-                    )}
+                    <span className="metric-copy metric-card">
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
+                    </span>
                   </td>
                 </tr>
                 {isExpanded && (
@@ -1730,9 +1730,9 @@ function SovEvaluationTable(props: {
           <col className="evaluation-col-sentiment" />
           <col className="evaluation-col-confidence" />
           <col className="evaluation-col-evaluated" />
-          <col className="evaluation-col-evaluated-at" />
-          <col className="evaluation-col-action" />
           <col className="suggestion-evaluation-col-details" />
+          <col className="evaluation-col-action" />
+          <col className="evaluation-col-evaluated-at" />
         </colgroup>
         <thead>
           <tr>
@@ -1792,9 +1792,9 @@ function SovEvaluationTable(props: {
                   : ' ⇅'}
               </span>
             </th>
-            <th>Evaluated At</th>
-            <th>Action</th>
             <th>Details</th>
+            <th>Action</th>
+            <th>Evaluated At</th>
           </tr>
         </thead>
         <tbody>
@@ -1931,9 +1931,18 @@ function SovEvaluationTable(props: {
                     })()}
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
-                      {formatTimestamp(evaluationResult?.evaluatedAt)}
-                    </span>
+                    {row.item.rowKey ? (
+                      <button
+                        className="ghost-button suggestion-detail-toggle"
+                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
+                        type="button"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    ) : (
+                      <span className="metric-copy"> - </span>
+                    )}
                   </td>
                   <td>
                     <button
@@ -1948,18 +1957,9 @@ function SovEvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    {row.item.rowKey ? (
-                      <button
-                        className="ghost-button suggestion-detail-toggle"
-                        onClick={() => toggleExpandedRow(row.item.rowKey as string)}
-                        type="button"
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? 'Hide' : 'Show'}
-                      </button>
-                    ) : (
-                      <span className="metric-copy"> - </span>
-                    )}
+                    <span className="metric-copy metric-card">
+                      {formatTimestamp(evaluationResult?.evaluatedAt)}
+                    </span>
                   </td>
                 </tr>
                 {isExpanded && (

@@ -215,7 +215,7 @@ function getSentimentTone(value?: string) {
 }
 
 function getSentimentLabel(value?: string) {
-  return (value ?? '').replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/u, '').trim();
+  return (value ?? '').replace(/^[\p{Emoji}\uFE0F\s]+/u, '').trim();
 }
 
 const MISSING_EXTRACTED_SENTIMENT_TOOLTIP =
@@ -722,7 +722,6 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
       <table className="dashboard-table suggestions-table">
         <colgroup>
           <col className="suggestions-col-site" />
-          <col className="suggestions-col-site-id" />
           <col className="suggestions-col-type" />
           <col className="suggestions-col-opportunity-id" />
           <col className="suggestions-col-suggestions" />
@@ -730,7 +729,6 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
         <thead>
           <tr>
             <th>Site</th>
-            <th>Site ID</th>
             <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>Suggestions</th>
@@ -739,8 +737,14 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
         <tbody>
           {props.rows.map((row) => (
             <tr key={row.id}>
-              <td>{row.site}</td>
-              <td>{row.siteId ?? ' - '}</td>
+              <td>
+                <div className="coverage-site-cell">
+                  <span className="coverage-site-name">{row.site}</span>
+                  {row.siteId && (
+                    <span className="coverage-site-id">Site ID: {row.siteId}</span>
+                  )}
+                </div>
+              </td>
               <td>{row.opportunityType ?? ' - '}</td>
               <td>{row.opportunityId ?? ' - '}</td>
               <td>
@@ -876,7 +880,6 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
         <thead>
           <tr>
             <th>Site</th>
-            <th>Site ID</th>
             <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>URL</th>
@@ -889,8 +892,14 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
             if (row.sentimentItems.length === 0) {
               return (
                 <tr key={`${row.id}-sentiment-empty`}>
-                  <td>{row.site}</td>
-                  <td>{row.siteId ?? ' - '}</td>
+                  <td>
+                    <div className="coverage-site-cell">
+                      <span className="coverage-site-name">{row.site}</span>
+                      {row.siteId && (
+                        <span className="coverage-site-id">Site ID: {row.siteId}</span>
+                      )}
+                    </div>
+                  </td>
                   <td>{row.opportunityType ?? ' - '}</td>
                   <td>{row.opportunityId ?? ' - '}</td>
                   <td>
@@ -917,8 +926,14 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                 <tr key={item.rowKey ?? `${row.id}-sentiment-${index}`}>
                   {index === 0 && (
                     <>
-                      <td rowSpan={rowSpan}>{row.site}</td>
-                      <td rowSpan={rowSpan}>{row.siteId ?? ' - '}</td>
+                      <td rowSpan={rowSpan}>
+                        <div className="coverage-site-cell">
+                          <span className="coverage-site-name">{row.site}</span>
+                          {row.siteId && (
+                            <span className="coverage-site-id">Site ID: {row.siteId}</span>
+                          )}
+                        </div>
+                      </td>
                       <td rowSpan={rowSpan}>{row.opportunityType ?? ' - '}</td>
                       <td rowSpan={rowSpan}>{row.opportunityId ?? ' - '}</td>
                     </>

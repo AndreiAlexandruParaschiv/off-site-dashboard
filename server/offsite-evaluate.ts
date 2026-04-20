@@ -34,6 +34,7 @@ type ServerEnv = {
   BRIGHTDATA_API_KEY?: string;
   BRIGHTDATA_WEB_UNLOCKER_ZONE?: string;
   BRIGHTDATA_YOUTUBE_VIDEO_DATASET_ID?: string;
+  BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?: string;
   BRIGHTDATA_YOUTUBE_COMMENT_DATASET_ID?: string;
   BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?: string;
   BRIGHTDATA_REDDIT_POST_DATASET_ID?: string;
@@ -1415,6 +1416,7 @@ async function buildYoutubeEvidenceFromHtml(
   itemUrl: string,
   html: string,
   transcriptFetcher?: (url: string) => Promise<string>,
+  site?: string,
 ): Promise<SourceEvidence> {
   const title =
     extractMetaTagValue(html, /<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
@@ -1472,12 +1474,28 @@ async function buildYoutubeEvidenceFromHtml(
     transcriptStatus = 'unknown';
   }
 
+  const brandKey = site ? extractBrandKey(site) : '';
+  const brandOwnedByChannel = Boolean(brandKey && isBrandChannel(htmlChannelName, brandKey));
+  const brandOwnedByContent = Boolean(
+    brandKey &&
+      !brandOwnedByChannel &&
+      !htmlChannelName &&
+      (isBrandChannel(title, brandKey) || isBrandChannel(description, brandKey)),
+  );
+  // Only set isBrandOwned when we have enough context to determine it (site provided).
+  const isBrandOwned: boolean | undefined = site
+    ? brandOwnedByChannel || brandOwnedByContent
+    : undefined;
+
   const evidenceText = clampEvidenceText(
     trimMultilineText(
       [
         title ? `Title: ${title}` : '',
         description ? `Description: ${description}` : '',
-        htmlChannelName ? `Channel: ${htmlChannelName}` : '',
+        htmlChannelName ? `Channel: ${htmlChannelName}${isBrandOwned ? ' (brand channel)' : ''}` : '',
+        isBrandOwned
+          ? "Note: This video is published on the brand's own YouTube channel. Brand-produced content is inherently favorable toward the brand."
+          : '',
         transcript ? `Transcript:\n${transcript}` : '',
       ].join('\n\n'),
     ),
@@ -1500,6 +1518,7 @@ async function buildYoutubeEvidenceFromHtml(
     fallbackSnippet:
       [htmlChannelName, title, description].filter(Boolean).join(' | ') ||
       'YouTube evidence could not be extracted.',
+    isBrandOwned,
   };
 }
 
@@ -1546,6 +1565,7 @@ async function fetchYoutubeEvidence(
           itemUrl,
           unlockerHtml,
           (url) => fetchBrightDataUnlockerBody(url, env, 'raw'),
+          site,
         );
       } catch {
         // Fall through to direct fetch.
@@ -1580,14 +1600,6 @@ async function fetchYoutubeEvidence(
       }
     }
 
-    // Title-based brand detection fallback: when the dataset path failed and we only
-    // have Web Unlocker output (no channel field), infer brand ownership from the title.
-    if (videoEvidence && videoEvidence.isBrandOwned === undefined && site) {
-      const brandKey = extractBrandKey(site);
-      if (brandKey && isBrandChannel(videoEvidence.fallbackSnippet, brandKey)) {
-        videoEvidence = { ...videoEvidence, isBrandOwned: true };
-      }
-    }
 
     if (videoEvidence) {
       return videoEvidence;
@@ -1596,13 +1608,7 @@ async function fetchYoutubeEvidence(
 
   try {
     const html = await fetchText(itemUrl);
-    let directEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, html);
-    if (directEvidence.isBrandOwned === undefined && site) {
-      const brandKey = extractBrandKey(site);
-      if (brandKey && isBrandChannel(directEvidence.fallbackSnippet, brandKey)) {
-        directEvidence = { ...directEvidence, isBrandOwned: true };
-      }
-    }
+    const directEvidence = await buildYoutubeEvidenceFromHtml(itemUrl, html, undefined, site);
     return directEvidence;
   } catch {
     return {

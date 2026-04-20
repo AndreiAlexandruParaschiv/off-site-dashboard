@@ -1203,7 +1203,7 @@ function SuggestionEvaluationTable(props: {
                         {getConfidenceLabel(evaluationResult.confidence) || ' - '}
                       </span>
                     ) : (
-                      <span className="metric-copy metric-card">
+                      <span className="status-pill status-pill-neutral">
                         {isRunning ? 'Evaluating...' : 'Not evaluated'}
                       </span>
                     )}
@@ -1246,7 +1246,7 @@ function SuggestionEvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
+                    <span className="status-pill status-pill-neutral evaluated-at-pill">
                       {formatTimestamp(evaluationResult?.evaluatedAt)}
                     </span>
                   </td>
@@ -1546,7 +1546,7 @@ function EvaluationTable(props: {
                         </span>
                       </div>
                     ) : (
-                      <span className="metric-copy metric-card">
+                      <span className="status-pill status-pill-neutral">
                         {isRunning ? 'Evaluating...' : 'Not evaluated'}
                       </span>
                     )}
@@ -1616,7 +1616,7 @@ function EvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
+                    <span className="status-pill status-pill-neutral evaluated-at-pill">
                       {formatTimestamp(evaluationResult?.evaluatedAt)}
                     </span>
                   </td>
@@ -1903,7 +1903,7 @@ function SovEvaluationTable(props: {
                         </span>
                       </div>
                     ) : (
-                      <span className="metric-copy metric-card">
+                      <span className="status-pill status-pill-neutral">
                         {isRunning ? 'Evaluating...' : 'Not evaluated'}
                       </span>
                     )}
@@ -1957,7 +1957,7 @@ function SovEvaluationTable(props: {
                     </button>
                   </td>
                   <td>
-                    <span className="metric-copy metric-card">
+                    <span className="status-pill status-pill-neutral evaluated-at-pill">
                       {formatTimestamp(evaluationResult?.evaluatedAt)}
                     </span>
                   </td>

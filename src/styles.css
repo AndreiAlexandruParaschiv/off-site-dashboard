@@ -1233,6 +1233,11 @@ a:hover {
   background: var(--info-soft);
 }
 
+.evaluated-at-pill {
+  white-space: nowrap;
+  font-weight: 500;
+}
+
 .site-card-error {
   margin: 0;
   color: var(--error);
@@ -1444,13 +1449,16 @@ a:hover {
   line-height: 1.45;
 }
 
-.sentiment-table th,
 .sentiment-table td,
-.evaluation-table th,
 .evaluation-table td,
-.suggestions-table th,
 .suggestions-table td {
   overflow-wrap: anywhere;
+}
+
+.sentiment-table th,
+.evaluation-table th,
+.suggestions-table th {
+  white-space: nowrap;
 }
 
 .dashboard-table thead th {
@@ -1761,7 +1769,7 @@ a:hover {
 .sentiment-copy {
   display: block;
   min-width: 0;
-  white-space: normal;
+  white-space: nowrap;
   line-height: 1.4;
 }
 

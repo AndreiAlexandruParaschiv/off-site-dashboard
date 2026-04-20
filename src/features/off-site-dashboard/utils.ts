@@ -1283,6 +1283,15 @@ function extractAnalyticsInsightsSentimentItems(
             : `${formatMetricValue(sovPercent)}%`
           : '';
 
+      // Extract competitor brand names from mentions.others (array of { name, mentionsPercent, ... })
+      const competitorMentions =
+        mentions && Array.isArray(mentions.others)
+          ? (mentions.others as unknown[]).filter(isRecord)
+          : [];
+      const competitors = competitorMentions
+        .map((c) => getStringValue(c, ['name']) ?? '')
+        .filter(Boolean);
+
       const sentimentRecord = isRecord(source.sentiment) ? source.sentiment : null;
       const sentiment = sentimentRecord
         ? (getStringValue(sentimentRecord, ['label']) ?? '')
@@ -1299,6 +1308,7 @@ function extractAnalyticsInsightsSentimentItems(
         ...(title && title !== item ? { title } : {}),
         sov,
         sentiment,
+        ...(competitors.length > 0 ? { competitors } : {}),
         ...(typeof citations === 'number' && Number.isFinite(citations)
           ? { timesCited: citations }
           : {}),

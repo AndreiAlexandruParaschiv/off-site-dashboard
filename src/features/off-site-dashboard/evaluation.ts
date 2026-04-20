@@ -65,6 +65,59 @@ function parsePercentageValue(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Normalize a brand name for comparison (lowercase, alphanumeric only).
+ */
+function normalizeBrandKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Extract the target brand's percentage share from an extracted SOV string.
+ * Falls back to parsing the first number if the target brand is not found
+ * or not provided.
+ *
+ * Examples:
+ *   extractTargetBrandSharePct("Sun Life: 60%, Manulife: 40%", "Manulife") → 40
+ *   extractTargetBrandSharePct("Manulife: 100%", "Manulife") → 100
+ *   extractTargetBrandSharePct("Manulife: 100%", "") → 100 (fallback)
+ */
+function extractTargetBrandSharePct(sovString: string, targetBrand: string): number | null {
+  const normalizedTarget = targetBrand ? normalizeBrandKey(targetBrand) : '';
+
+  if (normalizedTarget) {
+    // Try to find "BrandName: XX%" or "BrandName XX%" patterns
+    const lines = sovString.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+
+    for (const segment of lines) {
+      const colonIdx = segment.indexOf(':');
+      if (colonIdx !== -1) {
+        const leftPart = segment.slice(0, colonIdx).trim();
+        const rightPart = segment.slice(colonIdx + 1).trim();
+        if (normalizeBrandKey(leftPart).includes(normalizedTarget) ||
+            normalizedTarget.includes(normalizeBrandKey(leftPart)) && normalizeBrandKey(leftPart).length >= 4) {
+          const pct = parsePercentageValue(rightPart);
+          if (pct !== null) {
+            return pct;
+          }
+        }
+      }
+
+      // Pattern without colon: "BrandName 50%"
+      const percentMatch = segment.match(/(\d+(?:\.\d+)?)\s*%/);
+      if (percentMatch) {
+        const beforePct = segment.slice(0, segment.lastIndexOf(percentMatch[0]));
+        if (normalizeBrandKey(beforePct).includes(normalizedTarget)) {
+          return Number(percentMatch[1]);
+        }
+      }
+    }
+  }
+
+  // Fallback: return first number found in the entire string
+  return parsePercentageValue(sovString);
+}
+
 function hasInsufficientFetchStatus(status?: string) {
   return status === 'fetch_failed' || status === 'insufficient_evidence';
 }
@@ -138,7 +191,7 @@ export function deriveSovVerdict(input: {
     return 'Needs Review';
   }
 
-  const extractedPct = parsePercentageValue(input.extractedSov);
+  const extractedPct = extractTargetBrandSharePct(input.extractedSov, result.targetBrand ?? '');
   const evaluatedPct =
     typeof result.evaluatedTargetBrandSharePct === 'number'
       ? result.evaluatedTargetBrandSharePct
@@ -312,6 +365,7 @@ export function buildSentimentEvaluationRequest(input: {
   extractedSov: string;
   extractedSentiment: string;
   timesCited?: number;
+  competitors?: string[];
 }): SentimentEvaluationRequest | null {
   const opportunityId = input.opportunityId?.trim();
 
@@ -329,6 +383,10 @@ export function buildSentimentEvaluationRequest(input: {
     typeof input.timesCited === 'number' && Number.isFinite(input.timesCited)
       ? input.timesCited
       : undefined;
+  const competitors =
+    Array.isArray(input.competitors) && input.competitors.length > 0
+      ? input.competitors.map((c) => c.trim()).filter(Boolean)
+      : undefined;
 
   return {
     site: input.site,
@@ -340,5 +398,6 @@ export function buildSentimentEvaluationRequest(input: {
     extractedSov: input.extractedSov,
     extractedSentiment: input.extractedSentiment,
     ...(typeof timesCited === 'number' ? { timesCited } : {}),
+    ...(competitors ? { competitors } : {}),
   };
 }

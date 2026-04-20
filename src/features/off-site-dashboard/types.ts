@@ -69,6 +69,8 @@ export interface SentimentItemRecord {
   sov: string;
   sentiment: string;
   timesCited?: number;
+  /** Known competitor brand names for this item, sourced from the backend API (e.g. mentions.others). */
+  competitors?: string[];
   rowKey?: string;
   canEvaluate?: boolean;
   evaluationStatus?: SentimentEvaluationStatus;
@@ -164,6 +166,8 @@ export interface SentimentEvaluationRequest {
   extractedSov: string;
   extractedSentiment: string;
   timesCited?: number;
+  /** Known competitor brand names to explicitly count in the LLM evaluation. */
+  competitors?: string[];
 }
 
 export interface SuggestionEvaluationRequest {

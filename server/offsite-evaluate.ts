@@ -286,6 +286,12 @@ function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | n
     typeof candidate.timesCited === 'number' && Number.isFinite(candidate.timesCited)
       ? candidate.timesCited
       : undefined;
+  const competitors =
+    Array.isArray(candidate.competitors) && candidate.competitors.length > 0
+      ? (candidate.competitors as unknown[])
+          .filter((c): c is string => typeof c === 'string' && Boolean(c.trim()))
+          .map((c) => c.trim())
+      : undefined;
 
   return {
     site: candidate.site,
@@ -297,6 +303,7 @@ function normalizeRequestPayload(value: unknown): SentimentEvaluationRequest | n
     extractedSov: candidate.extractedSov,
     extractedSentiment: candidate.extractedSentiment,
     ...(typeof timesCited === 'number' ? { timesCited } : {}),
+    ...(competitors ? { competitors } : {}),
   };
 }
 
@@ -1188,6 +1195,10 @@ function buildEvaluatedBrandShares(input: {
 
   const targetBrand = trimMultilineText(input.llmResult.targetBrand);
   const targetBrandKey = normalizeBrandKey(targetBrand);
+
+  // Start with brands from extractedBrandShares to preserve known ordering,
+  // then append any additional brands the LLM found in the evidence that were
+  // not in the original extracted SOV (so they are included in the denominator).
   const orderedBrands = input.extractedBrandShares.map((share) => share.brand);
 
   if (
@@ -1195,6 +1206,12 @@ function buildEvaluatedBrandShares(input: {
     !orderedBrands.some((brand) => normalizeBrandKey(brand) === targetBrandKey)
   ) {
     orderedBrands.unshift(targetBrand);
+  }
+
+  for (const [normalizedBrand, { brand }] of mentionCounts) {
+    if (!orderedBrands.some((b) => normalizeBrandKey(b) === normalizedBrand)) {
+      orderedBrands.push(brand);
+    }
   }
 
   const evaluatedBrands = orderedBrands.map((brand) => {
@@ -1940,6 +1957,17 @@ function buildLlmPrompt(
   const extractedBrandShares = extractSovBrandShares(payload.extractedSov);
   const extractedBrandList = extractedBrandShares.map((share) => share.brand);
 
+  // Merge competitors from the request with those already in the extracted SOV.
+  // The competitors field contains brands explicitly provided by the SpaceCat backend
+  // (e.g., from mentions.others in the API response) that may not appear in the SOV string.
+  const extractedBrandKeys = new Set(extractedBrandList.map((b) => normalizeBrandKey(b)));
+  const allCompetitors: string[] = [
+    ...extractedBrandList,
+    ...(payload.competitors ?? []).filter(
+      (c) => !extractedBrandKeys.has(normalizeBrandKey(c)),
+    ),
+  ];
+
   const promptLines = [
     'You are a quality engineer and off-site SEO/GEO/AEO analyst auditing the backend\'s extracted sentiment and share-of-voice for a cited off-site source.',
     'Your job is to VERIFY the backend, not rubber-stamp it: count brand mentions yourself from the fetched evidence, judge sentiment directly from what you read, and flag cases where the backend\'s extracted values disagree with what the evidence actually shows.',
@@ -1963,11 +1991,12 @@ function buildLlmPrompt(
   promptLines.push(
     `Extracted SOV (backend claim — audit this): ${payload.extractedSov || 'None'}`,
     `Extracted SOV brands: ${extractedBrandList.join(', ') || 'None'}`,
+    `Known competitor brands: ${allCompetitors.join(', ') || 'None'}`,
     `Extracted Sentiment (backend claim — audit this): ${payload.extractedSentiment || 'None'}`,
     '',
     'Process:',
     '  1. Use the Item Title as a fast topical signal before reading the body (e.g., "Manulife RRSP" signals a retirement-plan thread). Count any target-brand mentions that appear in the title.',
-    '  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of EACH brand in "Extracted SOV brands", plus a separate targetBrandMentionCount for the target brand.',
+    `  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of the target brand (→ targetBrandMentionCount) AND each competitor in "Known competitor brands" (→ brandMentions). For EVERY brand in "Known competitor brands", include an entry in brandMentions — even if its count is 0.`,
     '  3. Judge the sentiment of the fetched content toward the target brand: "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if the target brand is never referenced, or "Needs Review" if the evidence is too sparse to support a confident judgment.',
     '  4. Return integer mention counts — do NOT compute percentages. The system derives SOV percentages from your counts and compares them against the backend\'s extracted values.',
   );
@@ -1990,6 +2019,7 @@ function buildLlmPrompt(
     '  - Adjacent sentiment labels (e.g., Favorable vs Neutral) are still a disagreement — only return the label you actually judged from the evidence.',
     '  - Title-only mentions count toward targetBrandMentionCount but the sentiment should be judged from the body/transcript when available, not from the title alone.',
     '  - If the target brand is already one of the extracted SOV brands, use the same count in both that brand\'s mentionCount and targetBrandMentionCount.',
+    '  - Always include an entry in brandMentions for every brand listed in "Known competitor brands", even if that brand has 0 mentions in the evidence.',
     '  - If the evidence is too weak to support a confident judgment, set evidenceSufficient = false and evaluatedSentiment = "Needs Review".',
     '',
     'Evidence:',

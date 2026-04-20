@@ -199,12 +199,12 @@ function FilterChip(props: {
 function getSentimentTone(value?: string) {
   const normalizedValue = value?.trim().toLowerCase() ?? '';
 
-  if (normalizedValue.includes('favorable')) {
-    return 'success';
-  }
-
   if (normalizedValue.includes('unfavorable')) {
     return 'error';
+  }
+
+  if (normalizedValue.includes('favorable')) {
+    return 'success';
   }
 
   if (normalizedValue.includes('neutral')) {

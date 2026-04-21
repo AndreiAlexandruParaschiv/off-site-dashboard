@@ -2014,18 +2014,31 @@ function buildLlmPrompt(
     'Process:',
     '  1. Use the Item Title as a fast topical signal before reading the body (e.g., "Manulife RRSP" signals a retirement-plan thread). Count any target-brand mentions that appear in the title.',
     `  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of the target brand (→ targetBrandMentionCount) AND each competitor in "Known competitor brands" (→ brandMentions). For EVERY brand in "Known competitor brands", include an entry in brandMentions — even if its count is 0.`,
-    '  3. Judge the sentiment of the fetched content toward the target brand: "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if the target brand is never referenced, or "Needs Review" if the evidence is too sparse to support a confident judgment.',
+    '  3. Judge the sentiment toward the target brand — i.e. how the brand is PERCEIVED AND TALKED ABOUT in the content — as "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if the target brand is never referenced, or "Needs Review" if the evidence is too sparse.',
+    '     IMPORTANT: Sentiment reflects how the brand is perceived by the community, NOT the tone of the original poster\'s question. A post that is simply asking for advice is not automatically Neutral if the replies show strong positive or negative reactions to the brand.',
     '  4. Return integer mention counts — do NOT compute percentages. The system derives SOV percentages from your counts and compares them against the backend\'s extracted values.',
   );
 
   if (evidence.usedComments) {
-    promptLines.push(
-      '  5. When "Viewer comments:" section is present in the evidence, assess comment sentiment toward the target brand SEPARATELY from the video content sentiment.',
-      '  6. In your rationale explicitly state:',
-      '     - Video content sentiment: [your assessment from title/description/transcript]',
-      '     - Viewer comment sentiment: [your assessment from the comments — note if comments are mostly positive, negative, neutral, or mixed toward the brand, and cite 1-2 specific examples]',
-      '     - Combined verdict: [the overall sentiment label you chose and why]',
-    );
+    if (evidence.sourceType === 'reddit') {
+      promptLines.push(
+        '  5. For Reddit threads: the "Replies / Comments" section represents OTHER USERS\' authentic opinions about the brand — weight it heavily for sentiment.',
+        '     A poster asking "Is this deal fair?" is neutral, but if replies say "horrible to lease", "don\'t do this", "worst deals around", the community perception is clearly UNFAVORABLE.',
+        '     Conversely, if replies are enthusiastic or complimentary, lean Favorable.',
+        '  6. In your sentimentRationale and rationale explicitly state:',
+        '     - Original post tone: [neutral question / positive / negative]',
+        '     - Community reply sentiment: [your assessment — cite 1-2 specific examples from comments]',
+        '     - Combined verdict: [overall brand perception label and reason, with comments weighted heavily]',
+      );
+    } else {
+      promptLines.push(
+        '  5. When "Viewer comments:" section is present in the evidence, assess comment sentiment toward the target brand SEPARATELY from the video content sentiment.',
+        '  6. In your rationale explicitly state:',
+        '     - Video content sentiment: [your assessment from title/description/transcript]',
+        '     - Viewer comment sentiment: [your assessment from the comments — note if comments are mostly positive, negative, neutral, or mixed toward the brand, and cite 1-2 specific examples]',
+        '     - Combined verdict: [the overall sentiment label you chose and why]',
+      );
+    }
   }
 
   promptLines.push(
@@ -2038,8 +2051,8 @@ function buildLlmPrompt(
     '  - If the target brand is already one of the extracted SOV brands, use the same count in both that brand\'s mentionCount and targetBrandMentionCount.',
     '  - Always include an entry in brandMentions for every brand listed in "Known competitor brands", even if that brand has 0 mentions in the evidence.',
     '  - If the evidence is too weak to support a confident judgment, set evidenceSufficient = false and evaluatedSentiment = "Needs Review".',
-    '  - "sentimentRationale": 1-3 sentences describing ONLY how the content portrays the target brand (tone, user reactions, overall impression). Do NOT mention brand mention counts, SOV percentages, or comparisons to extracted values here — those belong in "rationale".',
-    '  - "rationale": Full reasoning covering both your sentiment judgment AND your SOV audit (mention counts, percentage comparison to backend\'s extracted values, any discrepancies).',
+    '  - "sentimentRationale": 2-4 sentences describing ONLY how the brand is perceived in the content. Focus on tone, specific user reactions, and overall brand image conveyed. For Reddit, quote or paraphrase 1-2 comment examples that best reflect the community\'s feeling toward the brand. Do NOT mention brand mention counts, SOV percentages, competitor comparisons, or backend extracted-value comparisons — those belong in "rationale" only.',
+    '  - "rationale": Full reasoning covering both your sentiment judgment AND your SOV audit (mention counts, percentage comparison to backend\'s extracted values, any discrepancies found).',
     '',
     'Evidence:',
     evidence.evidenceText,

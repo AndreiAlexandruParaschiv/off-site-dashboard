@@ -2857,19 +2857,6 @@ export function OffSiteDashboard() {
           <div className="workspace-content">
             {activeWorkspace === 'opportunities' && (
               <div className="workspace-mode-stack">
-                <section className="panel panel-tone-data panel-mode-intro">
-                  <div className="panel-header">
-                    <div>
-                      <h2>Opportunity Feed</h2>
-                      <p>
-                        This lane keeps the direct backend output visible: workspace
-                        setup, filters, coverage checks, synced site cards, sentiment
-                        rows, and extracted suggestions.
-                      </p>
-                    </div>
-                  </div>
-                </section>
-
                 <section className="dashboard-overview-grid">
                   <section className="panel panel-settings panel-settings-compact panel-tone-warm">
                     <div className="panel-header">

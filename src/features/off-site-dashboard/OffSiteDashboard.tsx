@@ -1033,7 +1033,10 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     )}
                   </td>
                   <td>
-                    <SovLabel value={item.sov} />
+                    <SovLabel
+                      value={item.sov}
+                      targetBrand={item.evaluationResult?.targetBrand ?? undefined}
+                    />
                   </td>
                   <td>
                     {(() => {

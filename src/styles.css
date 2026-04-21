@@ -288,7 +288,25 @@ a:hover {
 }
 
 .dashboard-overview-grid {
-  gap: 28px !important;
+  gap: 20px !important;
+}
+
+.dashboard-overview-grid > .panel {
+  padding: 18px 22px !important;
+  gap: 14px !important;
+}
+
+.dashboard-overview-grid > .panel .panel-header {
+  gap: 6px !important;
+}
+
+.dashboard-overview-grid > .panel .panel-header h2 {
+  font-size: 1rem !important;
+}
+
+.dashboard-overview-grid > .panel .panel-header p {
+  font-size: 0.82rem !important;
+  line-height: 1.5 !important;
 }
 
 .panel-header {

@@ -53,7 +53,16 @@ export type DerivedEvaluationVerdict =
 const SENTIMENT_SOV_TOLERANCE_POINTS = 2;
 
 function normalizeDerivedComparableValue(value: string) {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+  return (
+    value
+      // Strip leading emoji / special symbols (same pattern as getSentimentLabel in the UI).
+      // SpaceCat API may return sentiments like "😐 Neutral" — without this the comparison
+      // would see "😐 neutral" vs "neutral" and incorrectly produce an Incorrect verdict.
+      .replace(/^[\p{Emoji_Presentation}\p{So}\uFE0F\s]+/u, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 function parsePercentageValue(value: string): number | null {

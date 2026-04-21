@@ -1075,6 +1075,23 @@ a:hover {
   background: rgba(255, 255, 255, 0.66);
 }
 
+.callout-tip {
+  background: rgba(13, 122, 115, 0.06);
+  border-color: rgba(13, 122, 115, 0.25);
+}
+
+.callout-tip strong {
+  color: var(--teal);
+}
+
+.callout-tip code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.82em;
+  background: rgba(13, 122, 115, 0.1);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 .callout strong,
 .empty-panel h3,
 .table-empty-state h3 {

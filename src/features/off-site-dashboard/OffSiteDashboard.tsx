@@ -3539,6 +3539,16 @@ export function OffSiteDashboard() {
                         void runWikipediaBatchCheck();
                       }}
                     >
+                      <div className="callout callout-tip">
+                        <strong>💡 Use bare domains, not full URLs</strong>
+                        <p>
+                          Enter <code>pwc.com</code> rather than <code>https://www.pwc.com/</code>.
+                          The backend stores <code>www</code> and non-<code>www</code> as
+                          separate site records — the non-<code>www</code> form is more
+                          likely to carry Wikipedia data.
+                        </p>
+                      </div>
+
                       <label className="field">
                         <span>Batch site URLs or domains</span>
                         <textarea
@@ -3552,9 +3562,7 @@ export function OffSiteDashboard() {
                           }
                           rows={8}
                         />
-                        <small className="field-note">
-                          One site per line. Use bare domains (e.g. <code>pwc.com</code>) rather than <code>https://www.pwc.com/</code> — the backend may have separate records for www and non-www variants, and the non-www form is more likely to have Wikipedia data.
-                        </small>
+                        <small className="field-note">One site per line.</small>
                       </label>
 
                       <div className="button-row">

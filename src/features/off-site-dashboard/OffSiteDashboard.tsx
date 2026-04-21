@@ -2310,6 +2310,40 @@ function getWikiHallucinationRate(
   return '';
 }
 
+const WIKI_PAGE_SORT_ORDER: Record<string, number> = {
+  Correct: 0,
+  Incorrect: 1,
+  'Needs Review': 2,
+  'N/A': 3,
+};
+const HALLUCINATION_SORT_ORDER: Record<string, number> = { '0%': 0, '': 1, '100%': 2 };
+const WIKI_OPP_SORT_ORDER: Record<string, number> = { Exists: 0, Missing: 1 };
+
+function sortWikiBatchResults(
+  results: WikipediaUrlCheckResult[],
+  col: 'wikiPage' | 'hallucinationRate' | 'wikiOpportunity' | null,
+  dir: 'asc' | 'desc',
+): WikipediaUrlCheckResult[] {
+  if (!col) return results;
+  return [...results].sort((a, b) => {
+    let aVal = 0;
+    let bVal = 0;
+    if (col === 'wikiPage') {
+      const aPage = isClaudeWikipediaVerdict(a.verdict) ? a.verdict : 'N/A';
+      const bPage = isClaudeWikipediaVerdict(b.verdict) ? b.verdict : 'N/A';
+      aVal = WIKI_PAGE_SORT_ORDER[aPage] ?? 99;
+      bVal = WIKI_PAGE_SORT_ORDER[bPage] ?? 99;
+    } else if (col === 'hallucinationRate') {
+      aVal = HALLUCINATION_SORT_ORDER[getWikiHallucinationRate(a.verdict)] ?? 1;
+      bVal = HALLUCINATION_SORT_ORDER[getWikiHallucinationRate(b.verdict)] ?? 1;
+    } else if (col === 'wikiOpportunity') {
+      aVal = WIKI_OPP_SORT_ORDER[a.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing'] ?? 99;
+      bVal = WIKI_OPP_SORT_ORDER[b.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing'] ?? 99;
+    }
+    return dir === 'asc' ? aVal - bVal : bVal - aVal;
+  });
+}
+
 function downloadWikipediaBatchResultsExcel(results: WikipediaUrlCheckResult[]) {
   if (results.length === 0) {
     return;
@@ -2376,6 +2410,10 @@ export function OffSiteDashboard() {
       completed: 0,
       total: 0,
     });
+  const [wikiBatchSortCol, setWikiBatchSortCol] = useState<
+    'wikiPage' | 'hallucinationRate' | 'wikiOpportunity' | null
+  >(null);
+  const [wikiBatchSortDir, setWikiBatchSortDir] = useState<'asc' | 'desc'>('asc');
   const visibleOpportunityCount = dashboard.filteredOpportunityRows.length;
   const visibleSuggestionOpportunityCount = dashboard.filteredOpportunityRows.filter(
     (row) => row.suggestions.length > 0,
@@ -3811,9 +3849,35 @@ export function OffSiteDashboard() {
                           <thead>
                             <tr>
                               <th>Site</th>
-                              <th>Wiki Opportunity</th>
-                              <th>Wiki Page</th>
-                              <th>Hallucination Rate</th>
+                              {(
+                                [
+                                  ['wikiOpportunity', 'Wiki Opportunity'],
+                                  ['wikiPage', 'Wiki Page'],
+                                  ['hallucinationRate', 'Hallucination Rate'],
+                                ] as const
+                              ).map(([col, label]) => (
+                                <th
+                                  key={col}
+                                  className="sortable-th"
+                                  onClick={() => {
+                                    if (wikiBatchSortCol === col) {
+                                      setWikiBatchSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                                    } else {
+                                      setWikiBatchSortCol(col);
+                                      setWikiBatchSortDir('asc');
+                                    }
+                                  }}
+                                >
+                                  <span className="sortable-th-inner">
+                                    {label}
+                                    <span className="sort-indicator">
+                                      {wikiBatchSortCol === col
+                                        ? wikiBatchSortDir === 'asc' ? ' ▲' : ' ▼'
+                                        : ' ⇅'}
+                                    </span>
+                                  </span>
+                                </th>
+                              ))}
                               <th>Confidence</th>
                               <th>Wikipedia URL</th>
                               <th>Title</th>
@@ -3821,7 +3885,7 @@ export function OffSiteDashboard() {
                             </tr>
                           </thead>
                           <tbody>
-                            {wikipediaBatchResults.map((result) => {
+                            {sortWikiBatchResults(wikipediaBatchResults, wikiBatchSortCol, wikiBatchSortDir).map((result) => {
                               const wikiOpp =
                                 result.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing';
                               const wikiPage = isClaudeWikipediaVerdict(result.verdict)

@@ -1230,6 +1230,32 @@ a:hover {
   vertical-align: top;
 }
 
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-th:hover {
+  background: rgba(13, 122, 115, 0.06);
+}
+
+.sortable-th-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-indicator {
+  font-size: 0.7rem;
+  opacity: 0.5;
+  letter-spacing: 0;
+}
+
+.sortable-th:hover .sort-indicator {
+  opacity: 0.9;
+}
+
 /* Shared "Show details" toggle button style used in both single-result and batch table */
 .wikipedia-result-details summary,
 .wikipedia-batch-details summary {

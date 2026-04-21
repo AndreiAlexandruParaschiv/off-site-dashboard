@@ -3657,88 +3657,91 @@ export function OffSiteDashboard() {
                           {wikipediaCheckResult.summary}
                         </p>
 
-                        <div className="wikipedia-check-result-grid">
-                          <article className="wikipedia-check-card">
-                            <h3>Backend match</h3>
-                            <dl className="wikipedia-check-definition-list">
-                              <div>
-                                <dt>Requested site</dt>
-                                <dd>{wikipediaCheckResult.requestedSite}</dd>
-                              </div>
-                              <div>
-                                <dt>Resolved site</dt>
-                                <dd>
-                                  {wikipediaCheckResult.resolvedSiteUrl ??
-                                    'No resolved site returned'}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Site ID</dt>
-                                <dd>{wikipediaCheckResult.siteId ?? 'No site ID returned'}</dd>
-                              </div>
-                              <div>
-                                <dt>Opportunity ID</dt>
-                                <dd>
-                                  {wikipediaCheckResult.opportunityId ??
-                                    'No Wikipedia opportunity ID'}
-                                </dd>
-                              </div>
-                            </dl>
-                          </article>
+                        <details className="wikipedia-result-details">
+                          <summary>Show details</summary>
+                          <div className="wikipedia-check-result-grid">
+                            <article className="wikipedia-check-card">
+                              <h3>Backend match</h3>
+                              <dl className="wikipedia-check-definition-list">
+                                <div>
+                                  <dt>Requested site</dt>
+                                  <dd>{wikipediaCheckResult.requestedSite}</dd>
+                                </div>
+                                <div>
+                                  <dt>Resolved site</dt>
+                                  <dd>
+                                    {wikipediaCheckResult.resolvedSiteUrl ??
+                                      'No resolved site returned'}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Site ID</dt>
+                                  <dd>{wikipediaCheckResult.siteId ?? 'No site ID returned'}</dd>
+                                </div>
+                                <div>
+                                  <dt>Opportunity ID</dt>
+                                  <dd>
+                                    {wikipediaCheckResult.opportunityId ??
+                                      'No Wikipedia opportunity ID'}
+                                  </dd>
+                                </div>
+                              </dl>
+                            </article>
 
-                          <article className="wikipedia-check-card">
-                            <h3>Wikipedia URL</h3>
-                            <dl className="wikipedia-check-definition-list">
-                              <div>
-                                <dt>Primary backend URL</dt>
-                                <dd>
-                                  {wikipediaCheckResult.backendWikipediaUrl ? (
-                                    <a
-                                      className="metric-link"
-                                      href={wikipediaCheckResult.backendWikipediaUrl}
-                                      rel="noreferrer"
-                                      target="_blank"
-                                    >
-                                      {wikipediaCheckResult.backendWikipediaUrl}
-                                    </a>
-                                  ) : (
-                                    'No Wikipedia URL found'
-                                  )}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Extracted title</dt>
-                                <dd>
-                                  {wikipediaCheckResult.extractedTitle ||
-                                    'Could not derive a title from the backend URL'}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Wikipedia opportunities</dt>
-                                <dd>{wikipediaCheckResult.wikipediaOpportunityCount}</dd>
-                              </div>
-                              <div>
-                                <dt>Wikipedia suggestions</dt>
-                                <dd>{wikipediaCheckResult.wikipediaSuggestionCount}</dd>
-                              </div>
-                            </dl>
-                          </article>
+                            <article className="wikipedia-check-card">
+                              <h3>Wikipedia URL</h3>
+                              <dl className="wikipedia-check-definition-list">
+                                <div>
+                                  <dt>Primary backend URL</dt>
+                                  <dd>
+                                    {wikipediaCheckResult.backendWikipediaUrl ? (
+                                      <a
+                                        className="metric-link"
+                                        href={wikipediaCheckResult.backendWikipediaUrl}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        {wikipediaCheckResult.backendWikipediaUrl}
+                                      </a>
+                                    ) : (
+                                      'No Wikipedia URL found'
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Extracted title</dt>
+                                  <dd>
+                                    {wikipediaCheckResult.extractedTitle ||
+                                      'Could not derive a title from the backend URL'}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Wikipedia opportunities</dt>
+                                  <dd>{wikipediaCheckResult.wikipediaOpportunityCount}</dd>
+                                </div>
+                                <div>
+                                  <dt>Wikipedia suggestions</dt>
+                                  <dd>{wikipediaCheckResult.wikipediaSuggestionCount}</dd>
+                                </div>
+                              </dl>
+                            </article>
 
-                          <article className="wikipedia-check-card">
-                            <h3>Why this verdict</h3>
-                            <p className="wikipedia-check-summary">
-                              {wikipediaCheckResult.rationale}
-                            </p>
-                            {wikipediaCheckResult.evidenceSnippet ? (
-                              <>
-                                <h4>Evidence</h4>
-                                <p className="wikipedia-check-summary">
-                                  {wikipediaCheckResult.evidenceSnippet}
-                                </p>
-                              </>
-                            ) : null}
-                          </article>
-                        </div>
+                            <article className="wikipedia-check-card">
+                              <h3>Why this verdict</h3>
+                              <p className="wikipedia-check-summary">
+                                {wikipediaCheckResult.rationale}
+                              </p>
+                              {wikipediaCheckResult.evidenceSnippet ? (
+                                <>
+                                  <h4>Evidence</h4>
+                                  <p className="wikipedia-check-summary">
+                                    {wikipediaCheckResult.evidenceSnippet}
+                                  </p>
+                                </>
+                              ) : null}
+                            </article>
+                          </div>
+                        </details>
                       </div>
                     ) : (
                       <div className="empty-panel">

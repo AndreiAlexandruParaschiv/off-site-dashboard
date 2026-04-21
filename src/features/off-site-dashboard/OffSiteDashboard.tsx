@@ -3036,7 +3036,7 @@ export function OffSiteDashboard() {
                       </div>
 
                       <div className="panel-header-actions">
-                        {isSentimentExpanded && (
+                        {isSentimentExpanded && dashboard.totalPages > 1 && (
                           <div className="table-controls">
                             <label className="inline-field">
                               <span>Rows per page</span>
@@ -3056,29 +3056,27 @@ export function OffSiteDashboard() {
                                 ))}
                               </select>
                             </label>
-                            {dashboard.totalPages > 1 && (
-                              <div className="pagination-controls">
-                                <button
-                                  className="ghost-button"
-                                  disabled={dashboard.page <= 1}
-                                  onClick={() => dashboard.setPage(dashboard.page - 1)}
-                                  type="button"
-                                >
-                                  Previous
-                                </button>
-                                <span className="page-indicator">
-                                  Page {dashboard.page} / {dashboard.totalPages}
-                                </span>
-                                <button
-                                  className="ghost-button"
-                                  disabled={dashboard.page >= dashboard.totalPages}
-                                  onClick={() => dashboard.setPage(dashboard.page + 1)}
-                                  type="button"
-                                >
-                                  Next
-                                </button>
-                              </div>
-                            )}
+                            <div className="pagination-controls">
+                              <button
+                                className="ghost-button"
+                                disabled={dashboard.page <= 1}
+                                onClick={() => dashboard.setPage(dashboard.page - 1)}
+                                type="button"
+                              >
+                                Previous
+                              </button>
+                              <span className="page-indicator">
+                                Page {dashboard.page} / {dashboard.totalPages}
+                              </span>
+                              <button
+                                className="ghost-button"
+                                disabled={dashboard.page >= dashboard.totalPages}
+                                onClick={() => dashboard.setPage(dashboard.page + 1)}
+                                type="button"
+                              >
+                                Next
+                              </button>
+                            </div>
                           </div>
                         )}
                         <PanelToggleButton
@@ -3266,7 +3264,7 @@ export function OffSiteDashboard() {
                               onClick={dashboard.exportSovEvaluation}
                               type="button"
                             >
-                              Export Share of Voice
+                              Export SOV
                             </button>
                           </div>
                         )}

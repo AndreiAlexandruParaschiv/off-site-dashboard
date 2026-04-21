@@ -878,7 +878,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
             <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>URL</th>
-            <th>SOV</th>
+            <th>Share of Voice</th>
             <th>Sentiment</th>
           </tr>
         </thead>
@@ -899,7 +899,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                   <td>{row.opportunityId ?? ' - '}</td>
                   <td>
                     <span className="metric-copy metric-card" title={row.status}>
-                      No URL / SOV / sentiment rows returned
+                      No URL / Share of Voice / sentiment rows returned
                     </span>
                   </td>
                   <td>
@@ -1713,7 +1713,7 @@ function SovEvaluationTable(props: {
   if (evaluationRows.length === 0) {
     return (
       <div className="table-empty-state">
-        <h3>No evaluable SOV rows match the current filters</h3>
+        <h3>No evaluable Share of Voice rows match the current filters</h3>
         <p>Run sentiment evaluation above to calculate share-of-voice confidence.</p>
       </div>
     );
@@ -1751,7 +1751,7 @@ function SovEvaluationTable(props: {
             <th>Site</th>
             <th>Opportunity</th>
             <th>URL</th>
-            <th>Extracted SOV</th>
+            <th>Extracted Share of Voice</th>
             <th
               className="sortable-column-header"
               onClick={() => toggleSort('confidence')}
@@ -1969,11 +1969,11 @@ function SovEvaluationTable(props: {
                         <div className="suggestion-evaluation-detail-card">
                           <h4>Evaluator&apos;s call</h4>
                           <p className="metric-copy">
-                            Evaluator SOV:{' '}
+                            Evaluator Share of Voice:{' '}
                             <strong>{evaluatorSovLabel}</strong>
                           </p>
                           <p className="metric-copy">
-                            Extracted SOV:{' '}
+                            Extracted Share of Voice:{' '}
                             <strong>{extractedSovLabel}</strong>
                           </p>
                           <p className="metric-copy">
@@ -2752,7 +2752,7 @@ export function OffSiteDashboard() {
               <WorkspaceNavButton
                 active={activeWorkspace === 'evaluation'}
                 count={`${pendingReviewCount}`}
-                description="Suggestion, sentiment, and SOV evaluation tables with selection and export actions."
+                description="Sentiment, Share of Voice, and Suggestion evaluation tables with selection and export actions."
                 label="Evaluation"
                 onClick={() => setActiveWorkspace('evaluation')}
               />
@@ -3020,7 +3020,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-data">
                     <div className="panel-header">
                       <div>
-                        <h2>Sentiment &amp; SOV</h2>
+                        <h2>Sentiment &amp; Share of Voice</h2>
                         <p>
                           {visibleSentimentCount} URL entr
                           {visibleSentimentCount === 1 ? 'y' : 'ies'} from{' '}
@@ -3131,93 +3131,24 @@ export function OffSiteDashboard() {
 
                   <div className="workspace-summary-grid">
                     <StatsCard
-                      label="Suggestion evals"
-                      value={String(suggestionEvaluationSummary.evaluated)}
-                      detail={`${suggestionEvaluationSummary.review + suggestionEvaluationSummary.incorrect} require review`}
-                    />
-                    <StatsCard
                       label="Sentiment evals"
                       value={String(evaluationSummary.evaluated)}
                       detail={`${evaluationSummary.review} require review`}
                     />
                     <StatsCard
-                      label="SOV evals"
+                      label="Share of Voice evals"
                       value={String(sovEvaluationSummary.evaluated)}
                       detail={`${sovEvaluationSummary.review} require review`}
+                    />
+                    <StatsCard
+                      label="Suggestion evals"
+                      value={String(suggestionEvaluationSummary.evaluated)}
+                      detail={`${suggestionEvaluationSummary.review + suggestionEvaluationSummary.incorrect} require review`}
                     />
                   </div>
                 </section>
 
                 <div className="dashboard-data-stack">
-                  <section className="panel panel-table panel-table-wide panel-tone-evaluate">
-                    <div className="panel-header">
-                      <div>
-                        <h2>Suggestions</h2>
-                        <p>
-                          Validate {visibleSuggestionEvaluationCount} suggestion
-                          {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the
-                          current page against off-site evidence.
-                        </p>
-                        <p className="panel-summary">
-                          {suggestionEvaluationSummary.evaluated === 0
-                            ? 'No suggestion evaluation results yet on this page.'
-                            : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
-                        </p>
-                      </div>
-
-                      <div className="panel-header-actions">
-                        {isSuggestionEvaluationExpanded && (
-                          <div className="table-controls">
-                            <button
-                              className="primary-button"
-                              disabled={
-                                dashboard.selectedVisibleSuggestionRowsCount === 0 ||
-                                dashboard.isEvaluatingSuggestions
-                              }
-                              onClick={() =>
-                                void dashboard.evaluateSuggestionRows(
-                                  dashboard.selectedVisibleSuggestionRowKeys,
-                                )
-                              }
-                              type="button"
-                            >
-                              {dashboard.isEvaluatingSuggestions
-                                ? 'Evaluating...'
-                                : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              disabled={!dashboard.hasExportRows}
-                              onClick={dashboard.exportSuggestionEvaluation}
-                              type="button"
-                            >
-                              Export Suggestions
-                            </button>
-                          </div>
-                        )}
-                        <PanelToggleButton
-                          expanded={isSuggestionEvaluationExpanded}
-                          onClick={() =>
-                            setIsSuggestionEvaluationExpanded((value) => !value)
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    {isSuggestionEvaluationExpanded && (
-                      <SuggestionEvaluationTable
-                        rows={dashboard.pagedOpportunityRows}
-                        selectedRowKeys={dashboard.selectedSuggestionRowKeys}
-                        onToggleRowSelection={dashboard.toggleSuggestionRowSelection}
-                        onSelectRows={dashboard.setSuggestionRowSelections}
-                        onEvaluateRow={(rowKey) =>
-                          void dashboard.evaluateSuggestionRows([rowKey])
-                        }
-                        isEvaluating={dashboard.isEvaluatingSuggestions}
-                      />
-                    )}
-                  </section>
-
                   <section className="panel panel-table panel-table-wide panel-tone-evaluate">
                     <div className="panel-header">
                       <div>
@@ -3289,7 +3220,7 @@ export function OffSiteDashboard() {
                   <section className="panel panel-table panel-table-wide panel-tone-evaluate">
                     <div className="panel-header">
                       <div>
-                        <h2>SOV</h2>
+                        <h2>Share of Voice</h2>
                         <p>
                           Re-check extracted share of voice for {visibleEvaluationCount}{' '}
                           URL entr
@@ -3298,7 +3229,7 @@ export function OffSiteDashboard() {
                         </p>
                         <p className="panel-summary">
                           {sovEvaluationSummary.evaluated === 0
-                            ? 'No SOV evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
+                            ? 'No Share of Voice evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
                             : `Confirmed: ${sovEvaluationSummary.confirmed} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
                         </p>
                       </div>
@@ -3329,7 +3260,7 @@ export function OffSiteDashboard() {
                               onClick={dashboard.exportSovEvaluation}
                               type="button"
                             >
-                              Export SOV
+                              Export Share of Voice
                             </button>
                           </div>
                         )}
@@ -3350,6 +3281,75 @@ export function OffSiteDashboard() {
                           void dashboard.evaluateSentimentRows([rowKey])
                         }
                         isEvaluating={dashboard.isEvaluatingSentiment}
+                      />
+                    )}
+                  </section>
+
+                  <section className="panel panel-table panel-table-wide panel-tone-evaluate">
+                    <div className="panel-header">
+                      <div>
+                        <h2>Suggestions</h2>
+                        <p>
+                          Validate {visibleSuggestionEvaluationCount} suggestion
+                          {visibleSuggestionEvaluationCount === 1 ? '' : 's'} on the
+                          current page against off-site evidence.
+                        </p>
+                        <p className="panel-summary">
+                          {suggestionEvaluationSummary.evaluated === 0
+                            ? 'No suggestion evaluation results yet on this page.'
+                            : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
+                        </p>
+                      </div>
+
+                      <div className="panel-header-actions">
+                        {isSuggestionEvaluationExpanded && (
+                          <div className="table-controls">
+                            <button
+                              className="primary-button"
+                              disabled={
+                                dashboard.selectedVisibleSuggestionRowsCount === 0 ||
+                                dashboard.isEvaluatingSuggestions
+                              }
+                              onClick={() =>
+                                void dashboard.evaluateSuggestionRows(
+                                  dashboard.selectedVisibleSuggestionRowKeys,
+                                )
+                              }
+                              type="button"
+                            >
+                              {dashboard.isEvaluatingSuggestions
+                                ? 'Evaluating...'
+                                : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              disabled={!dashboard.hasExportRows}
+                              onClick={dashboard.exportSuggestionEvaluation}
+                              type="button"
+                            >
+                              Export Suggestions
+                            </button>
+                          </div>
+                        )}
+                        <PanelToggleButton
+                          expanded={isSuggestionEvaluationExpanded}
+                          onClick={() =>
+                            setIsSuggestionEvaluationExpanded((value) => !value)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {isSuggestionEvaluationExpanded && (
+                      <SuggestionEvaluationTable
+                        rows={dashboard.pagedOpportunityRows}
+                        selectedRowKeys={dashboard.selectedSuggestionRowKeys}
+                        onToggleRowSelection={dashboard.toggleSuggestionRowSelection}
+                        onSelectRows={dashboard.setSuggestionRowSelections}
+                        onEvaluateRow={(rowKey) =>
+                          void dashboard.evaluateSuggestionRows([rowKey])
+                        }
+                        isEvaluating={dashboard.isEvaluatingSuggestions}
                       />
                     )}
                   </section>

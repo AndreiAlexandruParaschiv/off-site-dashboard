@@ -3217,7 +3217,7 @@ export function OffSiteDashboard() {
                                 : `Evaluate Selected Rows (${visibleSelectedEvaluationRowsCount})`}
                             </button>
                             <button
-                              className="ghost-button"
+                              className="secondary-button"
                               disabled={!dashboard.hasExportRows}
                               onClick={dashboard.exportSentimentEvaluation}
                               type="button"
@@ -3285,7 +3285,7 @@ export function OffSiteDashboard() {
                                 : `Evaluate Selected Rows (${visibleSelectedSovEvaluationRowsCount})`}
                             </button>
                             <button
-                              className="ghost-button"
+                              className="secondary-button"
                               disabled={!dashboard.hasExportRows}
                               onClick={dashboard.exportSovEvaluation}
                               type="button"
@@ -3352,7 +3352,7 @@ export function OffSiteDashboard() {
                                 : `Evaluate Selected Rows (${dashboard.selectedVisibleSuggestionRowsCount})`}
                             </button>
                             <button
-                              className="ghost-button"
+                              className="secondary-button"
                               disabled={!dashboard.hasExportRows}
                               onClick={dashboard.exportSuggestionEvaluation}
                               type="button"

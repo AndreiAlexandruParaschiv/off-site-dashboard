@@ -1078,7 +1078,7 @@ a:hover {
 
 .wikipedia-check-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 0.88fr) minmax(0, 1.12fr);
+  grid-template-columns: 1fr 1fr;
   gap: 22px;
   align-items: start;
 }

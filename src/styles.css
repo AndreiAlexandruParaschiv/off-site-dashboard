@@ -1421,11 +1421,7 @@ a:hover {
 }
 
 .suggestions-col-site {
-  width: 12%;
-}
-
-.suggestions-col-site-id {
-  width: 12%;
+  width: 18%;
 }
 
 .suggestions-col-type {
@@ -1652,9 +1648,10 @@ a:hover {
   min-width: 64px;
 }
 
-/* Compact ghost-buttons inside tables — match status-pill height */
+/* Compact ghost-buttons inside tables and panel header controls */
 .evaluation-table .ghost-button,
-.sentiment-table .ghost-button {
+.sentiment-table .ghost-button,
+.panel-header-actions .ghost-button {
   min-height: 28px;
   padding: 0 12px;
   font-size: 0.82rem;

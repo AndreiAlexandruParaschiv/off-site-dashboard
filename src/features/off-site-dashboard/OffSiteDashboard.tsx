@@ -722,7 +722,6 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
       <table className="dashboard-table suggestions-table">
         <colgroup>
           <col className="suggestions-col-site" />
-          <col className="suggestions-col-site-id" />
           <col className="suggestions-col-type" />
           <col className="suggestions-col-opportunity-id" />
           <col className="suggestions-col-suggestions" />
@@ -730,7 +729,6 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
         <thead>
           <tr>
             <th>Site</th>
-            <th>Site ID</th>
             <th>Opportunity</th>
             <th>Opportunity ID</th>
             <th>Suggestions</th>
@@ -739,8 +737,14 @@ function SuggestionsTable(props: { rows: GroupedOpportunityRow[] }) {
         <tbody>
           {props.rows.map((row) => (
             <tr key={row.id}>
-              <td>{row.site}</td>
-              <td>{row.siteId ?? ' - '}</td>
+              <td>
+                <div className="sentiment-site-cell">
+                  <span className="sentiment-site-name">{row.site}</span>
+                  {row.siteId && (
+                    <span className="sentiment-site-id">{row.siteId}</span>
+                  )}
+                </div>
+              </td>
               <td>{row.opportunityType ?? ' - '}</td>
               <td>{row.opportunityId ?? ' - '}</td>
               <td>
@@ -3052,27 +3056,29 @@ export function OffSiteDashboard() {
                                 ))}
                               </select>
                             </label>
-                            <div className="pagination-controls">
-                              <button
-                                className="ghost-button"
-                                disabled={dashboard.page <= 1}
-                                onClick={() => dashboard.setPage(dashboard.page - 1)}
-                                type="button"
-                              >
-                                Previous
-                              </button>
-                              <span className="page-indicator">
-                                Page {dashboard.page} / {dashboard.totalPages}
-                              </span>
-                              <button
-                                className="ghost-button"
-                                disabled={dashboard.page >= dashboard.totalPages}
-                                onClick={() => dashboard.setPage(dashboard.page + 1)}
-                                type="button"
-                              >
-                                Next
-                              </button>
-                            </div>
+                            {dashboard.totalPages > 1 && (
+                              <div className="pagination-controls">
+                                <button
+                                  className="ghost-button"
+                                  disabled={dashboard.page <= 1}
+                                  onClick={() => dashboard.setPage(dashboard.page - 1)}
+                                  type="button"
+                                >
+                                  Previous
+                                </button>
+                                <span className="page-indicator">
+                                  Page {dashboard.page} / {dashboard.totalPages}
+                                </span>
+                                <button
+                                  className="ghost-button"
+                                  disabled={dashboard.page >= dashboard.totalPages}
+                                  onClick={() => dashboard.setPage(dashboard.page + 1)}
+                                  type="button"
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                         <PanelToggleButton

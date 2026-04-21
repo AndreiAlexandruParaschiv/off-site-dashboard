@@ -774,7 +774,7 @@ async function fetchBrightDataRedditEvidence(
   return buildBrightDataRedditEvidence(itemUrl, firstResult);
 }
 
-function collectBrightDataRedditComments(entries: unknown, limit = 12) {
+function collectBrightDataRedditComments(entries: unknown, limit = 80) {
   const comments: string[] = [];
 
   const visitEntry = (entry: unknown) => {
@@ -1676,8 +1676,8 @@ function buildRedditJsonUrls(itemUrl: string) {
     return Array.from(new Set(hostCandidates)).map((host) => {
       const baseUrl = `${parsedUrl.protocol}//${host}${normalizedPath}`;
       return baseUrl.endsWith('.json')
-        ? `${baseUrl}?raw_json=1&limit=8`
-        : `${baseUrl}.json?raw_json=1&limit=8`;
+        ? `${baseUrl}?raw_json=1&limit=80`
+        : `${baseUrl}.json?raw_json=1&limit=80`;
     });
   } catch {
     return [];
@@ -1766,7 +1766,7 @@ async function fetchRedditEvidence(
       const comments = (parsedPayload[1]?.data?.children ?? [])
         .map((entry) => entry.data?.body?.trim())
         .filter((value): value is string => Boolean(value))
-        .slice(0, 6);
+        .slice(0, 80);
       const evidenceText = clampEvidenceText(
         trimMultilineText(
           [

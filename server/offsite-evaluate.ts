@@ -1038,6 +1038,15 @@ function normalizeBrandKey(value: string) {
   return normalizeComparableText(value);
 }
 
+/**
+ * Pattern that matches placeholder brand names injected by the SpaceCat backend,
+ * e.g. "ProductA", "ProductB", "CompetitorX", "CompetitorY", "BrandA".
+ * These are generic template tokens, not real competitor brands, and must be
+ * excluded from both the LLM prompt ("Known competitor brands") and the SOV
+ * calculation denominator.
+ */
+const PLACEHOLDER_BRAND_PATTERN = /^(product|competitor|brand)[a-z0-9]{0,3}$/i;
+
 function isIgnorableSovBrand(value: string) {
   const normalizedValue = normalizeBrandKey(value);
 
@@ -1047,7 +1056,9 @@ function isIgnorableSovBrand(value: string) {
     normalizedValue === 'others' ||
     normalizedValue.startsWith('others ') ||
     normalizedValue === 'other' ||
-    normalizedValue.startsWith('other ')
+    normalizedValue.startsWith('other ') ||
+    // Generic placeholder names from the SpaceCat API (ProductA, CompetitorY, etc.)
+    PLACEHOLDER_BRAND_PATTERN.test(value.trim())
   );
 }
 

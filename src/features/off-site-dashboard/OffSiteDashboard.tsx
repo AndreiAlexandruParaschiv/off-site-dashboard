@@ -226,6 +226,19 @@ function getDisplayUrl(value: string) {
 }
 
 /**
+ * SpaceCat can inject generic placeholder tokens into the extracted SOV
+ * (e.g. "ProductA 12.5%, CompetitorY 37.5%"). These are not real brands
+ * and must be hidden from the display.
+ */
+const PLACEHOLDER_BRAND_RE = /^(product|competitor|brand)[a-z0-9]{0,3}$/i;
+const IGNORABLE_BRAND_RE = /^(market|others?)\b/i;
+
+function isDisplayableSovBrand(brand: string) {
+  const t = brand.trim();
+  return t.length > 0 && !PLACEHOLDER_BRAND_RE.test(t) && !IGNORABLE_BRAND_RE.test(t);
+}
+
+/**
  * Parse a raw SOV string into individual brand/percentage pairs.
  *
  * Handles three formats the backend can produce:
@@ -271,7 +284,8 @@ function parseSovEntries(raw: string): Array<{ brand: string; pct: string }> {
     }
   }
 
-  return results;
+  // Strip placeholder / ignorable tokens (Market, Others, ProductA, CompetitorY …)
+  return results.filter((e) => isDisplayableSovBrand(e.brand));
 }
 
 function SovLabel({ value, targetBrand }: { value?: string; targetBrand?: string }) {

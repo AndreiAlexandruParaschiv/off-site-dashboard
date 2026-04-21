@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react';
+import * as XLSX from 'xlsx';
 import {
   evaluateWikipediaUrl,
   fetchSiteDashboardData,
@@ -2296,63 +2297,46 @@ function buildWikipediaCheckFailureResult(
   };
 }
 
-function escapeCsvValue(value: string) {
-  return `"${value.replace(/"/g, '""')}"`;
+function getWikiHallucinationRate(
+  verdict: WikipediaUrlEvaluationVerdict | WikipediaCheckVerdict,
+): string {
+  if (verdict === 'Correct') return '0%';
+  if (verdict === 'Incorrect') return '100%';
+  return '';
 }
 
-function downloadWikipediaBatchResultsCsv(results: WikipediaUrlCheckResult[]) {
+function downloadWikipediaBatchResultsExcel(results: WikipediaUrlCheckResult[]) {
   if (results.length === 0) {
     return;
   }
 
-  const headers = [
-    'Requested Site',
-    'Resolved Site',
-    'Site ID',
-    'Opportunity ID',
-    'Verdict',
-    'Confidence',
-    'Backend Wikipedia URL',
-    'Wikipedia Title',
-    'Summary',
-    'Rationale',
-    'Evidence Snippet',
-    'Evaluator',
-    'Model',
-  ];
+  const rows = results.map((result) => {
+    const wikiOpportunity = result.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing';
+    const wikiPage = isClaudeWikipediaVerdict(result.verdict) ? result.verdict : 'N/A';
+    const hallucinationRate = getWikiHallucinationRate(result.verdict);
 
-  const lines = [
-    headers.map(escapeCsvValue).join(','),
-    ...results.map((result) =>
-      [
-        result.requestedSite,
-        result.resolvedSiteUrl ?? '',
-        result.siteId ?? '',
-        result.opportunityId ?? '',
-        result.verdictLabel,
-        result.confidence ?? '',
-        result.backendWikipediaUrl ?? '',
-        result.extractedTitle ?? '',
-        result.summary,
-        result.rationale,
-        result.evidenceSnippet ?? '',
-        result.evaluatorProvider ?? '',
-        result.evaluatorModel ?? '',
-      ]
-        .map((value) => escapeCsvValue(String(value)))
-        .join(','),
-    ),
-  ];
-
-  const blob = new Blob([lines.join('\n')], {
-    type: 'text/csv;charset=utf-8;',
+    return {
+      'Site URL': result.requestedSite,
+      'Wiki Opportunity': wikiOpportunity,
+      'Wiki Page': wikiPage,
+      'Hallucination Rate Wiki Page': hallucinationRate,
+    };
   });
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = 'wikipedia-url-check-results.csv';
-  anchor.click();
-  URL.revokeObjectURL(objectUrl);
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+
+  // Auto-size columns
+  const colWidths = [
+    { wch: 40 }, // Site URL
+    { wch: 18 }, // Wiki Opportunity
+    { wch: 16 }, // Wiki Page
+    { wch: 28 }, // Hallucination Rate Wiki Page
+  ];
+  worksheet['!cols'] = colWidths;
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Wikipedia Check');
+  XLSX.writeFile(workbook, 'wikipedia-check-results.xlsx');
 }
 
 export function OffSiteDashboard() {
@@ -2573,11 +2557,7 @@ export function OffSiteDashboard() {
       ? 'Opportunities'
       : activeWorkspace === 'evaluation'
         ? 'Evaluation'
-        : 'Wikipedia URL Check';
-  const wikipediaQuickSites =
-    dashboard.selectedSites.length > 0
-      ? dashboard.selectedSites
-      : dashboard.configuredSites;
+        : 'Wikipedia Check';
   const wikipediaBatchSites = normalizeSiteList(wikipediaBatchInputText);
   const workspaceActionButtons = (className: string) => (
     <div className={className}>
@@ -2850,7 +2830,7 @@ export function OffSiteDashboard() {
                   wikipediaCheckResult ? wikipediaCheckResult.verdictLabel : 'Ad hoc'
                 }
                 description="Enter a domain and check whether the backend’s Wikipedia page looks aligned with it."
-                label="Wikipedia URL Check"
+                label="Wikipedia Check"
                 onClick={() => setActiveWorkspace('wikipedia-check')}
               />
             </div>
@@ -3486,7 +3466,7 @@ export function OffSiteDashboard() {
                 <section className="panel panel-tone-warm panel-mode-intro">
                   <div className="panel-header">
                     <div>
-                      <h2>Wikipedia URL Check</h2>
+                      <h2>Wikipedia Check</h2>
                       <p>
                         Enter a domain to fetch its live backend opportunity payload and
                         send the backend `wikipediaUrl` to an AI evaluator to judge
@@ -3603,14 +3583,14 @@ export function OffSiteDashboard() {
                             : `Run Batch Check (${wikipediaBatchSites.length})`}
                         </button>
                         <button
-                          className="ghost-button"
+                          className="primary-button"
                           disabled={wikipediaBatchResults.length === 0}
                           onClick={() =>
-                            downloadWikipediaBatchResultsCsv(wikipediaBatchResults)
+                            downloadWikipediaBatchResultsExcel(wikipediaBatchResults)
                           }
                           type="button"
                         >
-                          Export Batch CSV
+                          Export Excel
                         </button>
                         <button
                           className="ghost-button"
@@ -3630,36 +3610,6 @@ export function OffSiteDashboard() {
                         </button>
                       </div>
                     </form>
-
-                    {wikipediaQuickSites.length > 0 ? (
-                      <div className="filter-group">
-                        <span className="filter-label">Quick fill from current workspace</span>
-                        <div className="chip-row">
-                          {wikipediaQuickSites.map((site) => (
-                            <FilterChip
-                              key={site}
-                              active={normalizeSiteInput(wikipediaCheckSiteInput) === site}
-                              label={site}
-                              onClick={() => setWikipediaCheckSiteInput(site)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {wikipediaQuickSites.length > 0 ? (
-                      <div className="button-row">
-                        <button
-                          className="ghost-button"
-                          onClick={() =>
-                            setWikipediaBatchInputText(wikipediaQuickSites.join('\n'))
-                          }
-                          type="button"
-                        >
-                          Use current workspace sites ({wikipediaQuickSites.length})
-                        </button>
-                      </div>
-                    ) : null}
 
                     {!canRunWikipediaCheck ? (
                       <div className="callout">
@@ -3712,6 +3662,12 @@ export function OffSiteDashboard() {
                           const unavailableCount = wikipediaBatchResults.filter(
                             (result) => !isClaudeWikipediaVerdict(result.verdict),
                           ).length;
+                          const wikiHallucinationRate =
+                            correctCount + incorrectCount > 0
+                              ? Math.round(
+                                  (incorrectCount / (correctCount + incorrectCount)) * 100,
+                                )
+                              : null;
 
                           return wikipediaBatchResults.length > 0 ? (
                             <div className="callout">
@@ -3720,6 +3676,14 @@ export function OffSiteDashboard() {
                                 {wikipediaBatchResults.length} sites checked. Correct:{' '}
                                 {correctCount} · Needs review: {reviewCount} · Incorrect:{' '}
                                 {incorrectCount} · Missing/failed: {unavailableCount}
+                                {wikiHallucinationRate !== null ? (
+                                  <>
+                                    {' '}·{' '}
+                                    <span className="hallucination-rate-pill">
+                                      {wikiHallucinationRate}% hallucination rate
+                                    </span>
+                                  </>
+                                ) : null}
                               </p>
                             </div>
                           ) : null;
@@ -3844,7 +3808,9 @@ export function OffSiteDashboard() {
                                 <thead>
                                   <tr>
                                     <th>Site</th>
-                                    <th>Verdict</th>
+                                    <th>Wiki Opportunity</th>
+                                    <th>Wiki Page</th>
+                                    <th>Hallucination Rate</th>
                                     <th>Confidence</th>
                                     <th>Wikipedia URL</th>
                                     <th>Title</th>
@@ -3853,17 +3819,40 @@ export function OffSiteDashboard() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {wikipediaBatchResults.map((result) => (
+                                  {wikipediaBatchResults.map((result) => {
+                                    const wikiOpp =
+                                      result.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing';
+                                    const wikiPage = isClaudeWikipediaVerdict(result.verdict)
+                                      ? result.verdict
+                                      : 'N/A';
+                                    const hRate = getWikiHallucinationRate(result.verdict);
+                                    return (
                                     <tr key={result.requestedSite}>
                                       <td>{result.requestedSite}</td>
+                                      <td>
+                                        <span
+                                          className={`status-pill status-pill-${result.wikipediaOpportunityCount > 0 ? 'success' : 'neutral'}`}
+                                        >
+                                          {wikiOpp}
+                                        </span>
+                                      </td>
                                       <td>
                                         <span
                                           className={`status-pill status-pill-${getWikipediaStatusTone(
                                             result.verdict,
                                           )}`}
                                         >
-                                          {result.verdictLabel}
+                                          {wikiPage}
                                         </span>
+                                      </td>
+                                      <td>
+                                        {hRate ? (
+                                          <span className="hallucination-rate-pill">
+                                            {hRate}
+                                          </span>
+                                        ) : (
+                                          <span className="metric-neutral"> — </span>
+                                        )}
                                       </td>
                                       <td>{result.confidence ?? ' - '}</td>
                                       <td>
@@ -3894,7 +3883,8 @@ export function OffSiteDashboard() {
                                         </button>
                                       </td>
                                     </tr>
-                                  ))}
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>

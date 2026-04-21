@@ -1539,7 +1539,9 @@ function EvaluationTable(props: {
               : evaluationResult
                 ? [
                     ...getEvaluationEvidenceContextLines(evaluationResult.fetch),
-                    evaluationResult.rationale,
+                    // Use sentiment-only rationale when available (newer evaluations);
+                    // fall back to the combined rationale for older cached results.
+                    evaluationResult.sentimentRationale || evaluationResult.rationale,
                     evaluationResult.evidenceSnippet
                       ? `Evidence: ${evaluationResult.evidenceSnippet}`
                       : '',

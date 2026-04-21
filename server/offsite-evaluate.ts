@@ -73,7 +73,13 @@ type LlmEvaluation = {
   }>;
   evidenceSufficient: boolean;
   confidence: 'high' | 'medium' | 'low';
+  /** Full rationale covering sentiment judgment AND SOV audit. */
   rationale: string;
+  /**
+   * Sentiment-only rationale — how the content portrays the target brand.
+   * Must NOT mention SOV counts or percentage comparisons.
+   */
+  sentimentRationale: string;
   evidenceSnippet: string;
 };
 
@@ -2032,6 +2038,8 @@ function buildLlmPrompt(
     '  - If the target brand is already one of the extracted SOV brands, use the same count in both that brand\'s mentionCount and targetBrandMentionCount.',
     '  - Always include an entry in brandMentions for every brand listed in "Known competitor brands", even if that brand has 0 mentions in the evidence.',
     '  - If the evidence is too weak to support a confident judgment, set evidenceSufficient = false and evaluatedSentiment = "Needs Review".',
+    '  - "sentimentRationale": 1-3 sentences describing ONLY how the content portrays the target brand (tone, user reactions, overall impression). Do NOT mention brand mention counts, SOV percentages, or comparisons to extracted values here — those belong in "rationale".',
+    '  - "rationale": Full reasoning covering both your sentiment judgment AND your SOV audit (mention counts, percentage comparison to backend\'s extracted values, any discrepancies).',
     '',
     'Evidence:',
     evidence.evidenceText,
@@ -2057,6 +2065,7 @@ function buildBedrockPrompt(
     '  "evidenceSufficient": boolean,',
     '  "confidence": "high" | "medium" | "low",',
     '  "rationale": string,',
+    '  "sentimentRationale": string,',
     '  "evidenceSnippet": string',
     '}',
   ].join('\n');
@@ -2105,6 +2114,7 @@ function parseLlmEvaluationPayload(value: unknown) {
     typeof candidate.evidenceSufficient !== 'boolean' ||
     typeof candidate.confidence !== 'string' ||
     typeof candidate.rationale !== 'string' ||
+    typeof candidate.sentimentRationale !== 'string' ||
     typeof candidate.evidenceSnippet !== 'string'
   ) {
     throw new Error('Failed to parse evaluator response.');
@@ -2289,6 +2299,7 @@ async function fetchLlmEvaluation(
               enum: ['high', 'medium', 'low'],
             },
             rationale: { type: 'string' },
+            sentimentRationale: { type: 'string' },
             evidenceSnippet: { type: 'string' },
           },
           required: [
@@ -2299,6 +2310,7 @@ async function fetchLlmEvaluation(
             'evidenceSufficient',
             'confidence',
             'rationale',
+            'sentimentRationale',
             'evidenceSnippet',
           ],
         },
@@ -2505,6 +2517,7 @@ export async function runOffsiteEvaluation(
     sovConfidence,
     evaluatedTargetBrandSharePct,
     rationale: trimMultilineText(llmResult.rationale),
+    sentimentRationale: trimMultilineText(llmResult.sentimentRationale),
     evidenceSnippet:
       trimMultilineText(llmResult.evidenceSnippet) || evidence.fallbackSnippet,
     evaluatedAt: new Date().toISOString(),

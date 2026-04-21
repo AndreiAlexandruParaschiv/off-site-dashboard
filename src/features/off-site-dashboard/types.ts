@@ -95,7 +95,14 @@ export interface SentimentEvaluationResult {
   evaluatedSov: string;
   sovConfidence: number;
   evaluatedTargetBrandSharePct: number;
+  /** Full rationale covering both sentiment judgment and SOV audit. */
   rationale: string;
+  /**
+   * Sentiment-only rationale — describes how the content portrays the target
+   * brand without mentioning SOV counts or percentage comparisons.
+   * Present only when the evaluator supports the field (optional for back-compat).
+   */
+  sentimentRationale?: string;
   evidenceSnippet: string;
   evaluatedAt: string;
   evaluatorVersion: string;

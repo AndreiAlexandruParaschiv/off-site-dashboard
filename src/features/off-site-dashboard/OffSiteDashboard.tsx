@@ -225,33 +225,81 @@ function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
 
-function SovLabel({ value }: { value?: string }) {
-  const raw = trimSuggestionText(value ?? '');
-  if (!raw) return <span className="sov-label sov-label-empty">—</span>;
-
-  // Split on the middle-dot separator used by the backend ("·")
-  const entries = raw
+/**
+ * Parse a raw SOV string into individual brand/percentage pairs.
+ *
+ * Handles three formats the backend can produce:
+ *   "Land Rover USA: 100.0%"
+ *   "Land Rover USA: 88.9% · Market: Jeep 11.1%"
+ *   "· Market: Jeep 27.6%, Chevrolet Tahoe 17.2%, Honda CR-V 6.9%"
+ */
+function parseSovEntries(raw: string): Array<{ brand: string; pct: string }> {
+  const results: Array<{ brand: string; pct: string }> = [];
+  const segments = raw
     .split('·')
-    .map((e) => e.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 
+  for (const segment of segments) {
+    const colonIdx = segment.indexOf(':');
+    if (colonIdx === -1) {
+      // "Brand XX%" with no colon
+      const m = segment.match(/^(.+?)\s+([\d]+(?:\.\d+)?%)/);
+      if (m) results.push({ brand: m[1].trim(), pct: m[2] });
+      else results.push({ brand: segment, pct: '' });
+      continue;
+    }
+
+    const label = segment.slice(0, colonIdx).trim();
+    const rest = segment.slice(colonIdx + 1).trim();
+
+    if (rest.includes(',')) {
+      // "Category: Brand1 XX%, Brand2 YY%, ..." — split on commas
+      for (const item of rest.split(',').map((s) => s.trim()).filter(Boolean)) {
+        const m = item.match(/^(.+?)\s+([\d]+(?:\.\d+)?%)/);
+        if (m) results.push({ brand: m[1].trim(), pct: m[2] });
+        else results.push({ brand: item, pct: '' });
+      }
+    } else if (/^[\d]+(?:\.\d+)?%/.test(rest)) {
+      // "Brand: 100.0%" — label is the brand name
+      results.push({ brand: label, pct: rest.match(/([\d]+(?:\.\d+)?%)/)![1] });
+    } else {
+      // "Category: BrandName XX%" — brand name is in the rest
+      const m = rest.match(/^(.+?)\s+([\d]+(?:\.\d+)?%)/);
+      if (m) results.push({ brand: m[1].trim(), pct: m[2] });
+      else results.push({ brand: label, pct: rest });
+    }
+  }
+
+  return results;
+}
+
+function SovLabel({ value, targetBrand }: { value?: string; targetBrand?: string }) {
+  const raw = trimSuggestionText(value ?? '');
+  if (!raw) return <span className="sov-empty-dash">—</span>;
+
+  const entries = parseSovEntries(raw);
+  if (entries.length === 0) return <span className="sov-empty-dash">—</span>;
+
+  const normTarget = targetBrand
+    ? targetBrand.toLowerCase().replace(/[^a-z0-9]/g, '')
+    : '';
+
   return (
-    <span className="sov-label">
+    <div className="sov-card">
       {entries.map((entry, i) => {
-        // Split "BrandName: percentage" into name + value
-        const colonIdx = entry.indexOf(':');
-        const brandPart = colonIdx !== -1 ? entry.slice(0, colonIdx).trim() : entry;
-        const valuePart = colonIdx !== -1 ? entry.slice(colonIdx + 1).trim() : '';
+        const normBrand = entry.brand.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const isTarget =
+          normTarget.length >= 3 &&
+          (normBrand.includes(normTarget) || normTarget.includes(normBrand));
         return (
-          <span key={i} className="sov-entry">
-            <strong className="sov-brand">{brandPart}</strong>
-            {valuePart && (
-              <span className="sov-value">: {valuePart}</span>
-            )}
-          </span>
+          <div key={i} className={`sov-row${isTarget ? ' sov-row-target' : ''}`}>
+            <span className="sov-brand-name">{entry.brand}</span>
+            {entry.pct && <span className="sov-pct">{entry.pct}</span>}
+          </div>
         );
       })}
-    </span>
+    </div>
   );
 }
 
@@ -1919,7 +1967,10 @@ function SovEvaluationTable(props: {
                     )}
                   </td>
                   <td>
-                    <SovLabel value={row.item.sov} />
+                    <SovLabel
+                      value={row.item.sov}
+                      targetBrand={evaluationResult?.targetBrand ?? undefined}
+                    />
                   </td>
                   <td>
                     {evaluationResult ? (

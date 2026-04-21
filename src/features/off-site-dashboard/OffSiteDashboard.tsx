@@ -2297,6 +2297,11 @@ function buildWikipediaCheckFailureResult(
   };
 }
 
+function capitalizeFirst(s?: string): string {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function getWikiHallucinationRate(
   verdict: WikipediaUrlEvaluationVerdict | WikipediaCheckVerdict,
 ): string {
@@ -2826,9 +2831,7 @@ export function OffSiteDashboard() {
               />
               <WorkspaceNavButton
                 active={activeWorkspace === 'wikipedia-check'}
-                count={
-                  wikipediaCheckResult ? wikipediaCheckResult.verdictLabel : 'Ad hoc'
-                }
+                count={wikipediaCheckResult ? wikipediaCheckResult.verdictLabel : ''}
                 description="Enter a domain and check whether the backend’s Wikipedia page looks aligned with it."
                 label="Wikipedia Check"
                 onClick={() => setActiveWorkspace('wikipedia-check')}
@@ -3637,58 +3640,17 @@ export function OffSiteDashboard() {
                   </section>
 
                   <section className="panel panel-tone-data">
-                      <div className="panel-header">
+                    <div className="panel-header">
                       <div>
                         <h2>Check Result</h2>
                         <p>
-                          Result details for the latest selected site and any batch run
-                          using the single backend `wikipediaUrl` value the AI evaluator assessed.
+                          AI evaluator verdict for the latest single-site check.
                         </p>
                       </div>
                     </div>
 
                     {wikipediaCheckResult ? (
                       <div className="wikipedia-check-result-stack">
-                        {(() => {
-                          const correctCount = wikipediaBatchResults.filter(
-                            (result) => result.verdict === 'Correct',
-                          ).length;
-                          const reviewCount = wikipediaBatchResults.filter(
-                            (result) => result.verdict === 'Needs Review',
-                          ).length;
-                          const incorrectCount = wikipediaBatchResults.filter(
-                            (result) => result.verdict === 'Incorrect',
-                          ).length;
-                          const unavailableCount = wikipediaBatchResults.filter(
-                            (result) => !isClaudeWikipediaVerdict(result.verdict),
-                          ).length;
-                          const wikiHallucinationRate =
-                            correctCount + incorrectCount > 0
-                              ? Math.round(
-                                  (incorrectCount / (correctCount + incorrectCount)) * 100,
-                                )
-                              : null;
-
-                          return wikipediaBatchResults.length > 0 ? (
-                            <div className="callout">
-                              <strong>Batch summary</strong>
-                              <p>
-                                {wikipediaBatchResults.length} sites checked. Correct:{' '}
-                                {correctCount} · Needs review: {reviewCount} · Incorrect:{' '}
-                                {incorrectCount} · Missing/failed: {unavailableCount}
-                                {wikiHallucinationRate !== null ? (
-                                  <>
-                                    {' '}·{' '}
-                                    <span className="hallucination-rate-pill">
-                                      {wikiHallucinationRate}% hallucination rate
-                                    </span>
-                                  </>
-                                ) : null}
-                              </p>
-                            </div>
-                          ) : null;
-                        })()}
-
                         <div className="wikipedia-check-status-row">
                           <span
                             className={`status-pill status-pill-${getWikipediaStatusTone(
@@ -3699,7 +3661,7 @@ export function OffSiteDashboard() {
                           </span>
                           {wikipediaCheckResult.confidence ? (
                             <span className="wikipedia-check-score">
-                              Confidence {wikipediaCheckResult.confidence}
+                              Confidence: <strong>{capitalizeFirst(wikipediaCheckResult.confidence)}</strong>
                             </span>
                           ) : null}
                         </div>
@@ -3790,108 +3752,159 @@ export function OffSiteDashboard() {
                             ) : null}
                           </article>
                         </div>
-
-                        {wikipediaBatchResults.length > 0 ? (
-                          <article className="wikipedia-check-card wikipedia-batch-results-card">
-                            <div className="panel-header">
-                              <div>
-                                <h3>Batch Results</h3>
-                                <p className="wikipedia-check-summary">
-                                  Review the table to see AI evaluator verdicts versus sites where
-                                  the backend did not expose a usable `wikipediaUrl`.
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="table-wrapper">
-                              <table className="dashboard-table wikipedia-batch-table">
-                                <thead>
-                                  <tr>
-                                    <th>Site</th>
-                                    <th>Wiki Opportunity</th>
-                                    <th>Wiki Page</th>
-                                    <th>Hallucination Rate</th>
-                                    <th>Confidence</th>
-                                    <th>Wikipedia URL</th>
-                                    <th>Title</th>
-                                    <th>Rationale</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {wikipediaBatchResults.map((result) => {
-                                    const wikiOpp =
-                                      result.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing';
-                                    const wikiPage = isClaudeWikipediaVerdict(result.verdict)
-                                      ? result.verdict
-                                      : 'N/A';
-                                    const hRate = getWikiHallucinationRate(result.verdict);
-                                    return (
-                                    <tr key={result.requestedSite}>
-                                      <td>{result.requestedSite}</td>
-                                      <td>
-                                        <span
-                                          className={`status-pill status-pill-${result.wikipediaOpportunityCount > 0 ? 'success' : 'neutral'}`}
-                                        >
-                                          {wikiOpp}
-                                        </span>
-                                      </td>
-                                      <td>
-                                        <span
-                                          className={`status-pill status-pill-${getWikipediaStatusTone(
-                                            result.verdict,
-                                          )}`}
-                                        >
-                                          {wikiPage}
-                                        </span>
-                                      </td>
-                                      <td>
-                                        {hRate ? (
-                                          <span className="hallucination-rate-pill">
-                                            {hRate}
-                                          </span>
-                                        ) : (
-                                          <span className="metric-neutral"> — </span>
-                                        )}
-                                      </td>
-                                      <td>{result.confidence ?? ' - '}</td>
-                                      <td>
-                                        {result.backendWikipediaUrl ? (
-                                          <a
-                                            className="metric-link"
-                                            href={result.backendWikipediaUrl}
-                                            rel="noreferrer"
-                                            target="_blank"
-                                          >
-                                            {result.backendWikipediaUrl}
-                                          </a>
-                                        ) : (
-                                          ' - '
-                                        )}
-                                      </td>
-                                      <td>{result.extractedTitle ?? ' - '}</td>
-                                      <td>
-                                        <span className="metric-copy">{result.rationale}</span>
-                                      </td>
-                                    </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </article>
-                        ) : null}
                       </div>
                     ) : (
                       <div className="empty-panel">
                         <h3>No check result yet</h3>
                         <p>
-                          Submit one domain or run a batch to fetch backend data and
-                          inspect the returned `wikipediaUrl` verdicts.
+                          Submit a domain above to fetch backend data and inspect the
+                          returned `wikipediaUrl` verdict.
                         </p>
                       </div>
                     )}
                   </section>
                 </div>
+
+                {wikipediaBatchResults.length > 0 ? (() => {
+                  const correctCount = wikipediaBatchResults.filter(
+                    (r) => r.verdict === 'Correct',
+                  ).length;
+                  const reviewCount = wikipediaBatchResults.filter(
+                    (r) => r.verdict === 'Needs Review',
+                  ).length;
+                  const incorrectCount = wikipediaBatchResults.filter(
+                    (r) => r.verdict === 'Incorrect',
+                  ).length;
+                  const unavailableCount = wikipediaBatchResults.filter(
+                    (r) => !isClaudeWikipediaVerdict(r.verdict),
+                  ).length;
+                  const wikiHallucinationRate =
+                    correctCount + incorrectCount > 0
+                      ? Math.round(
+                          (incorrectCount / (correctCount + incorrectCount)) * 100,
+                        )
+                      : null;
+
+                  return (
+                    <section className="panel panel-tone-data wikipedia-batch-panel">
+                      <div className="panel-header">
+                        <div>
+                          <h2>Batch Results</h2>
+                          <p>
+                            AI evaluator verdicts for all {wikipediaBatchResults.length} sites in the batch run.
+                          </p>
+                        </div>
+                        <div className="panel-summary">
+                          <span>
+                            Correct: <strong>{correctCount}</strong>
+                          </span>
+                          <span>
+                            Needs review: <strong>{reviewCount}</strong>
+                          </span>
+                          <span>
+                            Incorrect: <strong>{incorrectCount}</strong>
+                          </span>
+                          <span>
+                            Missing/failed: <strong>{unavailableCount}</strong>
+                          </span>
+                          {wikiHallucinationRate !== null ? (
+                            <span className="hallucination-rate-pill">
+                              {wikiHallucinationRate}% hallucination rate
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="table-wrapper">
+                        <table className="dashboard-table wikipedia-batch-table">
+                          <thead>
+                            <tr>
+                              <th>Site</th>
+                              <th>Wiki Opportunity</th>
+                              <th>Wiki Page</th>
+                              <th>Hallucination Rate</th>
+                              <th>Confidence</th>
+                              <th>Wikipedia URL</th>
+                              <th>Title</th>
+                              <th>Details</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {wikipediaBatchResults.map((result) => {
+                              const wikiOpp =
+                                result.wikipediaOpportunityCount > 0 ? 'Exists' : 'Missing';
+                              const wikiPage = isClaudeWikipediaVerdict(result.verdict)
+                                ? result.verdict
+                                : 'N/A';
+                              const hRate = getWikiHallucinationRate(result.verdict);
+                              return (
+                                <tr key={result.requestedSite}>
+                                  <td>{result.requestedSite}</td>
+                                  <td>
+                                    <span
+                                      className={`status-pill status-pill-${result.wikipediaOpportunityCount > 0 ? 'success' : 'neutral'}`}
+                                    >
+                                      {wikiOpp}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <span
+                                      className={`status-pill status-pill-${getWikipediaStatusTone(
+                                        result.verdict,
+                                      )}`}
+                                    >
+                                      {wikiPage}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {hRate ? (
+                                      <span className="hallucination-rate-pill">
+                                        {hRate}
+                                      </span>
+                                    ) : (
+                                      <span className="metric-neutral"> — </span>
+                                    )}
+                                  </td>
+                                  <td>{capitalizeFirst(result.confidence)}</td>
+                                  <td>
+                                    {result.backendWikipediaUrl ? (
+                                      <a
+                                        className="metric-link"
+                                        href={result.backendWikipediaUrl}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        {result.backendWikipediaUrl}
+                                      </a>
+                                    ) : (
+                                      ' — '
+                                    )}
+                                  </td>
+                                  <td>{result.extractedTitle ?? ' — '}</td>
+                                  <td>
+                                    <details className="wikipedia-batch-details">
+                                      <summary>Show details</summary>
+                                      <div className="wikipedia-batch-details-body">
+                                        <strong>Why this verdict</strong>
+                                        <p>{result.rationale}</p>
+                                        {result.evidenceSnippet ? (
+                                          <>
+                                            <strong>Evidence</strong>
+                                            <p>{result.evidenceSnippet}</p>
+                                          </>
+                                        ) : null}
+                                      </div>
+                                    </details>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                })() : null}
               </div>
             )}
           </div>

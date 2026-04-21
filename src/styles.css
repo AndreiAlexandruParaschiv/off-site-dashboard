@@ -1187,12 +1187,66 @@ a:hover {
   overflow-wrap: anywhere;
 }
 
-.wikipedia-batch-results-card {
-  gap: 18px;
+.wikipedia-batch-panel {
+  margin-top: 4px;
 }
 
 .wikipedia-batch-table td {
   vertical-align: top;
+}
+
+.wikipedia-batch-details {
+  font-size: 0.82rem;
+}
+
+.wikipedia-batch-details summary {
+  cursor: pointer;
+  color: var(--teal);
+  font-weight: 500;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.wikipedia-batch-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.wikipedia-batch-details summary::after {
+  content: '▾';
+  font-size: 0.7rem;
+  transition: transform 0.15s;
+}
+
+.wikipedia-batch-details[open] summary::after {
+  transform: rotate(-180deg);
+}
+
+.wikipedia-batch-details-body {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  max-width: 400px;
+}
+
+.wikipedia-batch-details-body strong {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.wikipedia-batch-details-body p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
 }
 
 .panel-sites-inline .site-grid {

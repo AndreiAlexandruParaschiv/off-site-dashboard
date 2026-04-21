@@ -955,7 +955,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     )}
                   </td>
                   <td>
-                    <span className="status-pill status-pill-neutral" title={item.sov}>
+                    <span className="sov-label" title={item.sov}>
                       {trimSuggestionText(item.sov) || '—'}
                     </span>
                   </td>
@@ -1891,7 +1891,7 @@ function SovEvaluationTable(props: {
                     )}
                   </td>
                   <td>
-                    <span className="status-pill status-pill-neutral" title={row.item.sov}>
+                    <span className="sov-label" title={row.item.sov}>
                       {trimSuggestionText(row.item.sov) || '—'}
                     </span>
                   </td>

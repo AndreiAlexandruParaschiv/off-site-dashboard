@@ -225,6 +225,36 @@ function getDisplayUrl(value: string) {
   return value.replace(/^https?:\/\//i, '');
 }
 
+function SovLabel({ value }: { value?: string }) {
+  const raw = trimSuggestionText(value ?? '');
+  if (!raw) return <span className="sov-label sov-label-empty">—</span>;
+
+  // Split on the middle-dot separator used by the backend ("·")
+  const entries = raw
+    .split('·')
+    .map((e) => e.trim())
+    .filter(Boolean);
+
+  return (
+    <span className="sov-label">
+      {entries.map((entry, i) => {
+        // Split "BrandName: percentage" into name + value
+        const colonIdx = entry.indexOf(':');
+        const brandPart = colonIdx !== -1 ? entry.slice(0, colonIdx).trim() : entry;
+        const valuePart = colonIdx !== -1 ? entry.slice(colonIdx + 1).trim() : '';
+        return (
+          <span key={i} className="sov-entry">
+            <strong className="sov-brand">{brandPart}</strong>
+            {valuePart && (
+              <span className="sov-value">: {valuePart}</span>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function normalizeSentimentValue(value?: string) {
   const normalizedValue = value?.trim().toLowerCase() ?? '';
 
@@ -955,9 +985,7 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     )}
                   </td>
                   <td>
-                    <span className="sov-label" title={item.sov}>
-                      {trimSuggestionText(item.sov) || '—'}
-                    </span>
+                    <SovLabel value={item.sov} />
                   </td>
                   <td>
                     {(() => {
@@ -1891,9 +1919,7 @@ function SovEvaluationTable(props: {
                     )}
                   </td>
                   <td>
-                    <span className="sov-label" title={row.item.sov}>
-                      {trimSuggestionText(row.item.sov) || '—'}
-                    </span>
+                    <SovLabel value={row.item.sov} />
                   </td>
                   <td>
                     {evaluationResult ? (

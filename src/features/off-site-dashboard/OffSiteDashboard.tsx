@@ -3766,9 +3766,6 @@ export function OffSiteDashboard() {
                   const correctCount = wikipediaBatchResults.filter(
                     (r) => r.verdict === 'Correct',
                   ).length;
-                  const reviewCount = wikipediaBatchResults.filter(
-                    (r) => r.verdict === 'Needs Review',
-                  ).length;
                   const incorrectCount = wikipediaBatchResults.filter(
                     (r) => r.verdict === 'Incorrect',
                   ).length;
@@ -3794,9 +3791,6 @@ export function OffSiteDashboard() {
                         <div className="panel-summary">
                           <span>
                             Correct: <strong>{correctCount}</strong>
-                          </span>
-                          <span>
-                            Needs review: <strong>{reviewCount}</strong>
                           </span>
                           <span>
                             Incorrect: <strong>{incorrectCount}</strong>

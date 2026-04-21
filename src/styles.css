@@ -1721,13 +1721,16 @@ a:hover {
   min-width: 64px;
 }
 
-/* Compact ghost/secondary-buttons inside tables and panel header controls */
+/* Compact buttons inside tables and panel header controls */
 .evaluation-table .ghost-button,
 .evaluation-table .secondary-button,
+.evaluation-table .primary-button,
 .sentiment-table .ghost-button,
 .sentiment-table .secondary-button,
+.sentiment-table .primary-button,
 .panel-header-actions .ghost-button,
-.panel-header-actions .secondary-button {
+.panel-header-actions .secondary-button,
+.panel-header-actions .primary-button {
   min-height: 28px;
   padding: 0 12px;
   font-size: 0.82rem;

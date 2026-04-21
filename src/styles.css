@@ -1393,7 +1393,7 @@ a:hover {
 }
 
 .evaluation-col-action {
-  width: 120px;
+  width: 130px;
 }
 
 .suggestion-evaluation-col-site {
@@ -1649,7 +1649,25 @@ a:hover {
 }
 
 .suggestion-detail-toggle {
-  min-width: 74px;
+  min-width: 64px;
+}
+
+/* Compact ghost-buttons inside tables — match status-pill height */
+.evaluation-table .ghost-button,
+.sentiment-table .ghost-button {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Tighter cell padding in evaluation/sentiment tables */
+.evaluation-table th,
+.evaluation-table td,
+.sentiment-table th,
+.sentiment-table td {
+  padding: 10px 14px;
 }
 
 .metric-link {
@@ -1706,11 +1724,11 @@ a:hover {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 28px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid transparent;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 700;
 }
 

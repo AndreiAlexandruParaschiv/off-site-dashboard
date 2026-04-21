@@ -3553,8 +3553,7 @@ export function OffSiteDashboard() {
                           rows={8}
                         />
                         <small className="field-note">
-                          One site per line. Paste 100 or more domains here to run a
-                          AI-backed Wikipedia URL review pass and export the results.
+                          One site per line. Use bare domains (e.g. <code>pwc.com</code>) rather than <code>https://www.pwc.com/</code> — the backend may have separate records for www and non-www variants, and the non-www form is more likely to have Wikipedia data.
                         </small>
                       </label>
 

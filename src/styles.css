@@ -1213,69 +1213,61 @@ a:hover {
   vertical-align: top;
 }
 
-.wikipedia-result-details {
-  margin-top: 4px;
-}
-
-.wikipedia-result-details > summary {
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--teal);
-  list-style: none;
-  user-select: none;
-  padding: 2px 0;
-}
-
-.wikipedia-result-details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.wikipedia-result-details > summary::after {
-  content: '▾';
-  font-size: 0.72rem;
-  transition: transform 0.15s;
-}
-
-.wikipedia-result-details[open] > summary::after {
-  transform: rotate(-180deg);
-}
-
-.wikipedia-result-details > .wikipedia-check-result-grid {
-  margin-top: 14px;
-}
-
-.wikipedia-batch-details {
-  font-size: 0.82rem;
-}
-
+/* Shared "Show details" toggle button style used in both single-result and batch table */
+.wikipedia-result-details summary,
 .wikipedia-batch-details summary {
   cursor: pointer;
-  color: var(--teal);
-  font-weight: 500;
   list-style: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 0;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--teal);
+  background: rgba(13, 122, 115, 0.07);
+  border: 1px solid rgba(13, 122, 115, 0.28);
+  border-radius: 20px;
+  padding: 5px 12px;
   user-select: none;
+  transition: background 0.14s, border-color 0.14s;
+  white-space: nowrap;
 }
 
+.wikipedia-result-details summary:hover,
+.wikipedia-batch-details summary:hover {
+  background: rgba(13, 122, 115, 0.13);
+  border-color: rgba(13, 122, 115, 0.48);
+}
+
+.wikipedia-result-details summary::-webkit-details-marker,
 .wikipedia-batch-details summary::-webkit-details-marker {
   display: none;
 }
 
+.wikipedia-result-details summary::after,
 .wikipedia-batch-details summary::after {
   content: '▾';
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   transition: transform 0.15s;
+  margin-left: 1px;
 }
 
+.wikipedia-result-details[open] summary::after,
 .wikipedia-batch-details[open] summary::after {
   transform: rotate(-180deg);
+}
+
+.wikipedia-result-details {
+  margin-top: 8px;
+}
+
+.wikipedia-result-details > .wikipedia-check-result-grid {
+  margin-top: 16px;
+}
+
+.wikipedia-batch-details {
+  font-size: 0.82rem;
 }
 
 .wikipedia-batch-details-body {

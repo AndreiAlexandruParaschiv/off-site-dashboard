@@ -1521,15 +1521,12 @@ function EvaluationTable(props: {
 
                       return (
                         <span
-                          className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                          className={`status-pill status-pill-${getSentimentTone(
                             row.item.sentiment,
                           )}`}
                           title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
                         >
-                          <span className="sentiment-dot" aria-hidden="true" />
-                          <span className="sentiment-copy">
-                            {hasLabel ? displayLabel : '—'}
-                          </span>
+                          {hasLabel ? displayLabel : '—'}
                         </span>
                       );
                     })()}
@@ -1751,7 +1748,7 @@ function SovEvaluationTable(props: {
             <th>Site</th>
             <th>Opportunity</th>
             <th>URL</th>
-            <th>Extracted Share of Voice</th>
+            <th>Extracted SOV</th>
             <th
               className="sortable-column-header"
               onClick={() => toggleSort('confidence')}
@@ -1887,8 +1884,8 @@ function SovEvaluationTable(props: {
                     )}
                   </td>
                   <td>
-                    <span className="metric-copy metric-card" title={row.item.sov}>
-                      {trimSuggestionText(row.item.sov) || ' - '}
+                    <span className="status-pill status-pill-neutral" title={row.item.sov}>
+                      {trimSuggestionText(row.item.sov) || '—'}
                     </span>
                   </td>
                   <td>

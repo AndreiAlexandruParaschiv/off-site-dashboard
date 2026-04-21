@@ -3815,7 +3815,6 @@ export function OffSiteDashboard() {
                                     <th>Wikipedia URL</th>
                                     <th>Title</th>
                                     <th>Rationale</th>
-                                    <th>Action</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -3872,15 +3871,6 @@ export function OffSiteDashboard() {
                                       <td>{result.extractedTitle ?? ' - '}</td>
                                       <td>
                                         <span className="metric-copy">{result.rationale}</span>
-                                      </td>
-                                      <td>
-                                        <button
-                                          className="ghost-button"
-                                          onClick={() => setWikipediaCheckResult(result)}
-                                          type="button"
-                                        >
-                                          View
-                                        </button>
                                       </td>
                                     </tr>
                                     );

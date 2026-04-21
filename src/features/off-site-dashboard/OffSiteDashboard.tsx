@@ -2434,80 +2434,55 @@ export function OffSiteDashboard() {
       (summary, item) => {
         if (item.evaluationResult) {
           summary.evaluated += 1;
-
-          if (
-            isConfirmedSentimentEvaluation({
-              extractedSentiment: item.sentiment,
-              evaluatedSentiment: item.evaluationResult.evaluatedSentiment,
-              sentimentConfidence: item.evaluationResult.sentimentConfidence,
-            })
-          ) {
-            summary.confirmed += 1;
-          } else {
-            summary.review += 1;
-          }
-
+          const verdict = deriveSentimentVerdict({
+            extractedSentiment: item.sentiment,
+            evaluationResult: item.evaluationResult,
+            evaluationError: item.evaluationError,
+          });
+          if (verdict === 'Correct') summary.confirmed += 1;
+          else if (verdict === 'Incorrect') summary.incorrect += 1;
+          else summary.review += 1;
           return summary;
         }
-
         if (item.evaluationError) {
           summary.evaluated += 1;
           summary.review += 1;
           return summary;
         }
-
         summary.notEvaluated += 1;
         return summary;
       },
-      {
-        evaluated: 0,
-        confirmed: 0,
-        review: 0,
-        notEvaluated: 0,
-      },
+      { evaluated: 0, confirmed: 0, incorrect: 0, review: 0, notEvaluated: 0 },
     );
   const sovEvaluationSummary = visibleEvaluationItems.reduce(
     (summary, item) => {
       if (item.evaluationResult) {
         summary.evaluated += 1;
-
-        if (
-          isConfirmedSovEvaluation({
-            evaluatedSov: item.evaluationResult.evaluatedSov,
-            sovConfidence: item.evaluationResult.sovConfidence,
-          })
-        ) {
-          summary.confirmed += 1;
-        } else {
-          summary.review += 1;
-        }
-
+        const verdict = deriveSovVerdict({
+          extractedSov: item.sov,
+          evaluationResult: item.evaluationResult,
+          evaluationError: item.evaluationError,
+        });
+        if (verdict === 'Correct') summary.confirmed += 1;
+        else if (verdict === 'Incorrect') summary.incorrect += 1;
+        else summary.review += 1;
         return summary;
       }
-
       if (item.evaluationError) {
         summary.evaluated += 1;
         summary.review += 1;
         return summary;
       }
-
       summary.notEvaluated += 1;
       return summary;
     },
-    {
-      evaluated: 0,
-      confirmed: 0,
-      review: 0,
-      notEvaluated: 0,
-    },
+    { evaluated: 0, confirmed: 0, incorrect: 0, review: 0, notEvaluated: 0 },
   );
   const suggestionEvaluationSummary = visibleSuggestionEvaluationRows.reduce(
     (summary, row) => {
       const suggestion = row.suggestion;
-
       if (suggestion.evaluationResult) {
         summary.evaluated += 1;
-
         if (
           isConfirmedSuggestionEvaluation({
             verdict: suggestion.evaluationResult.verdict,
@@ -2522,26 +2497,39 @@ export function OffSiteDashboard() {
         } else {
           summary.review += 1;
         }
-
         return summary;
       }
-
       if (suggestion.evaluationError) {
         summary.evaluated += 1;
         summary.review += 1;
         return summary;
       }
-
       summary.notEvaluated += 1;
       return summary;
     },
-    {
-      evaluated: 0,
-      confirmed: 0,
-      incorrect: 0,
-      review: 0,
-      notEvaluated: 0,
-    },
+    { evaluated: 0, confirmed: 0, incorrect: 0, review: 0, notEvaluated: 0 },
+  );
+
+  /**
+   * Hallucination rate = incorrect / (correct + incorrect) × 100.
+   * "Needs Review" rows are excluded (neither penalised nor credited).
+   * Returns null when no rows with a definitive verdict exist yet.
+   */
+  function hallucinationRate(confirmed: number, incorrect: number): number | null {
+    const total = confirmed + incorrect;
+    return total > 0 ? Math.round((incorrect / total) * 100) : null;
+  }
+  const sentimentHallucinationRate = hallucinationRate(
+    evaluationSummary.confirmed,
+    evaluationSummary.incorrect,
+  );
+  const sovHallucinationRate = hallucinationRate(
+    sovEvaluationSummary.confirmed,
+    sovEvaluationSummary.incorrect,
+  );
+  const suggestionHallucinationRate = hallucinationRate(
+    suggestionEvaluationSummary.confirmed,
+    suggestionEvaluationSummary.incorrect,
   );
   const pendingReviewCount =
     suggestionEvaluationSummary.review +
@@ -3214,17 +3202,29 @@ export function OffSiteDashboard() {
                     <StatsCard
                       label="Sentiment evals"
                       value={String(evaluationSummary.evaluated)}
-                      detail={`${evaluationSummary.review} require review`}
+                      detail={
+                        sentimentHallucinationRate !== null
+                          ? `${sentimentHallucinationRate}% hallucination rate`
+                          : `${evaluationSummary.review} require review`
+                      }
                     />
                     <StatsCard
                       label="Share of Voice evals"
                       value={String(sovEvaluationSummary.evaluated)}
-                      detail={`${sovEvaluationSummary.review} require review`}
+                      detail={
+                        sovHallucinationRate !== null
+                          ? `${sovHallucinationRate}% hallucination rate`
+                          : `${sovEvaluationSummary.review} require review`
+                      }
                     />
                     <StatsCard
                       label="Suggestion evals"
                       value={String(suggestionEvaluationSummary.evaluated)}
-                      detail={`${suggestionEvaluationSummary.review + suggestionEvaluationSummary.incorrect} require review`}
+                      detail={
+                        suggestionHallucinationRate !== null
+                          ? `${suggestionHallucinationRate}% hallucination rate`
+                          : `${suggestionEvaluationSummary.review + suggestionEvaluationSummary.incorrect} require review`
+                      }
                     />
                   </div>
                 </section>
@@ -3243,7 +3243,15 @@ export function OffSiteDashboard() {
                         <p className="panel-summary">
                           {evaluationSummary.evaluated === 0
                             ? 'No evaluation results yet on this page.'
-                            : `Confirmed: ${evaluationSummary.confirmed} · Needs review: ${evaluationSummary.review} · Not evaluated: ${evaluationSummary.notEvaluated}`}
+                            : <>
+                                {`Correct: ${evaluationSummary.confirmed} · Incorrect: ${evaluationSummary.incorrect} · Needs review: ${evaluationSummary.review} · Not evaluated: ${evaluationSummary.notEvaluated}`}
+                                {sentimentHallucinationRate !== null && (
+                                  <span className="hallucination-rate-pill">
+                                    {sentimentHallucinationRate}% hallucination rate
+                                  </span>
+                                )}
+                              </>
+                          }
                         </p>
                       </div>
 
@@ -3311,7 +3319,15 @@ export function OffSiteDashboard() {
                         <p className="panel-summary">
                           {sovEvaluationSummary.evaluated === 0
                             ? 'No Share of Voice evaluation results yet on this page. Use the sentiment evaluation above to run checks.'
-                            : `Confirmed: ${sovEvaluationSummary.confirmed} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
+                            : <>
+                                {`Correct: ${sovEvaluationSummary.confirmed} · Incorrect: ${sovEvaluationSummary.incorrect} · Needs review: ${sovEvaluationSummary.review} · Not evaluated: ${sovEvaluationSummary.notEvaluated}`}
+                                {sovHallucinationRate !== null && (
+                                  <span className="hallucination-rate-pill">
+                                    {sovHallucinationRate}% hallucination rate
+                                  </span>
+                                )}
+                              </>
+                          }
                         </p>
                       </div>
 
@@ -3378,7 +3394,15 @@ export function OffSiteDashboard() {
                         <p className="panel-summary">
                           {suggestionEvaluationSummary.evaluated === 0
                             ? 'No suggestion evaluation results yet on this page.'
-                            : `Confirmed: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
+                            : <>
+                                {`Correct: ${suggestionEvaluationSummary.confirmed} · Incorrect: ${suggestionEvaluationSummary.incorrect} · Needs review: ${suggestionEvaluationSummary.review} · Not evaluated: ${suggestionEvaluationSummary.notEvaluated}`}
+                                {suggestionHallucinationRate !== null && (
+                                  <span className="hallucination-rate-pill">
+                                    {suggestionHallucinationRate}% hallucination rate
+                                  </span>
+                                )}
+                              </>
+                          }
                         </p>
                       </div>
 

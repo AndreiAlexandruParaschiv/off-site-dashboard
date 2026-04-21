@@ -341,15 +341,15 @@ export function getConfidenceLabel(score?: number) {
   const confidenceLevel = getConfidenceLevel(score);
 
   if (confidenceLevel === 'high') {
-    return 'HIGH';
+    return 'High';
   }
 
   if (confidenceLevel === 'medium') {
-    return 'MEDIUM';
+    return 'Medium';
   }
 
   if (confidenceLevel === 'low') {
-    return 'LOW';
+    return 'Low';
   }
 
   return '';

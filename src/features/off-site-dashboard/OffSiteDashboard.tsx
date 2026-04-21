@@ -263,7 +263,7 @@ function isConfirmedSentimentEvaluation(input: {
     evaluatedSentiment !== 'needs_review' &&
     extractedSentiment !== 'unknown' &&
     extractedSentiment === evaluatedSentiment &&
-    getConfidenceLabel(input.sentimentConfidence) !== 'LOW'
+    getConfidenceLabel(input.sentimentConfidence) !== 'Low'
   );
 }
 
@@ -291,7 +291,7 @@ function isConfirmedSovEvaluation(input: {
 }) {
   return (
     normalizeSovValue(input.evaluatedSov) !== 'needs_review' &&
-    getConfidenceLabel(input.sovConfidence) !== 'LOW'
+    getConfidenceLabel(input.sovConfidence) !== 'Low'
   );
 }
 
@@ -337,7 +337,7 @@ function isConfirmedSuggestionEvaluation(input: {
 }) {
   return (
     normalizeSuggestionVerdict(input.verdict) === 'correct' &&
-    getConfidenceLabel(input.confidence) !== 'LOW'
+    getConfidenceLabel(input.confidence) !== 'Low'
   );
 }
 
@@ -951,8 +951,8 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                     )}
                   </td>
                   <td>
-                    <span className="metric-copy metric-card" title={item.sov}>
-                      {trimSuggestionText(item.sov) || ' - '}
+                    <span className="status-pill status-pill-neutral" title={item.sov}>
+                      {trimSuggestionText(item.sov) || '—'}
                     </span>
                   </td>
                   <td>
@@ -960,18 +960,18 @@ function SentimentTable(props: { rows: GroupedOpportunityRow[] }) {
                       const sentimentLabel = getSentimentLabel(item.sentiment);
                       const displayLabel = trimSuggestionText(sentimentLabel);
                       const hasLabel = displayLabel.length > 0;
+                      const capitalizedLabel = hasLabel
+                        ? displayLabel.charAt(0).toUpperCase() + displayLabel.slice(1)
+                        : '—';
 
                       return (
                         <span
-                          className={`sentiment-pill sentiment-pill-${getSentimentTone(
+                          className={`status-pill status-pill-${getSentimentTone(
                             item.sentiment,
                           )}`}
                           title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
                         >
-                          <span className="sentiment-dot" aria-hidden="true" />
-                          <span className="sentiment-copy">
-                            {hasLabel ? displayLabel : '—'}
-                          </span>
+                          {capitalizedLabel}
                         </span>
                       );
                     })()}
@@ -1518,6 +1518,9 @@ function EvaluationTable(props: {
                       const sentimentLabel = getSentimentLabel(row.item.sentiment);
                       const displayLabel = trimSuggestionText(sentimentLabel);
                       const hasLabel = displayLabel.length > 0;
+                      const capitalizedLabel = hasLabel
+                        ? displayLabel.charAt(0).toUpperCase() + displayLabel.slice(1)
+                        : '—';
 
                       return (
                         <span
@@ -1526,7 +1529,7 @@ function EvaluationTable(props: {
                           )}`}
                           title={hasLabel ? sentimentLabel : MISSING_EXTRACTED_SENTIMENT_TOOLTIP}
                         >
-                          {hasLabel ? displayLabel : '—'}
+                          {capitalizedLabel}
                         </span>
                       );
                     })()}

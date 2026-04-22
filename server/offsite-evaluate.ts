@@ -461,6 +461,72 @@ function buildYoutubeEvidenceFromBrightDataEntry(
   };
 }
 
+/**
+ * Polls a BrightData snapshot until it is ready and returns the first result record.
+ * Used by both the /scrape and /trigger YouTube evidence paths.
+ */
+async function pollBrightDataSnapshot(
+  snapshotId: string,
+  apiKey: string,
+  env: ServerEnv,
+): Promise<Record<string, unknown>> {
+  const parsedTimeout = Number.parseInt(
+    env.BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?.trim() ?? '',
+    10,
+  );
+  const timeoutMs =
+    Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 90000;
+  const pollIntervalMs = 4000;
+  const deadlineMs = Date.now() + timeoutMs;
+
+  while (Date.now() < deadlineMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const progressResponse = await fetch(
+      `https://api.brightdata.com/datasets/v3/progress/${encodeURIComponent(snapshotId)}`,
+      { headers: { authorization: `Bearer ${apiKey}` } },
+    );
+
+    if (!progressResponse.ok) {
+      throw new Error(
+        `Bright Data progress check failed with ${progressResponse.status}`,
+      );
+    }
+
+    const progress = (await progressResponse.json()) as { status?: string };
+
+    if (progress.status === 'ready') {
+      const snapshotResponse = await fetch(
+        `https://api.brightdata.com/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`,
+        { headers: { authorization: `Bearer ${apiKey}` } },
+      );
+
+      if (!snapshotResponse.ok) {
+        throw new Error(
+          `Bright Data snapshot download failed with ${snapshotResponse.status}`,
+        );
+      }
+
+      const snapshot = (await snapshotResponse.json()) as unknown;
+      const firstResult = Array.isArray(snapshot)
+        ? (snapshot[0] as Record<string, unknown> | undefined)
+        : (snapshot as Record<string, unknown> | undefined);
+
+      if (!firstResult || typeof firstResult !== 'object') {
+        throw new Error('Bright Data snapshot returned no results.');
+      }
+
+      return firstResult;
+    }
+
+    if (progress.status === 'failed') {
+      throw new Error('Bright Data async crawl failed.');
+    }
+  }
+
+  throw new Error('Bright Data async crawl timed out.');
+}
+
 async function fetchBrightDataYoutubeEvidence(
   itemUrl: string,
   env: ServerEnv,
@@ -500,7 +566,22 @@ async function fetchBrightDataYoutubeEvidence(
     throw new Error(errorText || `Bright Data YouTube scrape failed with ${response.status}`);
   }
 
-  const payload = (await response.json()) as Array<Record<string, unknown>>;
+  const rawPayload = (await response.json()) as unknown;
+
+  // BrightData's /scrape endpoint may return a snapshot_id for datasets that
+  // process asynchronously (e.g. transcript extraction). Poll until ready.
+  if (
+    rawPayload !== null &&
+    typeof rawPayload === 'object' &&
+    !Array.isArray(rawPayload) &&
+    (rawPayload as { snapshot_id?: string }).snapshot_id
+  ) {
+    const snapshotId = (rawPayload as { snapshot_id: string }).snapshot_id;
+    const firstResult = await pollBrightDataSnapshot(snapshotId, apiKey, env);
+    return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, firstResult, site);
+  }
+
+  const payload = rawPayload as Array<Record<string, unknown>>;
   const firstResult = payload[0];
 
   if (!firstResult || typeof firstResult !== 'object') {
@@ -537,7 +618,7 @@ async function fetchBrightDataYoutubeEvidenceAsync(
           url: itemUrl,
           country: '',
           transcription_language:
-            env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+            env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || '',
         },
       ]),
     },
@@ -557,61 +638,7 @@ async function fetchBrightDataYoutubeEvidenceAsync(
     throw new Error('Bright Data YouTube async trigger returned no snapshot_id.');
   }
 
-  const parsedTimeout = Number.parseInt(
-    env.BRIGHTDATA_YOUTUBE_ASYNC_TIMEOUT_MS?.trim() ?? '',
-    10,
-  );
-  const timeoutMs =
-    Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 30000;
-  const pollIntervalMs = 4000;
-  const deadlineMs = Date.now() + timeoutMs;
-
-  let firstResult: Record<string, unknown> | undefined;
-
-  while (Date.now() < deadlineMs) {
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-
-    const progressResponse = await fetch(
-      `https://api.brightdata.com/datasets/v3/progress/${encodeURIComponent(snapshotId)}`,
-      { headers: { authorization: `Bearer ${apiKey}` } },
-    );
-
-    if (!progressResponse.ok) {
-      throw new Error(
-        `Bright Data YouTube progress check failed with ${progressResponse.status}`,
-      );
-    }
-
-    const progress = (await progressResponse.json()) as { status?: string };
-
-    if (progress.status === 'ready') {
-      const snapshotResponse = await fetch(
-        `https://api.brightdata.com/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`,
-        { headers: { authorization: `Bearer ${apiKey}` } },
-      );
-
-      if (!snapshotResponse.ok) {
-        throw new Error(
-          `Bright Data YouTube snapshot download failed with ${snapshotResponse.status}`,
-        );
-      }
-
-      const snapshot = (await snapshotResponse.json()) as unknown;
-      firstResult = Array.isArray(snapshot)
-        ? (snapshot[0] as Record<string, unknown> | undefined)
-        : (snapshot as Record<string, unknown> | undefined);
-      break;
-    }
-
-    if (progress.status === 'failed') {
-      throw new Error('Bright Data YouTube async crawl failed.');
-    }
-  }
-
-  if (!firstResult || typeof firstResult !== 'object') {
-    throw new Error('Bright Data YouTube async crawl timed out.');
-  }
-
+  const firstResult = await pollBrightDataSnapshot(snapshotId, apiKey, env);
   return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, firstResult, site);
 }
 

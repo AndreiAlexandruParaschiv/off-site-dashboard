@@ -393,9 +393,16 @@ function buildYoutubeEvidenceFromBrightDataEntry(
 ): SourceEvidence {
   const title = trimMultilineText(String(firstResult.title ?? ''));
   const description = trimMultilineText(String(firstResult.description ?? ''));
-  const transcript = trimMultilineText(
-    String(firstResult.formatted_transcript ?? firstResult.transcript ?? ''),
-  );
+  // BrightData returns formatted_transcript as an array of {text, start_time, ...} segments.
+  // Fall back to the plain-text transcript field, then give up gracefully.
+  const rawFormatted = firstResult.formatted_transcript;
+  const transcriptSource = Array.isArray(rawFormatted)
+    ? (rawFormatted as Array<{ text?: unknown }>)
+        .map((seg) => String(seg.text ?? '').trim())
+        .filter(Boolean)
+        .join(' ')
+    : String(rawFormatted ?? firstResult.transcript ?? '');
+  const transcript = trimMultilineText(transcriptSource);
   const channelName = trimMultilineText(
     String(
       firstResult.youtuber ??
@@ -568,21 +575,23 @@ async function fetchBrightDataYoutubeEvidence(
 
   const rawPayload = (await response.json()) as unknown;
 
-  // BrightData's /scrape endpoint may return a snapshot_id for datasets that
-  // process asynchronously (e.g. transcript extraction). Poll until ready.
-  if (
-    rawPayload !== null &&
-    typeof rawPayload === 'object' &&
-    !Array.isArray(rawPayload) &&
-    (rawPayload as { snapshot_id?: string }).snapshot_id
-  ) {
-    const snapshotId = (rawPayload as { snapshot_id: string }).snapshot_id;
-    const firstResult = await pollBrightDataSnapshot(snapshotId, apiKey, env);
-    return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, firstResult, site);
-  }
+  // BrightData's /scrape endpoint returns one of three shapes:
+  //  1. [{...video...}]      – array with one entry (classic sync)
+  //  2. {...video...}        – plain object, no snapshot_id (also sync, observed behaviour)
+  //  3. {snapshot_id: "..."}  – async job kicked off; must poll until ready
+  let firstResult: Record<string, unknown> | undefined;
 
-  const payload = rawPayload as Array<Record<string, unknown>>;
-  const firstResult = payload[0];
+  if (Array.isArray(rawPayload)) {
+    firstResult = rawPayload[0] as Record<string, unknown> | undefined;
+  } else if (rawPayload !== null && typeof rawPayload === 'object') {
+    const obj = rawPayload as Record<string, unknown>;
+    if (obj.snapshot_id) {
+      const polled = await pollBrightDataSnapshot(String(obj.snapshot_id), apiKey, env);
+      return buildYoutubeEvidenceFromBrightDataEntry(itemUrl, polled, site);
+    }
+    // Plain object with video data returned directly.
+    firstResult = obj;
+  }
 
   if (!firstResult || typeof firstResult !== 'object') {
     throw new Error('Bright Data YouTube scrape returned no results.');

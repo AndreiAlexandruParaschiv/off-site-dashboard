@@ -2646,7 +2646,7 @@ export function OffSiteDashboard() {
 
     if (wikipediaOpportunities.length === 0) {
       return buildMissingWikipediaUrlCheckResult(siteResult, {
-        verdictLabel: 'No Wikipedia opportunity',
+        verdictLabel: 'Missing',
         summary: 'The backend did not return a Wikipedia opportunity for this site.',
         rationale:
           'There is no Wikipedia opportunity in the backend response, so the AI evaluator could not assess a backend wikipediaUrl.',
@@ -2660,7 +2660,7 @@ export function OffSiteDashboard() {
     if (!wikipediaOpportunityWithUrl?.wikipediaUrl) {
       return buildMissingWikipediaUrlCheckResult(siteResult, {
         opportunityId: wikipediaOpportunities[0]?.opportunityId,
-        verdictLabel: 'No backend Wikipedia URL',
+        verdictLabel: 'Missing',
         summary: 'A Wikipedia opportunity exists, but the backend did not return a wikipediaUrl.',
         rationale:
           'The check only evaluates the backend wikipediaUrl field. That field is missing in this response.',

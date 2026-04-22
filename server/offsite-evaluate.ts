@@ -1561,6 +1561,9 @@ async function fetchYoutubeEvidence(
   env: ServerEnv,
   site?: string,
 ): Promise<SourceEvidence> {
+  // Ensure BrightData always receives a well-formed https:// URL.
+  // SpaceCat may return http:// or even protocol-less YouTube URLs.
+  itemUrl = normalizeAbsoluteUrl(itemUrl);
   let videoEvidence: SourceEvidence | null = null;
 
   if (getBrightDataApiKey(env)) {
@@ -1665,7 +1668,12 @@ function normalizeAbsoluteUrl(value: string) {
     return '';
   }
 
-  if (/^https?:\/\//i.test(trimmedValue)) {
+  // Upgrade http:// → https:// and add protocol if missing entirely.
+  if (/^http:\/\//i.test(trimmedValue)) {
+    return trimmedValue.replace(/^http:\/\//i, 'https://');
+  }
+
+  if (/^https:\/\//i.test(trimmedValue)) {
     return trimmedValue;
   }
 

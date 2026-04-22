@@ -488,7 +488,7 @@ async function fetchBrightDataYoutubeEvidence(
             url: itemUrl,
             country: '',
             transcription_language:
-              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || 'en',
+              env.BRIGHTDATA_YOUTUBE_TRANSCRIPTION_LANGUAGE?.trim() || '',
           },
         ],
       }),
@@ -1564,6 +1564,9 @@ async function fetchYoutubeEvidence(
   // Ensure BrightData always receives a well-formed https:// URL.
   // SpaceCat may return http:// or even protocol-less YouTube URLs.
   itemUrl = normalizeAbsoluteUrl(itemUrl);
+  // BrightData's YouTube dataset is indexed by watch URLs, not Shorts URLs.
+  // Convert /shorts/VIDEO_ID → /watch?v=VIDEO_ID so evidence lookups succeed.
+  itemUrl = normalizeShortsUrl(itemUrl);
   let videoEvidence: SourceEvidence | null = null;
 
   if (getBrightDataApiKey(env)) {
@@ -1659,6 +1662,20 @@ async function fetchYoutubeEvidence(
       fallbackSnippet: 'Failed to fetch YouTube content.',
     };
   }
+}
+
+/**
+ * Converts a YouTube Shorts URL to its canonical watch URL so BrightData dataset
+ * APIs (indexed by watch URL) can resolve it correctly.
+ *   https://www.youtube.com/shorts/VIDEO_ID  →  https://www.youtube.com/watch?v=VIDEO_ID
+ * Non-Shorts URLs are returned unchanged.
+ */
+function normalizeShortsUrl(url: string): string {
+  const shortsMatch = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]+)/i);
+  if (shortsMatch) {
+    return `https://www.youtube.com/watch?v=${shortsMatch[1]}`;
+  }
+  return url;
 }
 
 function normalizeAbsoluteUrl(value: string) {

@@ -802,6 +802,10 @@ a:hover {
 
 .dashboard-secondary-grid {
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  /* Prevent panels stretching to match the tallest sibling's height.
+     Without this, when the Sites panel grows with many site cards, the
+     Coverage panel becomes equally tall and shows empty space at the bottom. */
+  align-items: start;
 }
 
 .panel-header {

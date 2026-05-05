@@ -83,47 +83,70 @@ function normalizeBrandKey(value: string): string {
 
 /**
  * Extract the target brand's percentage share from an extracted SOV string.
- * Falls back to parsing the first number if the target brand is not found
- * or not provided.
+ *
+ * Resolution order:
+ *   1. If the target brand appears in a labeled segment ("Brand: XX%" or "Brand XX%"),
+ *      return its percentage.
+ *   2. If the SOV contains other brand-labeled segments but the target brand is
+ *      absent from all of them, the target's share is genuinely 0% (the backend
+ *      omits brands with zero mentions).
+ *   3. Otherwise, fall back to the first number found in the string. This covers
+ *      unlabeled inputs like "100%" or when no target brand is provided.
  *
  * Examples:
  *   extractTargetBrandSharePct("Sun Life: 60%, Manulife: 40%", "Manulife") → 40
  *   extractTargetBrandSharePct("Manulife: 100%", "Manulife") → 100
+ *   extractTargetBrandSharePct("Sun Life: 60%, Other: 40%", "Manulife") → 0
  *   extractTargetBrandSharePct("Manulife: 100%", "") → 100 (fallback)
+ *   extractTargetBrandSharePct("100%", "Manulife") → 100 (fallback)
  */
 function extractTargetBrandSharePct(sovString: string, targetBrand: string): number | null {
   const normalizedTarget = targetBrand ? normalizeBrandKey(targetBrand) : '';
+  let sawBrandLabeledSegment = false;
 
   if (normalizedTarget) {
-    // Try to find "BrandName: XX%" or "BrandName XX%" patterns
     const lines = sovString.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 
     for (const segment of lines) {
       const colonIdx = segment.indexOf(':');
       if (colonIdx !== -1) {
+        sawBrandLabeledSegment = true;
         const leftPart = segment.slice(0, colonIdx).trim();
         const rightPart = segment.slice(colonIdx + 1).trim();
-        if (normalizeBrandKey(leftPart).includes(normalizedTarget) ||
-            normalizedTarget.includes(normalizeBrandKey(leftPart)) && normalizeBrandKey(leftPart).length >= 4) {
+        const leftKey = normalizeBrandKey(leftPart);
+        if (
+          (leftKey.length > 0 && leftKey.includes(normalizedTarget)) ||
+          (leftKey.length >= 4 && normalizedTarget.includes(leftKey))
+        ) {
           const pct = parsePercentageValue(rightPart);
           if (pct !== null) {
             return pct;
           }
         }
+        continue;
       }
 
-      // Pattern without colon: "BrandName 50%"
       const percentMatch = segment.match(/(\d+(?:\.\d+)?)\s*%/);
       if (percentMatch) {
         const beforePct = segment.slice(0, segment.lastIndexOf(percentMatch[0]));
-        if (normalizeBrandKey(beforePct).includes(normalizedTarget)) {
-          return Number(percentMatch[1]);
+        const beforeKey = normalizeBrandKey(beforePct);
+        if (beforeKey.length > 0) {
+          sawBrandLabeledSegment = true;
+          if (beforeKey.includes(normalizedTarget)) {
+            return Number(percentMatch[1]);
+          }
         }
       }
     }
   }
 
-  // Fallback: return first number found in the entire string
+  // Brand-labeled SOV but target brand absent → target's share is 0%,
+  // not the first competitor's share.
+  if (normalizedTarget && sawBrandLabeledSegment) {
+    return 0;
+  }
+
+  // Genuinely unlabeled SOV like "100%" — fall back to the first number.
   return parsePercentageValue(sovString);
 }
 

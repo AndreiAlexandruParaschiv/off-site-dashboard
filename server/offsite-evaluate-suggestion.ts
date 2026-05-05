@@ -2026,8 +2026,8 @@ function buildRedditJsonUrls(itemUrl: string) {
     return Array.from(new Set(hostCandidates)).map((host) => {
       const baseUrl = `${parsedUrl.protocol}//${host}${normalizedPath}`;
       return baseUrl.endsWith('.json')
-        ? `${baseUrl}?raw_json=1&limit=8`
-        : `${baseUrl}.json?raw_json=1&limit=8`;
+        ? `${baseUrl}?raw_json=1&limit=80`
+        : `${baseUrl}.json?raw_json=1&limit=80`;
     });
   } catch {
     return [];

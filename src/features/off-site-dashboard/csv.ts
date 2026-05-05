@@ -1,5 +1,10 @@
 import * as XLSX from 'xlsx';
-import { getConfidenceLabel, getConfidenceLevel } from './evaluation';
+import {
+  deriveSentimentVerdict,
+  deriveSovVerdict,
+  getConfidenceLabel,
+  getConfidenceLevel,
+} from './evaluation';
 import type { GroupedOpportunityRow, GroupedSuggestionItem } from './types';
 
 const SUGGESTION_CSV_HEADERS = [
@@ -148,10 +153,6 @@ function formatSuggestionRows(rows: GroupedOpportunityRow[]) {
   return rows.map(formatRow);
 }
 
-function normalizeComparableExportValue(value: string) {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
 function isHighConfidence(score?: number) {
   return getConfidenceLevel(score) === 'high';
 }
@@ -229,14 +230,18 @@ function deriveSuggestionExportMetadata(row: GroupedOpportunityRow) {
 
 function deriveSentimentExportMetadata(item: GroupedOpportunityRow['sentimentItems'][number]) {
   const evaluationResult = item.evaluationResult;
-  const sentimentMatches = evaluationResult
-    ? normalizeComparableExportValue(item.sentiment) ===
-      normalizeComparableExportValue(evaluationResult.evaluatedSentiment)
-    : false;
-  const sovMatches = evaluationResult
-    ? normalizeComparableExportValue(item.sov) ===
-      normalizeComparableExportValue(evaluationResult.evaluatedSov)
-    : false;
+  const sentimentVerdict = deriveSentimentVerdict({
+    extractedSentiment: item.sentiment,
+    evaluationResult,
+    evaluationError: item.evaluationError,
+  });
+  const sovVerdict = deriveSovVerdict({
+    extractedSov: item.sov,
+    evaluationResult,
+    evaluationError: item.evaluationError,
+  });
+  const sentimentMatches = sentimentVerdict === 'Correct';
+  const sovMatches = sovVerdict === 'Correct';
   const hasHighConfidenceMatch =
     Boolean(evaluationResult) &&
     isHighConfidence(evaluationResult?.sentimentConfidence) &&
@@ -244,13 +249,7 @@ function deriveSentimentExportMetadata(item: GroupedOpportunityRow['sentimentIte
     sentimentMatches &&
     sovMatches;
   const hasExplicitMismatch =
-    Boolean(evaluationResult) &&
-    ((!sentimentMatches &&
-      normalizeComparableExportValue(evaluationResult?.evaluatedSentiment ?? '') !==
-        'needs review') ||
-      (!sovMatches &&
-        normalizeComparableExportValue(evaluationResult?.evaluatedSov ?? '') !==
-          'needs review'));
+    sentimentVerdict === 'Incorrect' || sovVerdict === 'Incorrect';
   const hasEvaluation = Boolean(evaluationResult || item.evaluationError);
 
   return {
@@ -262,26 +261,8 @@ function deriveSentimentExportMetadata(item: GroupedOpportunityRow['sentimentIte
         ? 'TRUE'
         : '',
     notes: [
-      evaluationResult
-        ? `Sentiment verdict: ${
-            sentimentMatches
-              ? 'Correct'
-              : normalizeComparableExportValue(evaluationResult.evaluatedSentiment) ===
-                  'needs review'
-                ? 'Needs Review'
-                : 'Incorrect'
-          }`
-        : '',
-      evaluationResult
-        ? `SOV verdict: ${
-            sovMatches
-              ? 'Correct'
-              : normalizeComparableExportValue(evaluationResult.evaluatedSov) ===
-                  'needs review'
-                ? 'Needs Review'
-                : 'Incorrect'
-          }`
-        : '',
+      evaluationResult ? `Sentiment verdict: ${sentimentVerdict}` : '',
+      evaluationResult ? `SOV verdict: ${sovVerdict}` : '',
       evaluationResult?.evidenceSnippet
         ? `Evidence: ${evaluationResult.evidenceSnippet}`
         : '',
@@ -698,21 +679,6 @@ export function downloadSuggestionEvaluationExcel(
   });
 }
 
-function compareSentimentValue(left: string, right: string) {
-  const leftValue = normalizeComparableExportValue(left);
-  const rightValue = normalizeComparableExportValue(right);
-
-  if (!leftValue || !rightValue) {
-    return 'Not evaluated';
-  }
-
-  if (rightValue === 'needs review') {
-    return 'Needs Review';
-  }
-
-  return leftValue === rightValue ? 'Correct' : 'Incorrect';
-}
-
 function formatSentimentEvaluationRows(rows: GroupedOpportunityRow[]) {
   return rows
     .filter((row) =>
@@ -732,11 +698,13 @@ function formatSentimentEvaluationRows(rows: GroupedOpportunityRow[]) {
             item.sentiment.trim(),
             result?.evaluatedSentiment ?? '',
             result ? getConfidenceLabel(result.sentimentConfidence) : '',
-            result
-              ? compareSentimentValue(item.sentiment, result.evaluatedSentiment)
-              : item.evaluationError
-                ? 'Error'
-                : 'Not evaluated',
+            result || item.evaluationError
+              ? deriveSentimentVerdict({
+                  extractedSentiment: item.sentiment,
+                  evaluationResult: result,
+                  evaluationError: item.evaluationError,
+                })
+              : 'Not evaluated',
             result?.rationale?.trim() ?? item.evaluationError ?? '',
             result?.evidenceSnippet?.trim() ?? '',
             result?.fetch.status ?? '',
@@ -771,11 +739,13 @@ function formatSovEvaluationRows(rows: GroupedOpportunityRow[]) {
             result?.evaluatedSov ?? '',
             result ? getConfidenceLabel(result.sovConfidence) : '',
             targetBrandShare,
-            result
-              ? compareSentimentValue(item.sov, result.evaluatedSov)
-              : item.evaluationError
-                ? 'Error'
-                : 'Not evaluated',
+            result || item.evaluationError
+              ? deriveSovVerdict({
+                  extractedSov: item.sov,
+                  evaluationResult: result,
+                  evaluationError: item.evaluationError,
+                })
+              : 'Not evaluated',
             result?.rationale?.trim() ?? item.evaluationError ?? '',
             result?.evidenceSnippet?.trim() ?? '',
             result?.fetch.status ?? '',

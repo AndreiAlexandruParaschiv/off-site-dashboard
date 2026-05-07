@@ -223,6 +223,41 @@ function clampEvidenceText(value: string) {
   return value.slice(0, MAX_EVIDENCE_CHARACTERS).trim();
 }
 
+/**
+ * Detect whether a Wikipedia File: title refers to a template/UI/chrome icon
+ * rather than visible article content.
+ *
+ * Wikipedia's `prop=images` API returns every File: link on the page, including
+ * sister-project logos (Commons-logo.svg), trend arrows (Increase2.svg /
+ * Decrease2.svg), category symbols (Symbol_category_class.svg), maintenance
+ * banners (Ambox*.svg), and inline icons that link to other companies' logos.
+ * None of those are content images a human reader would count when looking at
+ * the page, so we filter them out before counting.
+ *
+ * Title format from the API is "File:Some_Image.svg" — match runs on the
+ * lowercased, underscore-normalized basename (no "File:" prefix).
+ */
+function isWikipediaTemplateImage(fileTitle: string): boolean {
+  const normalized = fileTitle
+    .replace(/^File:/i, '')
+    .replace(/\s+/g, '_')
+    .toLowerCase();
+
+  const TEMPLATE_PATTERNS: RegExp[] = [
+    /^commons-logo/,                              // Wikimedia Commons sister-project icon
+    /^(wikiquote|wiktionary|wikisource|wikinews|wikibooks|wikiversity|wikivoyage|wikidata|meta-wiki)-logo/, // Other sister-project icons
+    /^(increase|decrease|steady)\d*\.svg$/,       // Infobox trend arrows
+    /^symbol_/,                                   // Category/portal symbol icons
+    /^ambox/,                                     // Article message box (stub, cleanup, etc.)
+    /^padlock/,                                   // Page-protection icons
+    /^(question_book|edit-clear|disambig)/,       // Cleanup/disambig template icons
+    /^red_pog\.svg$/,                             // Map location markers
+    /^office-book\.svg$/,                         // Reference/portal icons
+  ];
+
+  return TEMPLATE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 function parseNumberFromEvidenceItem(
   evidenceItems: string[],
   label: string,
@@ -1755,7 +1790,21 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
         liveCategoryCount = mediaWikiPage.categories.length;
       }
       if (Array.isArray(mediaWikiPage?.images)) {
-        liveImageCount = mediaWikiPage.images.length;
+        // The MediaWiki `prop=images` API returns EVERY File: link on the page,
+        // including template/icon SVGs (Commons-logo, Increase/Decrease arrows,
+        // category icons, sister-project logos, etc.) that aren't visible
+        // content to a reader. We filter those out so the count matches what
+        // a human would visually count on the article page.
+        const contentImages = mediaWikiPage.images
+          .map((img) => {
+            if (img && typeof img === 'object' && 'title' in img) {
+              const title = (img as { title?: unknown }).title;
+              return typeof title === 'string' ? title : '';
+            }
+            return '';
+          })
+          .filter((title) => title && !isWikipediaTemplateImage(title));
+        liveImageCount = contentImages.length;
       }
     } catch {
       // Keep the extract even if structured metric fetch fails.

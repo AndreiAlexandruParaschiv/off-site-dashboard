@@ -2028,9 +2028,218 @@ async function fetchEvidenceForRequest(
   return fetchWebEvidence(payload.item, env, payload.site);
 }
 
+/**
+ * Per-site authoritative brand profile used to anchor the evaluator's brand
+ * recognition. The profile lists products/sub-brands actually OWNED by the
+ * target brand alongside common competitor brands in the same category, so
+ * the LLM can avoid "category bleed" mistakes (e.g., counting Cheerios as a
+ * Kellogg product because both are cereals).
+ *
+ * Profiles are generated once per site via a small LLM call and cached in
+ * memory. If profile generation fails for any reason (no API key, network
+ * error, malformed response), evaluation proceeds without it — the prompt's
+ * existing brand-mention rules remain in force.
+ */
+interface BrandProfile {
+  site: string;
+  targetBrand: string;
+  ownedProducts: string[];
+  parentOrganization?: string;
+  knownCompetitors: string[];
+  generatedAt: string;
+}
+
+const BRAND_PROFILE_CACHE = new Map<string, BrandProfile>();
+
+function brandProfileCacheKey(site: string): string {
+  return site.trim().toLowerCase();
+}
+
+async function getBrandProfile(
+  site: string,
+  env: ServerEnv,
+): Promise<BrandProfile | undefined> {
+  const key = brandProfileCacheKey(site);
+  if (!key) {
+    return undefined;
+  }
+
+  const cached = BRAND_PROFILE_CACHE.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const profile = await fetchBrandProfileFromLlm(site, env);
+    if (profile && profile.targetBrand) {
+      BRAND_PROFILE_CACHE.set(key, profile);
+    }
+    return profile;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchBrandProfileFromLlm(
+  site: string,
+  env: ServerEnv,
+): Promise<BrandProfile | undefined> {
+  // Profile generation uses the OpenAI/Azure path. Bedrock-only setups skip
+  // profile generation gracefully — the evaluator falls back to its prior
+  // brand-mention heuristics.
+  const azureBaseUrl = normalizeAzureOpenAiBaseUrl(env.AZURE_OPENAI_ENDPOINT);
+  const azureApiKey = env.AZURE_OPENAI_KEY?.trim();
+  const useAzure = Boolean(azureBaseUrl && azureApiKey);
+  const apiKey = useAzure ? azureApiKey : env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    return undefined;
+  }
+
+  const modelName =
+    (useAzure
+      ? env.AZURE_OPENAI_DEPLOYMENT?.trim()
+      : env.OPENAI_EVALUATOR_MODEL?.trim()) ||
+    env.OPENAI_EVALUATOR_MODEL?.trim() ||
+    DEFAULT_OPENAI_MODEL;
+
+  const prompt = [
+    `Identify the brand or company associated with this URL: ${site}`,
+    '',
+    'Return a JSON object with these fields:',
+    '- targetBrand: the canonical brand or company name',
+    '- ownedProducts: array of well-known products, models, and sub-brands OWNED by this brand',
+    '- parentOrganization: parent company name if applicable, otherwise empty string',
+    '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand',
+    '',
+    'Use only well-known, widely-recognized facts. Be concise — limit each list to ~10-15 entries.',
+    'Do not include speculative entries. Do not include the target brand itself in knownCompetitors.',
+    'For competitors, prefer specific product brands over umbrella corporations when both exist (e.g., for a Kellogg cereal site, list "Cheerios" rather than just "General Mills").',
+  ].join('\n');
+
+  const requestBody = {
+    model: modelName,
+    input: [
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: prompt }],
+      },
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'brand_profile',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            targetBrand: { type: 'string' },
+            ownedProducts: { type: 'array', items: { type: 'string' } },
+            parentOrganization: { type: 'string' },
+            knownCompetitors: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['targetBrand', 'ownedProducts', 'parentOrganization', 'knownCompetitors'],
+        },
+      },
+    },
+    max_output_tokens: 500,
+  };
+
+  const response = await fetch(
+    useAzure ? `${azureBaseUrl}responses` : OPENAI_API_URL,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(useAzure
+          ? { 'api-key': apiKey }
+          : { authorization: `Bearer ${apiKey}` }),
+      },
+      body: JSON.stringify(requestBody),
+    },
+  );
+
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const data = (await response.json()) as {
+    output?: Array<{
+      content?: Array<{ parsed?: unknown; text?: string }>;
+    }>;
+    output_parsed?: unknown;
+    output_text?: string;
+  };
+
+  const parsedStructured = Array.isArray(data.output)
+    ? data.output
+        .flatMap((entry) => entry.content ?? [])
+        .find((content) => Boolean(content.parsed))?.parsed
+    : null;
+  const outputTextFromContent = Array.isArray(data.output)
+    ? data.output
+        .flatMap((entry) => entry.content ?? [])
+        .map((content) => content.text)
+        .find((text): text is string => typeof text === 'string' && Boolean(text.trim()))
+    : null;
+  const parsed =
+    data.output_parsed ??
+    parsedStructured ??
+    (() => {
+      const text =
+        typeof data.output_text === 'string' ? data.output_text : outputTextFromContent;
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    })();
+
+  if (!parsed || typeof parsed !== 'object') {
+    return undefined;
+  }
+
+  const candidate = parsed as {
+    targetBrand?: unknown;
+    ownedProducts?: unknown;
+    parentOrganization?: unknown;
+    knownCompetitors?: unknown;
+  };
+
+  const stringList = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .filter((entry): entry is string => typeof entry === 'string')
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : [];
+
+  const targetBrand =
+    typeof candidate.targetBrand === 'string' ? candidate.targetBrand.trim() : '';
+  if (!targetBrand) {
+    return undefined;
+  }
+
+  const parent =
+    typeof candidate.parentOrganization === 'string'
+      ? candidate.parentOrganization.trim()
+      : '';
+
+  return {
+    site,
+    targetBrand,
+    ownedProducts: stringList(candidate.ownedProducts),
+    parentOrganization: parent ? parent : undefined,
+    knownCompetitors: stringList(candidate.knownCompetitors),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 function buildLlmPrompt(
   payload: SentimentEvaluationRequest,
   evidence: SourceEvidence,
+  brandProfile?: BrandProfile,
 ) {
   const extractedBrandShares = extractSovBrandShares(payload.extractedSov);
   const extractedBrandList = extractedBrandShares.map((share) => share.brand);
@@ -2071,6 +2280,21 @@ function buildLlmPrompt(
     `Extracted SOV brands: ${extractedBrandList.join(', ') || 'None'}`,
     `Known competitor brands: ${allCompetitors.join(', ') || 'None'}`,
     `Extracted Sentiment (backend claim — audit this): ${payload.extractedSentiment || 'None'}`,
+  );
+
+  if (brandProfile && brandProfile.targetBrand) {
+    promptLines.push(
+      '',
+      `Authoritative brand profile for ${brandProfile.targetBrand} (use this to decide what counts as a target-brand mention):`,
+      `  Owned products / sub-brands of ${brandProfile.targetBrand} (DO count these as target-brand mentions): ${brandProfile.ownedProducts.join(', ') || 'None known'}`,
+      `  Brands NOT owned by ${brandProfile.targetBrand} (do NOT count these as target-brand mentions, even if they share the same product category): ${brandProfile.knownCompetitors.join(', ') || 'None known'}`,
+      ...(brandProfile.parentOrganization
+        ? [`  Parent organization: ${brandProfile.parentOrganization}`]
+        : []),
+    );
+  }
+
+  promptLines.push(
     '',
     'Process:',
     '  1. Use the Item Title as a fast topical signal before reading the body (e.g., "Manulife RRSP" signals a retirement-plan thread). Count any target-brand mentions that appear in the title.',
@@ -2106,7 +2330,7 @@ function buildLlmPrompt(
     '',
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
-    '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. Verify ownership using your general knowledge before counting. When you are uncertain whether a product belongs to the target brand, do NOT count it.',
+    '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. When an "Authoritative brand profile" is provided above, it is the definitive reference: only items in the "Owned products / sub-brands" list count as target-brand mentions; anything in the "Brands NOT owned" list NEVER counts even if it appears in the evidence. Without a profile, fall back to your general knowledge — but never count products from competitors in the same category. When uncertain whether a product belongs to the target brand, do NOT count it.',
     '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, set targetBrandMentionCount = 0 and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
     '  - Do not inflate counts to match the backend. If you count 3 mentions and the backend claims 8, return 3.',
     '  - Adjacent sentiment labels (e.g., Favorable vs Neutral) are still a disagreement — only return the label you actually judged from the evidence.',
@@ -2127,9 +2351,10 @@ function buildLlmPrompt(
 function buildBedrockPrompt(
   payload: SentimentEvaluationRequest,
   evidence: SourceEvidence,
+  brandProfile?: BrandProfile,
 ) {
   return [
-    buildLlmPrompt(payload, evidence),
+    buildLlmPrompt(payload, evidence, brandProfile),
     '',
     'Return ONLY a valid JSON object. Do not add markdown, code fences, or any explanatory text.',
     'Use this exact schema:',
@@ -2215,6 +2440,7 @@ async function fetchBedrockEvaluation(
   payload: SentimentEvaluationRequest,
   evidence: SourceEvidence,
   env: ServerEnv,
+  brandProfile?: BrandProfile,
 ): Promise<LlmEvaluationResponse> {
   const apiKey = getBedrockBearerToken(env);
   const region = getBedrockRegion(env);
@@ -2246,7 +2472,7 @@ async function fetchBedrockEvaluation(
             messages: [
               {
                 role: 'user',
-                content: [{ text: buildBedrockPrompt(payload, evidence) }],
+                content: [{ text: buildBedrockPrompt(payload, evidence, brandProfile) }],
               },
             ],
             inferenceConfig: {
@@ -2292,12 +2518,17 @@ async function fetchLlmEvaluation(
   evidence: SourceEvidence,
   env: ServerEnv,
 ): Promise<LlmEvaluationResponse> {
+  // Fetch the per-site brand profile once (cached). If profile generation
+  // fails, evaluation continues without it — the prompt's existing
+  // brand-mention rules still apply.
+  const brandProfile = await getBrandProfile(payload.site, env);
+
   const bedrockApiKey = getBedrockBearerToken(env);
   const bedrockRegion = getBedrockRegion(env);
 
   if (bedrockApiKey && bedrockRegion) {
     try {
-      return await fetchBedrockEvaluation(payload, evidence, env);
+      return await fetchBedrockEvaluation(payload, evidence, env, brandProfile);
     } catch {
       // Fall through to Azure/OpenAI when the configured Bedrock model chain fails.
     }
@@ -2331,7 +2562,7 @@ async function fetchLlmEvaluation(
         content: [
           {
             type: 'input_text',
-            text: buildLlmPrompt(payload, evidence),
+            text: buildLlmPrompt(payload, evidence, brandProfile),
           },
         ],
       },

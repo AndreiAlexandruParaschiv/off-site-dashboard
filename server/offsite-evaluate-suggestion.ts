@@ -1766,9 +1766,10 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
       // Keep the article extract even if the live page probe fails.
     }
 
+    let wikidataQid: string | undefined;
     try {
       const categoriesAndImagesPayload = await fetchText(
-        `https://en.wikipedia.org/w/api.php?action=query&prop=categories|images&redirects=1&cllimit=max&imlimit=max&clshow=!hidden&titles=${encodeURIComponent(
+        `https://en.wikipedia.org/w/api.php?action=query&prop=categories|images|pageprops&redirects=1&cllimit=max&imlimit=max&clshow=!hidden&titles=${encodeURIComponent(
           title,
         )}&format=json`,
       );
@@ -1779,6 +1780,7 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
             {
               categories?: unknown[];
               images?: unknown[];
+              pageprops?: { wikibase_item?: string };
             }
           >;
         };
@@ -1806,8 +1808,58 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
           .filter((title) => title && !isWikipediaTemplateImage(title));
         liveImageCount = contentImages.length;
       }
+      const candidateQid = mediaWikiPage?.pageprops?.wikibase_item;
+      if (typeof candidateQid === 'string' && /^Q\d+$/.test(candidateQid)) {
+        wikidataQid = candidateQid;
+      }
     } catch {
       // Keep the extract even if structured metric fetch fails.
+    }
+
+    // Fetch Wikidata entity stats so the LLM can verify claims like
+    // "Wikidata entry has only N statements" or "Wikidata ID Q12345".
+    // Without this, such claims always fall through to "Needs Review".
+    let wikidataPropertyCount: number | undefined;
+    let wikidataStatementCount: number | undefined;
+    let wikidataSitelinkCount: number | undefined;
+    let wikidataLabelCount: number | undefined;
+    if (wikidataQid) {
+      try {
+        const wikidataPayload = await fetchText(
+          `https://www.wikidata.org/wiki/Special:EntityData/${wikidataQid}.json`,
+        );
+        const parsedWikidata = JSON.parse(wikidataPayload) as {
+          entities?: Record<
+            string,
+            {
+              claims?: Record<string, unknown[]>;
+              sitelinks?: Record<string, unknown>;
+              labels?: Record<string, unknown>;
+            }
+          >;
+        };
+        const entity = parsedWikidata.entities?.[wikidataQid];
+        if (entity) {
+          if (entity.claims && typeof entity.claims === 'object') {
+            const claimGroups = Object.values(entity.claims).filter((value) =>
+              Array.isArray(value),
+            ) as unknown[][];
+            wikidataPropertyCount = claimGroups.length;
+            wikidataStatementCount = claimGroups.reduce(
+              (sum, group) => sum + group.length,
+              0,
+            );
+          }
+          if (entity.sitelinks && typeof entity.sitelinks === 'object') {
+            wikidataSitelinkCount = Object.keys(entity.sitelinks).length;
+          }
+          if (entity.labels && typeof entity.labels === 'object') {
+            wikidataLabelCount = Object.keys(entity.labels).length;
+          }
+        }
+      } catch {
+        // Wikidata fetch is best-effort — keep going even if it fails.
+      }
     }
 
     try {
@@ -1853,6 +1905,19 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
             : '',
           typeof liveImageCount === 'number' ? `Live image count: ${liveImageCount}` : '',
           liveWordCount > 0 ? `Live word count: ${liveWordCount}` : '',
+          wikidataQid ? `Wikidata QID: ${wikidataQid}` : '',
+          typeof wikidataPropertyCount === 'number'
+            ? `Wikidata distinct property count: ${wikidataPropertyCount}`
+            : '',
+          typeof wikidataStatementCount === 'number'
+            ? `Wikidata total statement count: ${wikidataStatementCount}`
+            : '',
+          typeof wikidataSitelinkCount === 'number'
+            ? `Wikidata sitelink count: ${wikidataSitelinkCount}`
+            : '',
+          typeof wikidataLabelCount === 'number'
+            ? `Wikidata label language count: ${wikidataLabelCount}`
+            : '',
           maintenanceContext.scope === 'section'
             ? `Maintenance warning scope: section-level`
             : maintenanceContext.scope === 'article'
@@ -2544,7 +2609,7 @@ function buildSuggestionPrompt(
     '  - Backend says 46 citations, live page shows 48. Larger=48, 10% = 4.8. Delta=2 within → Correct.',
     'When a live fetched page contradicts a backend aggregate BEYOND tolerance, mark Incorrect and return a correctedSuggestion using the live value.',
     'When the suggestion\'s central claim is correct but a sub-claim cannot be verified from the evidence available (e.g., only one competitor page was fetched so a "N of M competitors" claim can\'t be fully recomputed), state that limitation in the rationale but still mark Correct with MEDIUM or HIGH confidence if the central claim itself is verified. Do not downgrade solely because peripheral aggregates were not independently reconstructed.',
-    'Wikipedia-specific notes: (a) When the backend section count differs from the live page, investigate whether trailing sections (References, External links, See Also) account for the delta; if they fully explain the difference, Correct with a note. Otherwise apply the general tolerance rule. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified.',
+    'Wikipedia-specific notes: (a) When the backend section count differs from the live page, investigate whether trailing sections (References, External links, See Also) account for the delta; if they fully explain the difference, Correct with a note. Otherwise apply the general tolerance rule. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified. (c) For Wikidata claims (e.g., "Wikidata entry has N statements", "Wikidata ID Q12345"), use the "Wikidata QID", "Wikidata distinct property count", and "Wikidata total statement count" lines in the evidence. Backend "statement" counts typically map to the distinct property count (statements grouped by property); if neither distinct nor total matches within tolerance, the claim is Incorrect.',
     'Wikipedia opportunities do not have extracted Sentiment & SOV rows. For Wikipedia, use the current payload evidence items and fetched Wikipedia pages as the local source of truth.',
     'Distinguish article-level maintenance warnings from section-level warnings. If the evidence says "This section needs to be updated", do not describe the whole article as outdated. Name the affected section when the evidence provides it.',
     'For Cited URLs suggestions, use the local extracted Sentiment & SOV rows to verify which third-party URLs are part of the extracted opportunity context.',

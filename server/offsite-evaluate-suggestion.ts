@@ -258,6 +258,39 @@ function isWikipediaTemplateImage(fileTitle: string): boolean {
   return TEMPLATE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+/**
+ * Detect whether a Wikipedia top-level section heading is a standard appendix
+ * section (References, External links, Further reading, etc.) rather than
+ * prose content describing the article subject.
+ *
+ * Backend section counts in the SpaceCat opportunity feed typically reflect
+ * only content sections, so excluding appendix sections from the live count
+ * lets the evaluator compare like for like. Match runs on the lowercased,
+ * trimmed heading text — punctuation-tolerant via word-boundary anchors.
+ */
+function isWikipediaAppendixSection(headingText: string): boolean {
+  const normalized = headingText.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!normalized) return false;
+
+  const APPENDIX_HEADINGS: ReadonlySet<string> = new Set([
+    'references',
+    'external links',
+    'further reading',
+    'notes',
+    'see also',
+    'bibliography',
+    'footnotes',
+    'citations',
+    'sources',
+    'notes and references',
+    'works cited',
+    'literature',
+    'gallery',
+  ]);
+
+  return APPENDIX_HEADINGS.has(normalized);
+}
+
 function parseNumberFromEvidenceItem(
   evidenceItems: string[],
   label: string,
@@ -1740,6 +1773,7 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
       `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, '_'))}`;
     let liveCategoryCount: number | undefined;
     let liveSectionCount: number | undefined;
+    let liveContentSectionCount: number | undefined;
     let liveImageCount: number | undefined;
 
     if (!page || page.missing || !extract) {
@@ -1873,6 +1907,7 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
           sections?: Array<{
             toclevel?: string | number;
             level?: string | number;
+            line?: string;
           }>;
         };
       };
@@ -1886,6 +1921,19 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
         liveSectionCount = topLevelSections.length;
       } else if (sections.length > 0) {
         liveSectionCount = sections.length;
+      }
+
+      // Backend section counts typically reflect ONLY the prose/content
+      // sections, not Wikipedia's standard appendix sections (References,
+      // External links, Further reading, Notes, See also, Bibliography, etc.).
+      // Compute a separate content-section count so the LLM can compare like
+      // for like — otherwise an article with 6 content + 4 appendix sections
+      // gets flagged Incorrect against a backend claim of "6 sections".
+      const contentSections = topLevelSections.filter(
+        (section) => !isWikipediaAppendixSection(section.line ?? ''),
+      );
+      if (contentSections.length > 0) {
+        liveContentSectionCount = contentSections.length;
       }
     } catch {
       // Keep the extract even if structured metric fetch fails.
@@ -1902,6 +1950,9 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
             : '',
           typeof liveSectionCount === 'number'
             ? `Live top-level section count: ${liveSectionCount}`
+            : '',
+          typeof liveContentSectionCount === 'number'
+            ? `Live content section count (excluding References, External links, Further reading, Notes, See also, etc.): ${liveContentSectionCount}`
             : '',
           typeof liveImageCount === 'number' ? `Live image count: ${liveImageCount}` : '',
           liveWordCount > 0 ? `Live word count: ${liveWordCount}` : '',
@@ -2609,7 +2660,7 @@ function buildSuggestionPrompt(
     '  - Backend says 46 citations, live page shows 48. Larger=48, 10% = 4.8. Delta=2 within → Correct.',
     'When a live fetched page contradicts a backend aggregate BEYOND tolerance, mark Incorrect and return a correctedSuggestion using the live value.',
     'When the suggestion\'s central claim is correct but a sub-claim cannot be verified from the evidence available (e.g., only one competitor page was fetched so a "N of M competitors" claim can\'t be fully recomputed), state that limitation in the rationale but still mark Correct with MEDIUM or HIGH confidence if the central claim itself is verified. Do not downgrade solely because peripheral aggregates were not independently reconstructed.',
-    'Wikipedia-specific notes: (a) When the backend section count differs from the live page, investigate whether trailing sections (References, External links, See Also) account for the delta; if they fully explain the difference, Correct with a note. Otherwise apply the general tolerance rule. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified. (c) For Wikidata claims (e.g., "Wikidata entry has N statements", "Wikidata ID Q12345"), use the "Wikidata QID", "Wikidata distinct property count", and "Wikidata total statement count" lines in the evidence. Backend "statement" counts typically map to the distinct property count (statements grouped by property); if neither distinct nor total matches within tolerance, the claim is Incorrect.',
+    'Wikipedia-specific notes: (a) For section count claims, prefer the "Live content section count" (which already excludes References, External links, Further reading, Notes, See also, Bibliography, etc.) over the "Live top-level section count". Backend section counts almost always reflect content sections only. If the content-section count is unavailable, fall back to top-level count after manually subtracting any appendix sections you can identify. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified. (c) For Wikidata claims (e.g., "Wikidata entry has N statements", "Wikidata ID Q12345"), use the "Wikidata QID", "Wikidata distinct property count", and "Wikidata total statement count" lines in the evidence. Backend "statement" counts typically map to the distinct property count (statements grouped by property); if neither distinct nor total matches within tolerance, the claim is Incorrect.',
     'Wikipedia opportunities do not have extracted Sentiment & SOV rows. For Wikipedia, use the current payload evidence items and fetched Wikipedia pages as the local source of truth.',
     'Distinguish article-level maintenance warnings from section-level warnings. If the evidence says "This section needs to be updated", do not describe the whole article as outdated. Name the affected section when the evidence provides it.',
     'For Cited URLs suggestions, use the local extracted Sentiment & SOV rows to verify which third-party URLs are part of the extracted opportunity context.',

@@ -12,7 +12,7 @@ import {
   getConfidenceBand,
   getConfidenceLabel,
 } from './evaluation';
-import { useOffSiteDashboard } from './useOffSiteDashboard';
+import { ALL_OPPORTUNITIES_VALUE, useOffSiteDashboard } from './useOffSiteDashboard';
 import {
   formatTimestamp,
   getStatusTone,
@@ -2414,11 +2414,11 @@ export function OffSiteDashboard() {
     'wikiPage' | 'hallucinationRate' | 'wikiOpportunity' | null
   >(null);
   const [wikiBatchSortDir, setWikiBatchSortDir] = useState<'asc' | 'desc'>('asc');
-  const visibleOpportunityCount = dashboard.filteredOpportunityRows.length;
-  const visibleSuggestionOpportunityCount = dashboard.filteredOpportunityRows.filter(
+  const visibleOpportunityCount = dashboard.opportunityScopedRows.length;
+  const visibleSuggestionOpportunityCount = dashboard.opportunityScopedRows.filter(
     (row) => row.suggestions.length > 0,
   ).length;
-  const visibleSuggestionCount = dashboard.filteredOpportunityRows.reduce(
+  const visibleSuggestionCount = dashboard.opportunityScopedRows.reduce(
     (count, row) => count + row.suggestions.length,
     0,
   );
@@ -2429,15 +2429,15 @@ export function OffSiteDashboard() {
     dashboard.pagedOpportunityRows,
   );
   const visibleSuggestionEvaluationCount = visibleSuggestionEvaluationRows.length;
-  const visibleSentimentOpportunityCount = dashboard.filteredOpportunityRows.filter(
+  const visibleSentimentOpportunityCount = dashboard.opportunityScopedRows.filter(
     (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
   ).length;
-  const visibleSentimentCount = dashboard.filteredOpportunityRows.reduce(
+  const visibleSentimentCount = dashboard.opportunityScopedRows.reduce(
     (count, row) => count + row.sentimentItems.length,
     0,
   );
   const visibleSentimentSiteCount = new Set(
-    dashboard.filteredOpportunityRows
+    dashboard.opportunityScopedRows
       .filter(
         (row) => row.opportunityType && SENTIMENT_OPPORTUNITY_TYPES.has(row.opportunityType),
       )
@@ -3028,6 +3028,31 @@ export function OffSiteDashboard() {
                         ))}
                       </div>
                     </div>
+
+                    {dashboard.opportunityOptions.length > 1 ? (
+                      <div className="filter-group">
+                        <span className="filter-label">Opportunity</span>
+                        <select
+                          className="select-input opportunity-select"
+                          value={dashboard.selectedOpportunityId}
+                          onChange={(event) =>
+                            dashboard.selectOpportunityId(event.target.value)
+                          }
+                        >
+                          <option value={ALL_OPPORTUNITIES_VALUE}>
+                            All ({dashboard.opportunityOptions.length})
+                          </option>
+                          {dashboard.opportunityOptions.map((option) => (
+                            <option
+                              key={option.opportunityId}
+                              value={option.opportunityId}
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
 
                     <div className="filter-group">
                       <span className="filter-label">Opportunity Type Order</span>

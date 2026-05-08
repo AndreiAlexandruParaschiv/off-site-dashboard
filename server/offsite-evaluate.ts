@@ -61,6 +61,13 @@ type SourceEvidence = {
   evidenceText: string;
   fallbackSnippet: string;
   isBrandOwned?: boolean;
+  /** Full transcript text (YouTube only). Preserved so the UI can offer a
+   *  download for QA: when an evaluator verdict surprises a reviewer, they
+   *  can audit the source without re-watching the video. */
+  transcript?: string;
+  /** Optional metadata to make the downloaded transcript file self-describing. */
+  videoTitle?: string;
+  videoChannel?: string;
 };
 
 type LlmEvaluation = {
@@ -460,6 +467,9 @@ function buildYoutubeEvidenceFromBrightDataEntry(
           ? 'success'
           : 'partial',
     evidenceText,
+    transcript: transcript || undefined,
+    videoTitle: title || undefined,
+    videoChannel: channelName || undefined,
     fallbackSnippet:
       title ||
       description ||
@@ -1585,6 +1595,9 @@ async function buildYoutubeEvidenceFromHtml(
           ? 'success'
           : 'partial',
     evidenceText,
+    transcript: transcript || undefined,
+    videoTitle: title || undefined,
+    videoChannel: htmlChannelName || undefined,
     fallbackSnippet:
       [htmlChannelName, title, description].filter(Boolean).join(' | ') ||
       'YouTube evidence could not be extracted.',
@@ -2841,6 +2854,9 @@ export async function runOffsiteEvaluation(
       evidenceCharacters: evidence.evidenceText.length,
       isBrandOwned: evidence.isBrandOwned,
     },
+    transcript: evidence.transcript,
+    videoTitle: evidence.videoTitle,
+    videoChannel: evidence.videoChannel,
     targetBrand: llmResult.targetBrand,
   };
 }

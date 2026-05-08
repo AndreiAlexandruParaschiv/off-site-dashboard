@@ -110,6 +110,13 @@ export interface SentimentEvaluationResult {
   evaluatorModel?: string;
   fetch: SentimentEvaluationFetchMetadata;
   targetBrand: string;
+  /** Full source transcript (YouTube only). Available for QA download so a
+   *  reviewer can spot-check the evaluator without re-watching the video. */
+  transcript?: string;
+  /** YouTube video title — used in the downloaded transcript file header. */
+  videoTitle?: string;
+  /** YouTube channel name — used in the downloaded transcript file header. */
+  videoChannel?: string;
 }
 
 export interface SuggestionEvaluationEvidenceSource {

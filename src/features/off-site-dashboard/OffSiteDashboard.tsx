@@ -43,6 +43,83 @@ function getAllowedEvaluationOpportunityTypes() {
   return SENTIMENT_OPPORTUNITY_TYPES;
 }
 
+/**
+ * Pull a YouTube video ID out of a URL so the downloaded transcript filename
+ * is stable and recognizable. Handles the four URL shapes seen in the wild:
+ *   - youtube.com/watch?v=VIDEO_ID
+ *   - youtube.com/shorts/VIDEO_ID
+ *   - youtu.be/VIDEO_ID
+ *   - youtube.com/embed/VIDEO_ID
+ * Returns '' if no ID is found — callers fall back to a date-only filename.
+ */
+function extractYouTubeVideoId(url: string): string {
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{6,})/,
+    /\/shorts\/([a-zA-Z0-9_-]{6,})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{6,})/,
+    /\/embed\/([a-zA-Z0-9_-]{6,})/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+  return '';
+}
+
+interface TranscriptDownloadInput {
+  transcript: string;
+  sourceUrl: string;
+  evaluatedAt: string;
+  videoTitle?: string;
+  videoChannel?: string;
+}
+
+/** Build the contents of the .txt file. Header makes the file
+ *  self-describing so a reviewer can identify the source weeks later
+ *  without re-opening the dashboard. */
+function buildTranscriptFileContent(input: TranscriptDownloadInput): string {
+  const headerLines = [
+    'Off-Site Dashboard — YouTube transcript',
+    '',
+    input.videoTitle ? `Title:    ${input.videoTitle}` : '',
+    input.videoChannel ? `Channel:  ${input.videoChannel}` : '',
+    `URL:      ${input.sourceUrl}`,
+    `Captured: ${input.evaluatedAt}`,
+    '',
+    '---',
+    '',
+  ].filter(Boolean);
+  return [...headerLines, input.transcript].join('\n');
+}
+
+function buildTranscriptFilename(input: TranscriptDownloadInput): string {
+  const videoId = extractYouTubeVideoId(input.sourceUrl);
+  const datePart = input.evaluatedAt ? input.evaluatedAt.slice(0, 10) : '';
+  if (videoId && datePart) {
+    return `transcript-${videoId}-${datePart}.txt`;
+  }
+  if (videoId) {
+    return `transcript-${videoId}.txt`;
+  }
+  return datePart ? `transcript-${datePart}.txt` : 'transcript.txt';
+}
+
+function downloadTranscriptFile(input: TranscriptDownloadInput): void {
+  const content = buildTranscriptFileContent(input);
+  const filename = buildTranscriptFilename(input);
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
 function filterEvaluationOpportunityRows(rows: GroupedOpportunityRow[]) {
   const allowedTypes = getAllowedEvaluationOpportunityTypes();
 
@@ -1757,6 +1834,24 @@ function EvaluationTable(props: {
                         <div className="suggestion-evaluation-detail-card">
                           <h4>Rationale / Evidence</h4>
                           <p className="metric-copy">{rationaleOutput}</p>
+                          {evaluationResult?.fetch?.sourceType === 'youtube' &&
+                          evaluationResult?.transcript ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadTranscriptFile({
+                                  transcript: evaluationResult.transcript ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  videoTitle: evaluationResult.videoTitle,
+                                  videoChannel: evaluationResult.videoChannel,
+                                })
+                              }
+                            >
+                              Download transcript
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -2084,6 +2179,24 @@ function SovEvaluationTable(props: {
                         <div className="suggestion-evaluation-detail-card">
                           <h4>Rationale / Evidence</h4>
                           <p className="metric-copy">{rationaleOutput}</p>
+                          {evaluationResult?.fetch?.sourceType === 'youtube' &&
+                          evaluationResult?.transcript ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadTranscriptFile({
+                                  transcript: evaluationResult.transcript ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  videoTitle: evaluationResult.videoTitle,
+                                  videoChannel: evaluationResult.videoChannel,
+                                })
+                              }
+                            >
+                              Download transcript
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </td>

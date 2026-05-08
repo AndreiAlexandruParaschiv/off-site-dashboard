@@ -62,6 +62,7 @@ import type {
   CanonicalOpportunityType,
   DashboardConfig,
   GroupedOpportunityRow,
+  OpportunityFilterOption,
   SentimentEvaluationRequest,
   SentimentEvaluationStatus,
   SentimentEvaluationStoredResult,
@@ -72,6 +73,51 @@ import type {
   SuggestionEvaluationStatus,
   SuggestionEvaluationStoredResult,
 } from './types';
+
+export const ALL_OPPORTUNITIES_VALUE = 'all' as const;
+export type SelectedOpportunityId = typeof ALL_OPPORTUNITIES_VALUE | string;
+
+function shortenOpportunityId(opportunityId: string): string {
+  if (!opportunityId) {
+    return '';
+  }
+  return opportunityId.length > 8 ? `${opportunityId.slice(0, 8)}…` : opportunityId;
+}
+
+function isIgnoredOpportunityRow(row: GroupedOpportunityRow): boolean {
+  return typeof row.status === 'string' && row.status.toLowerCase().includes('ignored');
+}
+
+function buildOpportunityOptionLabel(
+  row: GroupedOpportunityRow,
+  options: { multiSite: boolean },
+): string {
+  const parts: string[] = [];
+  if (row.opportunityType) {
+    parts.push(row.opportunityType);
+  }
+  const shortId = shortenOpportunityId(row.opportunityId ?? '');
+  if (shortId) {
+    parts.push(shortId);
+  }
+  const counts: string[] = [];
+  if (row.suggestions.length > 0) {
+    counts.push(
+      `${row.suggestions.length} sug${row.suggestions.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (row.sentimentItems.length > 0) {
+    counts.push(
+      `${row.sentimentItems.length} item${row.sentimentItems.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (isIgnoredOpportunityRow(row)) {
+    counts.push('ignored');
+  }
+  const head = parts.join(' · ');
+  const sitePrefix = options.multiSite ? `${row.site} — ` : '';
+  return counts.length > 0 ? `${sitePrefix}${head} (${counts.join(', ')})` : `${sitePrefix}${head}`;
+}
 
 type OpportunityTypeSortOrder = 'default' | 'asc' | 'desc';
 
@@ -256,6 +302,8 @@ export function useOffSiteDashboard() {
   );
   const [selectedTypes, setSelectedTypes] = useState<CanonicalOpportunityType[]>([]);
   const [selectedSites, setSelectedSites] = useState<string[]>([]);
+  const [selectedOpportunityId, setSelectedOpportunityId] =
+    useState<SelectedOpportunityId>(ALL_OPPORTUNITIES_VALUE);
   const [typeSortOrder, setTypeSortOrder] =
     useState<OpportunityTypeSortOrder>('default');
   const [page, setPage] = useState(1);
@@ -451,9 +499,17 @@ export function useOffSiteDashboard() {
   const resetFilters = useCallback(() => {
     setSelectedTypes([]);
     setSelectedSites(configuredSites);
+    setSelectedOpportunityId(ALL_OPPORTUNITIES_VALUE);
     setTypeSortOrder('default');
     setPage(1);
   }, [configuredSites]);
+
+  const selectOpportunityId = useCallback((value: SelectedOpportunityId) => {
+    setSelectedOpportunityId(value);
+    setSelectedSentimentRowKeys([]);
+    setSelectedSuggestionRowKeys([]);
+    setPage(1);
+  }, []);
 
   const clearResults = useCallback(() => {
     setSiteResults(
@@ -633,7 +689,52 @@ export function useOffSiteDashboard() {
     return sortedRows;
   }, [allOpportunityRows, selectedSites, selectedTypes, typeSortOrder]);
 
-  const deferredRows = useDeferredValue(filteredOpportunityRows);
+  const opportunityOptions = useMemo<OpportunityFilterOption[]>(() => {
+    const distinctSites = new Set(filteredOpportunityRows.map((row) => row.site));
+    const multiSite = distinctSites.size > 1;
+    const options: OpportunityFilterOption[] = [];
+
+    for (const row of filteredOpportunityRows) {
+      if (!row.opportunityId || !row.opportunityType) {
+        continue;
+      }
+      options.push({
+        opportunityId: row.opportunityId,
+        opportunityType: row.opportunityType,
+        site: row.site,
+        label: buildOpportunityOptionLabel(row, { multiSite }),
+        suggestionCount: row.suggestions.length,
+        sentimentItemCount: row.sentimentItems.length,
+      });
+    }
+
+    return options;
+  }, [filteredOpportunityRows]);
+
+  useEffect(() => {
+    if (selectedOpportunityId === ALL_OPPORTUNITIES_VALUE) {
+      return;
+    }
+
+    const stillExists = opportunityOptions.some(
+      (option) => option.opportunityId === selectedOpportunityId,
+    );
+
+    if (!stillExists) {
+      setSelectedOpportunityId(ALL_OPPORTUNITIES_VALUE);
+    }
+  }, [opportunityOptions, selectedOpportunityId]);
+
+  const opportunityScopedRows = useMemo(() => {
+    if (selectedOpportunityId === ALL_OPPORTUNITIES_VALUE) {
+      return filteredOpportunityRows;
+    }
+    return filteredOpportunityRows.filter(
+      (row) => row.opportunityId === selectedOpportunityId,
+    );
+  }, [filteredOpportunityRows, selectedOpportunityId]);
+
+  const deferredRows = useDeferredValue(opportunityScopedRows);
 
   const totalPages = Math.max(1, Math.ceil(deferredRows.length / pageSize));
   const pagedOpportunityRows = useMemo(() => {
@@ -677,7 +778,7 @@ export function useOffSiteDashboard() {
     configuredSites.length > 0;
 
   const exportableRows = allOpportunityRows;
-  const filteredExportableRows = filteredOpportunityRows;
+  const filteredExportableRows = opportunityScopedRows;
 
   const isEvaluatingSentiment = Object.values(sentimentEvaluationStatuses).some(
     (status) => status === 'running',
@@ -914,6 +1015,8 @@ export function useOffSiteDashboard() {
     configuredSites,
     selectedTypes,
     selectedSites,
+    selectedOpportunityId,
+    opportunityOptions,
     typeSortOrder,
     page,
     pageSize,
@@ -934,6 +1037,7 @@ export function useOffSiteDashboard() {
     pagedOpportunityRows,
     filteredRows,
     filteredOpportunityRows,
+    opportunityScopedRows,
     summary,
     setApiBaseUrl: (value: string) =>
       setConfig((previousConfig) => ({
@@ -958,6 +1062,7 @@ export function useOffSiteDashboard() {
       setSelectedSites((previousSites) => updateSelection(previousSites, site));
       setPage(1);
     },
+    selectOpportunityId,
     setTypeSortOrder: (value: OpportunityTypeSortOrder) => {
       setTypeSortOrder(value);
       setPage(1);

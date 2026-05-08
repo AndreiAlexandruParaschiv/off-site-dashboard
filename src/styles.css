@@ -356,6 +356,12 @@ a:hover {
   padding: 12px 14px !important;
 }
 
+.opportunity-select {
+  width: auto !important;
+  min-width: 280px;
+  max-width: 100%;
+}
+
 /* Filters + chips + pagination footers */
 .filter-group {
   gap: 12px !important;

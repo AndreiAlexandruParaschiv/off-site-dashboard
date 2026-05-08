@@ -1990,17 +1990,7 @@ export function normalizeOpportunityCollection(responsePayload: unknown) {
     .map((record, index) => normalizeOpportunity(record, index))
     .filter((value): value is OpportunityRecord => value !== null);
 
-  const activeTypes = new Set(
-    normalizedOpportunities
-      .filter((opportunity) => opportunity.opportunityStatus !== 'ignored')
-      .map((opportunity) => opportunity.opportunityType),
-  );
-
-  return normalizedOpportunities.filter(
-    (opportunity) =>
-      opportunity.opportunityStatus !== 'ignored' ||
-      !activeTypes.has(opportunity.opportunityType),
-  );
+  return normalizedOpportunities;
 }
 
 export function normalizeSuggestionCollection(

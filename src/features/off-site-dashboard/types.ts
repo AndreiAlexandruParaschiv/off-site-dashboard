@@ -281,6 +281,15 @@ export interface GroupedOpportunityRow {
   status: string;
 }
 
+export interface OpportunityFilterOption {
+  opportunityId: string;
+  opportunityType: CanonicalOpportunityType;
+  site: string;
+  label: string;
+  suggestionCount: number;
+  sentimentItemCount: number;
+}
+
 export interface FetchSiteParams {
   apiBaseUrl: string;
   apiKey: string;

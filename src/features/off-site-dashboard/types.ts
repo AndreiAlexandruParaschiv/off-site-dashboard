@@ -117,6 +117,13 @@ export interface SentimentEvaluationResult {
   videoTitle?: string;
   /** YouTube channel name — used in the downloaded transcript file header. */
   videoChannel?: string;
+  /** Full Reddit thread snapshot (post body + comments, un-clamped). Same
+   *  purpose as `transcript` but for Reddit sources. */
+  redditThread?: string;
+  /** Reddit post title — used in the downloaded thread file header. */
+  redditPostTitle?: string;
+  /** Reddit community name (subreddit) — used in the downloaded thread file header. */
+  redditCommunity?: string;
 }
 
 export interface SuggestionEvaluationEvidenceSource {

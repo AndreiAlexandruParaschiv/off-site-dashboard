@@ -68,6 +68,12 @@ type SourceEvidence = {
   /** Optional metadata to make the downloaded transcript file self-describing. */
   videoTitle?: string;
   videoChannel?: string;
+  /** Full Reddit thread content (post body + comments, un-clamped). Used by the
+   *  UI to offer a one-click download for QA — same purpose as `transcript` but
+   *  for Reddit sources. */
+  redditThread?: string;
+  redditPostTitle?: string;
+  redditCommunity?: string;
 };
 
 type LlmEvaluation = {
@@ -883,6 +889,8 @@ function buildBrightDataRedditEvidence(
     String(firstResult.community_description ?? ''),
   );
   const comments = collectBrightDataRedditComments(firstResult.comments);
+
+  // Build the LLM evidence text (clamped to MAX_EVIDENCE_CHARACTERS).
   const evidenceText = clampEvidenceText(
     trimMultilineText(
       [
@@ -897,6 +905,26 @@ function buildBrightDataRedditEvidence(
     ),
   );
 
+  // Build a separate, UN-clamped thread snapshot for QA download. The LLM only
+  // sees the clamped evidenceText, but the reviewer needs the full thread to
+  // audit verdicts that disagree with their expectations.
+  const redditThread =
+    trimMultilineText(
+      [
+        title ? `Post title: ${title}` : '',
+        description ? `Post body:\n${description}` : '',
+        community ? `Community: ${community}` : '',
+        communityDescription
+          ? `Community description:\n${communityDescription}`
+          : '',
+        comments.length > 0
+          ? `Comments (${comments.length}):\n\n${comments
+              .map((comment, index) => `[${index + 1}] ${comment}`)
+              .join('\n\n')}`
+          : '',
+      ].join('\n\n'),
+    ) || undefined;
+
   return {
     sourceType: 'reddit',
     sourceUrl: itemUrl,
@@ -908,6 +936,9 @@ function buildBrightDataRedditEvidence(
         ? 'success'
         : 'insufficient_evidence',
     evidenceText,
+    redditThread,
+    redditPostTitle: title || undefined,
+    redditCommunity: community || undefined,
     fallbackSnippet:
       title || description || 'Bright Data Reddit evidence could not be extracted.',
   };
@@ -2857,6 +2888,9 @@ export async function runOffsiteEvaluation(
     transcript: evidence.transcript,
     videoTitle: evidence.videoTitle,
     videoChannel: evidence.videoChannel,
+    redditThread: evidence.redditThread,
+    redditPostTitle: evidence.redditPostTitle,
+    redditCommunity: evidence.redditCommunity,
     targetBrand: llmResult.targetBrand,
   };
 }

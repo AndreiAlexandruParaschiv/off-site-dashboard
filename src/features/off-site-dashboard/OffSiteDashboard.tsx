@@ -68,47 +68,86 @@ function extractYouTubeVideoId(url: string): string {
   return '';
 }
 
-interface TranscriptDownloadInput {
-  transcript: string;
+/**
+ * Pull the Reddit thread ID out of a URL so the downloaded thread filename
+ * is stable. Examples:
+ *   - reddit.com/r/nutrition/comments/1nwdzcz/choose_a_typical_dessert/
+ *   - old.reddit.com/r/foo/comments/xyz789/
+ * Returns '' if no ID is found — callers fall back to a date-only filename.
+ */
+function extractRedditThreadId(url: string): string {
+  const match = url.match(/\/comments\/([a-zA-Z0-9]+)/i);
+  return match ? match[1] : '';
+}
+
+type SourceDownloadKind = 'youtube-transcript' | 'reddit-thread';
+
+interface SourceDownloadInput {
+  kind: SourceDownloadKind;
+  content: string;
   sourceUrl: string;
   evaluatedAt: string;
+  // YouTube-only metadata (ignored for Reddit).
   videoTitle?: string;
   videoChannel?: string;
+  // Reddit-only metadata (ignored for YouTube).
+  redditPostTitle?: string;
+  redditCommunity?: string;
 }
 
 /** Build the contents of the .txt file. Header makes the file
  *  self-describing so a reviewer can identify the source weeks later
  *  without re-opening the dashboard. */
-function buildTranscriptFileContent(input: TranscriptDownloadInput): string {
+function buildSourceFileContent(input: SourceDownloadInput): string {
+  if (input.kind === 'youtube-transcript') {
+    const headerLines = [
+      'Off-Site Dashboard — YouTube transcript',
+      '',
+      input.videoTitle ? `Title:    ${input.videoTitle}` : '',
+      input.videoChannel ? `Channel:  ${input.videoChannel}` : '',
+      `URL:      ${input.sourceUrl}`,
+      `Captured: ${input.evaluatedAt}`,
+      '',
+      '---',
+      '',
+    ].filter(Boolean);
+    return [...headerLines, input.content].join('\n');
+  }
+
+  // Reddit thread snapshot
   const headerLines = [
-    'Off-Site Dashboard — YouTube transcript',
+    'Off-Site Dashboard — Reddit thread snapshot',
     '',
-    input.videoTitle ? `Title:    ${input.videoTitle}` : '',
-    input.videoChannel ? `Channel:  ${input.videoChannel}` : '',
-    `URL:      ${input.sourceUrl}`,
-    `Captured: ${input.evaluatedAt}`,
+    input.redditPostTitle ? `Title:     ${input.redditPostTitle}` : '',
+    input.redditCommunity ? `Community: ${input.redditCommunity}` : '',
+    `URL:       ${input.sourceUrl}`,
+    `Captured:  ${input.evaluatedAt}`,
     '',
     '---',
     '',
   ].filter(Boolean);
-  return [...headerLines, input.transcript].join('\n');
+  return [...headerLines, input.content].join('\n');
 }
 
-function buildTranscriptFilename(input: TranscriptDownloadInput): string {
-  const videoId = extractYouTubeVideoId(input.sourceUrl);
+function buildSourceFilename(input: SourceDownloadInput): string {
   const datePart = input.evaluatedAt ? input.evaluatedAt.slice(0, 10) : '';
-  if (videoId && datePart) {
-    return `transcript-${videoId}-${datePart}.txt`;
+
+  if (input.kind === 'youtube-transcript') {
+    const videoId = extractYouTubeVideoId(input.sourceUrl);
+    if (videoId && datePart) return `transcript-${videoId}-${datePart}.txt`;
+    if (videoId) return `transcript-${videoId}.txt`;
+    return datePart ? `transcript-${datePart}.txt` : 'transcript.txt';
   }
-  if (videoId) {
-    return `transcript-${videoId}.txt`;
-  }
-  return datePart ? `transcript-${datePart}.txt` : 'transcript.txt';
+
+  const threadId = extractRedditThreadId(input.sourceUrl);
+  if (threadId && datePart) return `reddit-thread-${threadId}-${datePart}.txt`;
+  if (threadId) return `reddit-thread-${threadId}.txt`;
+  return datePart ? `reddit-thread-${datePart}.txt` : 'reddit-thread.txt';
 }
 
-function downloadTranscriptFile(input: TranscriptDownloadInput): void {
-  const content = buildTranscriptFileContent(input);
-  const filename = buildTranscriptFilename(input);
+function downloadSourceFile(input: SourceDownloadInput): void {
+  const content = buildSourceFileContent(input);
+  const filename = buildSourceFilename(input);
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -1840,8 +1879,9 @@ function EvaluationTable(props: {
                               className="ghost-button"
                               type="button"
                               onClick={() =>
-                                downloadTranscriptFile({
-                                  transcript: evaluationResult.transcript ?? '',
+                                downloadSourceFile({
+                                  kind: 'youtube-transcript',
+                                  content: evaluationResult.transcript ?? '',
                                   sourceUrl: evaluationResult.fetch.sourceUrl,
                                   evaluatedAt: evaluationResult.evaluatedAt,
                                   videoTitle: evaluationResult.videoTitle,
@@ -1850,6 +1890,25 @@ function EvaluationTable(props: {
                               }
                             >
                               Download transcript
+                            </button>
+                          ) : null}
+                          {evaluationResult?.fetch?.sourceType === 'reddit' &&
+                          evaluationResult?.redditThread ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadSourceFile({
+                                  kind: 'reddit-thread',
+                                  content: evaluationResult.redditThread ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  redditPostTitle: evaluationResult.redditPostTitle,
+                                  redditCommunity: evaluationResult.redditCommunity,
+                                })
+                              }
+                            >
+                              Download thread
                             </button>
                           ) : null}
                         </div>
@@ -2185,8 +2244,9 @@ function SovEvaluationTable(props: {
                               className="ghost-button"
                               type="button"
                               onClick={() =>
-                                downloadTranscriptFile({
-                                  transcript: evaluationResult.transcript ?? '',
+                                downloadSourceFile({
+                                  kind: 'youtube-transcript',
+                                  content: evaluationResult.transcript ?? '',
                                   sourceUrl: evaluationResult.fetch.sourceUrl,
                                   evaluatedAt: evaluationResult.evaluatedAt,
                                   videoTitle: evaluationResult.videoTitle,
@@ -2195,6 +2255,25 @@ function SovEvaluationTable(props: {
                               }
                             >
                               Download transcript
+                            </button>
+                          ) : null}
+                          {evaluationResult?.fetch?.sourceType === 'reddit' &&
+                          evaluationResult?.redditThread ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadSourceFile({
+                                  kind: 'reddit-thread',
+                                  content: evaluationResult.redditThread ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  redditPostTitle: evaluationResult.redditPostTitle,
+                                  redditCommunity: evaluationResult.redditCommunity,
+                                })
+                              }
+                            >
+                              Download thread
                             </button>
                           ) : null}
                         </div>

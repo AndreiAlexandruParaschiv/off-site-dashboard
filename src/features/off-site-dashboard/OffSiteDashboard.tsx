@@ -9,6 +9,7 @@ import { TARGET_OPPORTUNITY_TYPES } from './constants';
 import {
   deriveSentimentVerdict,
   deriveSovVerdict,
+  describeSovToleranceMargin,
   getConfidenceBand,
   getConfidenceLabel,
 } from './evaluation';
@@ -2142,11 +2143,16 @@ function SovEvaluationTable(props: {
             const evaluationOutput = evaluationResult
               ? evaluationResult.evaluatedSov
               : 'Not evaluated';
+            const sovToleranceNote = describeSovToleranceMargin({
+              extractedSov: row.item.sov,
+              evaluationResult,
+            });
             const rationaleOutput = row.item.evaluationError
               ? `Error: ${row.item.evaluationError}`
               : evaluationResult
                 ? [
                     ...getEvaluationEvidenceContextLines(evaluationResult.fetch),
+                    sovToleranceNote ?? '',
                     evaluationResult.rationale,
                     evaluationResult.evidenceSnippet
                       ? `Evidence: ${evaluationResult.evidenceSnippet}`

@@ -50,7 +50,13 @@ export type DerivedEvaluationVerdict =
   | 'Needs Review'
   | 'Not evaluated';
 
-const SENTIMENT_SOV_TOLERANCE_POINTS = 2;
+// Allowed slack between the backend's extracted target-brand share and the
+// evaluator's recomputed share before we flag the SOV verdict as Incorrect.
+// Stated as ABSOLUTE percentage points (so 10 means "60% vs 50% is fine").
+// SOV is inherently fuzzy — different counting strategies (raw mentions,
+// weighted by position, deduped per comment, etc.) can disagree by several
+// points without either side being wrong, so we use a wide margin.
+const SENTIMENT_SOV_TOLERANCE_POINTS = 10;
 
 function normalizeDerivedComparableValue(value: string) {
   return (
@@ -262,6 +268,42 @@ export function deriveSovVerdict(input: {
   return Math.abs(extractedPct - evaluatedPct) <= SENTIMENT_SOV_TOLERANCE_POINTS
     ? 'Correct'
     : 'Incorrect';
+}
+
+/**
+ * Build a one-line note explaining the SOV margin calculation. Used by the UI
+ * to surface "verdict was Correct because the gap fell inside the tolerance
+ * window" in the Rationale / Evidence panel — so a reviewer who sees a Correct
+ * verdict between mismatched percentages knows why it's still Correct.
+ *
+ * Returns null when there's nothing useful to surface (no evaluation yet,
+ * unparseable percentages, or the values match exactly).
+ */
+export function describeSovToleranceMargin(input: {
+  extractedSov: string;
+  evaluationResult?: SentimentEvaluationResult;
+}): string | null {
+  const result = input.evaluationResult;
+  if (!result) return null;
+  if (hasInsufficientFetchStatus(result.fetch?.status)) return null;
+  if (normalizeDerivedComparableValue(result.evaluatedSov) === 'needs review') return null;
+
+  const extractedPct = extractTargetBrandSharePct(input.extractedSov, result.targetBrand ?? '');
+  const evaluatedPct =
+    typeof result.evaluatedTargetBrandSharePct === 'number'
+      ? result.evaluatedTargetBrandSharePct
+      : parsePercentageValue(result.evaluatedSov);
+
+  if (extractedPct === null || evaluatedPct === null) return null;
+
+  const delta = Math.abs(extractedPct - evaluatedPct);
+  if (delta === 0) return null; // exact match — nothing to explain
+  const within = delta <= SENTIMENT_SOV_TOLERANCE_POINTS;
+
+  return (
+    `SOV margin: backend ${extractedPct.toFixed(1)}% vs evaluator ${evaluatedPct.toFixed(1)}% ` +
+    `(Δ ${delta.toFixed(1)}pt — ${within ? 'within' : 'outside'} ±${SENTIMENT_SOV_TOLERANCE_POINTS}pt tolerance).`
+  );
 }
 
 export function buildSentimentRowKey(input: {

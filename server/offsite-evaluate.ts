@@ -1125,7 +1125,12 @@ type BrandShare = {
 };
 
 function normalizeBrandKey(value: string) {
-  return normalizeComparableText(value);
+  // Strip ALL non-alphanumeric characters (not just collapsing them to spaces
+  // like normalizeComparableText does). This makes "WK Kellogg", "Wkkellogg",
+  // "WK-Kellogg", and "WK_Kellogg" all map to the same key "wkkellogg" so
+  // brand variants merge correctly in the SOV calculation. Mirrors the
+  // frontend's normalizeBrandKey in src/features/off-site-dashboard/evaluation.ts.
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**
@@ -1277,35 +1282,71 @@ function extractSovBrandShares(extractedSov: string, targetBrand?: string) {
 function buildEvaluatedBrandShares(input: {
   extractedBrandShares: BrandShare[];
   llmResult: LlmEvaluation;
+  brandProfile?: BrandProfile;
 }) {
+  const targetBrand = trimMultilineText(input.llmResult.targetBrand);
+  const targetBrandKey = normalizeBrandKey(targetBrand);
+
+  // Build the set of normalized keys that should fold into the target brand
+  // (the canonical target plus any owned products / sub-brands from the
+  // brand profile, e.g., Frosted Mini-Wheats / Special K / Raisin Bran for
+  // a WK Kellogg site).
+  const targetEquivalentKeys = new Set<string>();
+  if (targetBrandKey) targetEquivalentKeys.add(targetBrandKey);
+  if (input.brandProfile?.ownedProducts) {
+    for (const product of input.brandProfile.ownedProducts) {
+      const productKey = normalizeBrandKey(product);
+      if (productKey) targetEquivalentKeys.add(productKey);
+    }
+  }
+
   const mentionCounts = new Map<string, { brand: string; mentionCount: number }>();
+  const llmTargetCount = Math.max(0, Math.round(input.llmResult.targetBrandMentionCount));
+  let foldedSubBrandCount = 0;
+  let llmAlsoListedTarget = false;
 
   for (const brandMention of input.llmResult.brandMentions) {
     const cleanedBrand = trimMultilineText(brandMention.brand);
     const normalizedBrand = normalizeBrandKey(cleanedBrand);
+    if (!normalizedBrand || isIgnorableSovBrand(cleanedBrand)) continue;
 
-    if (!normalizedBrand || isIgnorableSovBrand(cleanedBrand)) {
-      continue;
+    const count = Math.max(0, Math.round(brandMention.mentionCount));
+
+    if (normalizedBrand === targetBrandKey) {
+      // The LLM listed the target brand explicitly in brandMentions. The
+      // prompt instructs it to put the same count in both fields, so this is
+      // typically redundant with targetBrandMentionCount.
+      llmAlsoListedTarget = true;
+    } else if (targetEquivalentKeys.has(normalizedBrand)) {
+      // The LLM listed an owned sub-brand (e.g., Frosted Mini-Wheats) as a
+      // separate brandMentions entry. Track its count for the fold rule below.
+      foldedSubBrandCount += count;
+    } else {
+      // Genuine non-target brand — keep as a separate denominator entry.
+      mentionCounts.set(normalizedBrand, {
+        brand: cleanedBrand,
+        mentionCount: count,
+      });
     }
-
-    mentionCounts.set(normalizedBrand, {
-      brand: cleanedBrand,
-      mentionCount: Math.max(0, Math.round(brandMention.mentionCount)),
-    });
   }
 
-  const targetBrand = trimMultilineText(input.llmResult.targetBrand);
-  const targetBrandKey = normalizeBrandKey(targetBrand);
+  // Final target mention count after combining the LLM's targetBrandMentionCount
+  // with any owned-sub-brand mentions the LLM listed separately.
+  const targetCount = combineTargetAndSubBrandCounts({
+    llmTargetCount,
+    llmAlsoListedTarget,
+    foldedSubBrandCount,
+  });
 
-  // Start with brands from extractedBrandShares to preserve known ordering,
-  // then append any additional brands the LLM found in the evidence that were
-  // not in the original extracted SOV (so they are included in the denominator).
-  const orderedBrands = input.extractedBrandShares.map((share) => share.brand);
+  const orderedBrands = input.extractedBrandShares
+    .map((share) => share.brand)
+    // Drop any extracted-share entries that fold into the target (they're
+    // accounted for by targetCount; including them as separate rows would
+    // double-count and produce duplicate-looking SOV entries like
+    // "WK Kellogg: 34.5%, Wkkellogg: 34.5%").
+    .filter((brand) => !targetEquivalentKeys.has(normalizeBrandKey(brand)));
 
-  if (
-    targetBrandKey &&
-    !orderedBrands.some((brand) => normalizeBrandKey(brand) === targetBrandKey)
-  ) {
+  if (targetBrandKey) {
     orderedBrands.unshift(targetBrand);
   }
 
@@ -1319,7 +1360,7 @@ function buildEvaluatedBrandShares(input: {
     const normalizedBrand = normalizeBrandKey(brand);
     const mentionCount =
       normalizedBrand === targetBrandKey
-        ? Math.max(0, Math.round(input.llmResult.targetBrandMentionCount))
+        ? targetCount
         : mentionCounts.get(normalizedBrand)?.mentionCount ?? 0;
 
     return {
@@ -1336,6 +1377,35 @@ function buildEvaluatedBrandShares(input: {
     brand: brand.brand,
     sharePct: totalMentions > 0 ? (brand.mentionCount / totalMentions) * 100 : 0,
   }));
+}
+
+/**
+ * Decide the final target-brand mention count given:
+ * - `llmTargetCount`: what the LLM put in `targetBrandMentionCount`.
+ * - `llmAlsoListedTarget`: whether the LLM ALSO listed the target brand as
+ *   a separate `brandMentions` entry (its count is NOT included in
+ *   `foldedSubBrandCount` — only owned sub-brand mentions are).
+ * - `foldedSubBrandCount`: the SUM of `brandMentions` entries whose keys
+ *   matched owned products / sub-brands from the brand profile (e.g.,
+ *   Frosted Mini-Wheats for a Kellogg site), excluding any mention of the
+ *   target brand itself.
+ *
+ * Rule: simple addition. The LLM is instructed to fold owned-product
+ * mentions into `targetBrandMentionCount`, but in practice it sometimes
+ * splits them out as separate `brandMentions` entries. Adding the two
+ * together captures both scenarios — if the LLM folded correctly,
+ * `foldedSubBrandCount` is 0 and the sum equals `llmTargetCount`; if it
+ * split sub-brands out, the sum recovers the true total. Because we
+ * exclude the target brand itself from `foldedSubBrandCount` (tracked
+ * separately via `llmAlsoListedTarget`), there is no double-count risk
+ * from the redundant-target-listing case.
+ */
+function combineTargetAndSubBrandCounts(input: {
+  llmTargetCount: number;
+  llmAlsoListedTarget: boolean;
+  foldedSubBrandCount: number;
+}): number {
+  return input.llmTargetCount + input.foldedSubBrandCount;
 }
 
 function formatSharePct(value: number) {
@@ -2866,9 +2936,15 @@ export async function runOffsiteEvaluation(
   const llmResponse = await fetchLlmEvaluation(payload, evidence, env);
   const llmResult = llmResponse.evaluation;
   const extractedBrandShares = extractSovBrandShares(payload.extractedSov, llmResult.targetBrand);
+  // Re-fetch the brand profile (cache hit — already populated by fetchLlmEvaluation).
+  // We pass it into buildEvaluatedBrandShares so owned products / sub-brands
+  // that the LLM listed as separate brandMentions entries can fold back into
+  // the target brand's count.
+  const brandProfile = await getBrandProfile(payload.site, env);
   const evaluatedBrandShares = buildEvaluatedBrandShares({
     extractedBrandShares,
     llmResult,
+    brandProfile,
   });
   const evaluatedSov = formatEvaluatedSov(evaluatedBrandShares);
   const evaluatedTargetBrandSharePct = getTargetBrandSharePct(

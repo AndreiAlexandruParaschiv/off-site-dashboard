@@ -195,6 +195,25 @@ export function deriveSentimentVerdict(input: {
     return 'Needs Review';
   }
 
+  // Brand-owned source equivalence: a brand's own site / YouTube channel is
+  // rarely overtly negative about its own brand, but it can legitimately read
+  // as either "Favorable" (promotional / marketing) or "Neutral"
+  // (informational / factual). The backend evaluator short-circuits these
+  // sources to "Favorable", so a backend extraction of "Neutral" should NOT
+  // be flagged Incorrect — both labels describe the same brand-owned content
+  // accurately. This equivalence is one-way: "Unfavorable" or "No brand
+  // mentions" on a brand-owned source remains a real disagreement.
+  const isBrandOwned = result.fetch?.isBrandOwned === true;
+  if (isBrandOwned) {
+    const brandOwnedEquivalentLabels = new Set(['favorable', 'neutral']);
+    if (
+      brandOwnedEquivalentLabels.has(evaluatedValue) &&
+      brandOwnedEquivalentLabels.has(extractedValue)
+    ) {
+      return 'Correct';
+    }
+  }
+
   return evaluatedValue === extractedValue ? 'Correct' : 'Incorrect';
 }
 

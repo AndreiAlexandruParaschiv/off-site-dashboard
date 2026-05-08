@@ -2191,6 +2191,86 @@ interface BrandProfile {
 
 const BRAND_PROFILE_CACHE = new Map<string, BrandProfile>();
 
+/**
+ * Per-site brand-profile overrides. The LLM generates the bulk of each
+ * profile (correctly attributing products, picking competitors, etc.) but
+ * sometimes the right answer for our reporting purposes diverges from
+ * strict corporate ownership.
+ *
+ * Example: post-2023 Kellogg Company split, the Kashi brand sits with
+ * Kellanova rather than WK Kellogg Co. For SOV reporting on wkkellogg.com,
+ * we want Kashi counted as part of the Kellogg family rather than as a
+ * competitor — the brand lineage matters more than the corporate
+ * partition.
+ *
+ * Keys are matched against the brand-key form of the site URL (the part
+ * before the first dot of the hostname, lowercased — see extractBrandKey).
+ * That makes the override apply to wkkellogg.com, www.wkkellogg.com, and
+ * any path under those hosts.
+ *
+ * Each entry is *additive* — listed products/competitors are merged with
+ * (not replaced by) the LLM's output, with deduping by normalized brand
+ * key. The `removeFromCompetitors` field re-classifies an LLM-detected
+ * competitor as one of our own when needed (so e.g. Kashi doesn't end up
+ * in BOTH ownedProducts and knownCompetitors).
+ */
+type BrandProfileOverride = {
+  ownedProducts?: string[];
+  knownCompetitors?: string[];
+  removeFromCompetitors?: string[];
+};
+
+const BRAND_PROFILE_OVERRIDES: Record<string, BrandProfileOverride> = {
+  wkkellogg: {
+    ownedProducts: ['Kashi'],
+    removeFromCompetitors: ['Kashi'],
+  },
+};
+
+function applyBrandProfileOverrides(
+  profile: BrandProfile,
+  site: string,
+): BrandProfile {
+  const brandKey = extractBrandKey(site);
+  const override = brandKey ? BRAND_PROFILE_OVERRIDES[brandKey] : undefined;
+  if (!override) {
+    return profile;
+  }
+
+  const dedupeByKey = (entries: string[]): string[] => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const entry of entries) {
+      const trimmed = entry.trim();
+      const key = normalizeBrandKey(trimmed);
+      if (!trimmed || !key || seen.has(key)) continue;
+      seen.add(key);
+      result.push(trimmed);
+    }
+    return result;
+  };
+
+  const removalKeys = new Set(
+    (override.removeFromCompetitors ?? []).map((entry) => normalizeBrandKey(entry)),
+  );
+
+  return {
+    ...profile,
+    ownedProducts: dedupeByKey([
+      ...profile.ownedProducts,
+      ...(override.ownedProducts ?? []),
+    ]),
+    knownCompetitors: dedupeByKey(
+      [
+        ...profile.knownCompetitors.filter(
+          (competitor) => !removalKeys.has(normalizeBrandKey(competitor)),
+        ),
+        ...(override.knownCompetitors ?? []),
+      ],
+    ),
+  };
+}
+
 function brandProfileCacheKey(site: string): string {
   return site.trim().toLowerCase();
 }
@@ -2210,10 +2290,14 @@ async function getBrandProfile(
   }
 
   try {
-    const profile = await fetchBrandProfileFromLlm(site, env);
-    if (profile && profile.targetBrand) {
-      BRAND_PROFILE_CACHE.set(key, profile);
+    const baseProfile = await fetchBrandProfileFromLlm(site, env);
+    if (!baseProfile || !baseProfile.targetBrand) {
+      return baseProfile;
     }
+    // Merge any per-site overrides (e.g., Kashi → Kellogg family) before
+    // caching so every consumer sees the same augmented profile.
+    const profile = applyBrandProfileOverrides(baseProfile, site);
+    BRAND_PROFILE_CACHE.set(key, profile);
     return profile;
   } catch {
     return undefined;

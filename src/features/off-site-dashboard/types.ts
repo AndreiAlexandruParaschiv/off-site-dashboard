@@ -124,6 +124,14 @@ export interface SentimentEvaluationResult {
   redditPostTitle?: string;
   /** Reddit community name (subreddit) — used in the downloaded thread file header. */
   redditCommunity?: string;
+  /** Full scraped page content for Cited URLs / web sources (un-clamped).
+   *  Same purpose as `transcript` / `redditThread` but for arbitrary web pages. */
+  pageContent?: string;
+  /** Page title — used in the downloaded page file header. */
+  pageTitle?: string;
+  /** Format of the scraped content: 'markdown' from BrightData, 'plain-text'
+   *  from the direct-HTML fallback. Surfaced in the file header for context. */
+  pageFormat?: 'markdown' | 'plain-text';
 }
 
 export interface SuggestionEvaluationEvidenceSource {

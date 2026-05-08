@@ -80,19 +80,54 @@ function extractRedditThreadId(url: string): string {
   return match ? match[1] : '';
 }
 
-type SourceDownloadKind = 'youtube-transcript' | 'reddit-thread';
+/**
+ * Build a stable filename slug for a Cited URL by combining the domain (sans
+ * "www.") with the last path segment, sanitized to [a-z0-9-]. Truncated so
+ * deeply nested paths don't blow up the filename.
+ *
+ * Examples:
+ *   https://www.forbes.com/sites/best-cereals/    → forbes-com-best-cereals
+ *   https://example.com/                          → example-com
+ *   https://blog.example.com/2025/article-id-123  → blog-example-com-article-id-123
+ */
+function extractWebPageSlug(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const sanitize = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 40);
+
+    const domain = sanitize(parsed.hostname.replace(/^www\./i, ''));
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const lastSegment = sanitize(segments[segments.length - 1] ?? '');
+
+    if (domain && lastSegment) return `${domain}-${lastSegment}`;
+    return domain || lastSegment || '';
+  } catch {
+    return '';
+  }
+}
+
+type SourceDownloadKind = 'youtube-transcript' | 'reddit-thread' | 'cited-page';
 
 interface SourceDownloadInput {
   kind: SourceDownloadKind;
   content: string;
   sourceUrl: string;
   evaluatedAt: string;
-  // YouTube-only metadata (ignored for Reddit).
+  // YouTube-only metadata (ignored for other kinds).
   videoTitle?: string;
   videoChannel?: string;
-  // Reddit-only metadata (ignored for YouTube).
+  // Reddit-only metadata (ignored for other kinds).
   redditPostTitle?: string;
   redditCommunity?: string;
+  // Cited URL / web-only metadata (ignored for other kinds).
+  pageTitle?: string;
+  pageFormat?: 'markdown' | 'plain-text';
 }
 
 /** Build the contents of the .txt file. Header makes the file
@@ -114,14 +149,29 @@ function buildSourceFileContent(input: SourceDownloadInput): string {
     return [...headerLines, input.content].join('\n');
   }
 
-  // Reddit thread snapshot
+  if (input.kind === 'reddit-thread') {
+    const headerLines = [
+      'Off-Site Dashboard — Reddit thread snapshot',
+      '',
+      input.redditPostTitle ? `Title:     ${input.redditPostTitle}` : '',
+      input.redditCommunity ? `Community: ${input.redditCommunity}` : '',
+      `URL:       ${input.sourceUrl}`,
+      `Captured:  ${input.evaluatedAt}`,
+      '',
+      '---',
+      '',
+    ].filter(Boolean);
+    return [...headerLines, input.content].join('\n');
+  }
+
+  // Cited URL / web page snapshot
   const headerLines = [
-    'Off-Site Dashboard — Reddit thread snapshot',
+    'Off-Site Dashboard — Cited URL page snapshot',
     '',
-    input.redditPostTitle ? `Title:     ${input.redditPostTitle}` : '',
-    input.redditCommunity ? `Community: ${input.redditCommunity}` : '',
-    `URL:       ${input.sourceUrl}`,
-    `Captured:  ${input.evaluatedAt}`,
+    input.pageTitle ? `Title:    ${input.pageTitle}` : '',
+    `URL:      ${input.sourceUrl}`,
+    input.pageFormat ? `Format:   ${input.pageFormat}` : '',
+    `Captured: ${input.evaluatedAt}`,
     '',
     '---',
     '',
@@ -139,10 +189,18 @@ function buildSourceFilename(input: SourceDownloadInput): string {
     return datePart ? `transcript-${datePart}.txt` : 'transcript.txt';
   }
 
-  const threadId = extractRedditThreadId(input.sourceUrl);
-  if (threadId && datePart) return `reddit-thread-${threadId}-${datePart}.txt`;
-  if (threadId) return `reddit-thread-${threadId}.txt`;
-  return datePart ? `reddit-thread-${datePart}.txt` : 'reddit-thread.txt';
+  if (input.kind === 'reddit-thread') {
+    const threadId = extractRedditThreadId(input.sourceUrl);
+    if (threadId && datePart) return `reddit-thread-${threadId}-${datePart}.txt`;
+    if (threadId) return `reddit-thread-${threadId}.txt`;
+    return datePart ? `reddit-thread-${datePart}.txt` : 'reddit-thread.txt';
+  }
+
+  // Cited URL / web page
+  const slug = extractWebPageSlug(input.sourceUrl);
+  if (slug && datePart) return `cited-${slug}-${datePart}.txt`;
+  if (slug) return `cited-${slug}.txt`;
+  return datePart ? `cited-page-${datePart}.txt` : 'cited-page.txt';
 }
 
 function downloadSourceFile(input: SourceDownloadInput): void {
@@ -1911,6 +1969,25 @@ function EvaluationTable(props: {
                               Download thread
                             </button>
                           ) : null}
+                          {evaluationResult?.fetch?.sourceType === 'web' &&
+                          evaluationResult?.pageContent ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadSourceFile({
+                                  kind: 'cited-page',
+                                  content: evaluationResult.pageContent ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  pageTitle: evaluationResult.pageTitle,
+                                  pageFormat: evaluationResult.pageFormat,
+                                })
+                              }
+                            >
+                              Download page
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -2274,6 +2351,25 @@ function SovEvaluationTable(props: {
                               }
                             >
                               Download thread
+                            </button>
+                          ) : null}
+                          {evaluationResult?.fetch?.sourceType === 'web' &&
+                          evaluationResult?.pageContent ? (
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() =>
+                                downloadSourceFile({
+                                  kind: 'cited-page',
+                                  content: evaluationResult.pageContent ?? '',
+                                  sourceUrl: evaluationResult.fetch.sourceUrl,
+                                  evaluatedAt: evaluationResult.evaluatedAt,
+                                  pageTitle: evaluationResult.pageTitle,
+                                  pageFormat: evaluationResult.pageFormat,
+                                })
+                              }
+                            >
+                              Download page
                             </button>
                           ) : null}
                         </div>

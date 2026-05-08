@@ -74,6 +74,13 @@ type SourceEvidence = {
   redditThread?: string;
   redditPostTitle?: string;
   redditCommunity?: string;
+  /** Full scraped page content for Cited URLs / web sources (un-clamped). Same
+   *  purpose as `transcript` / `redditThread` but for arbitrary web pages. */
+  pageContent?: string;
+  pageTitle?: string;
+  /** 'markdown' when the page was scraped via BrightData's markdown formatter;
+   *  'plain-text' when it came from the direct-HTML fallback path. */
+  pageFormat?: 'markdown' | 'plain-text';
 };
 
 type LlmEvaluation = {
@@ -1989,7 +1996,11 @@ async function fetchWebEvidence(
   if (getBrightDataApiKey(env)) {
     try {
       const brightDataBody = await fetchBrightDataUnlockerBody(itemUrl, env, 'markdown');
-      const pageText = clampEvidenceText(stripNavigationNoise(brightDataBody));
+      // Keep an un-clamped, navigation-noise-stripped copy for QA download.
+      // The LLM only sees the clamped `pageText`, but a reviewer may need
+      // the full markdown to verify a verdict.
+      const fullPageContent = trimMultilineText(stripNavigationNoise(brightDataBody));
+      const pageText = clampEvidenceText(fullPageContent);
 
       if (pageText.length >= MIN_EVIDENCE_CHARACTERS) {
         return {
@@ -2000,6 +2011,8 @@ async function fetchWebEvidence(
           transcriptStatus: 'not_applicable',
           status: 'success',
           evidenceText: pageText,
+          pageContent: fullPageContent || undefined,
+          pageFormat: 'markdown',
           fallbackSnippet: pageText.slice(0, 280),
           isBrandOwned,
         };
@@ -2027,6 +2040,16 @@ async function fetchWebEvidence(
         ].join('\n\n'),
       ),
     );
+    // Build the un-clamped QA snapshot in the same shape as evidenceText so
+    // the downloaded file mirrors what the LLM saw, just without truncation.
+    const fullPageContent =
+      trimMultilineText(
+        [
+          title ? `Title: ${title}` : '',
+          description ? `Description: ${description}` : '',
+          pageText ? `Page content:\n${pageText}` : '',
+        ].join('\n\n'),
+      ) || undefined;
 
     return {
       sourceType: 'web',
@@ -2039,6 +2062,9 @@ async function fetchWebEvidence(
           ? 'success'
           : 'insufficient_evidence',
       evidenceText,
+      pageContent: fullPageContent,
+      pageTitle: title || undefined,
+      pageFormat: 'plain-text',
       fallbackSnippet: title || description || 'Page evidence could not be extracted.',
       isBrandOwned,
     };
@@ -2891,6 +2917,9 @@ export async function runOffsiteEvaluation(
     redditThread: evidence.redditThread,
     redditPostTitle: evidence.redditPostTitle,
     redditCommunity: evidence.redditCommunity,
+    pageContent: evidence.pageContent,
+    pageTitle: evidence.pageTitle,
+    pageFormat: evidence.pageFormat,
     targetBrand: llmResult.targetBrand,
   };
 }

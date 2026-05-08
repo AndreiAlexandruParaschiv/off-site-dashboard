@@ -816,12 +816,12 @@ export function useOffSiteDashboard() {
   const selectedVisibleSuggestionRowsCount = selectedVisibleSuggestionRowKeys.length;
 
   const exportRows = useCallback(() => {
-    downloadRowsAsCsv(exportableRows);
-  }, [exportableRows]);
+    downloadRowsAsCsv(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const exportExcel = useCallback(() => {
-    downloadRowsAsExcel(exportableRows);
-  }, [exportableRows]);
+    downloadRowsAsExcel(filteredExportableRows);
+  }, [filteredExportableRows]);
 
   const exportSuggestionEvaluation = useCallback(() => {
     downloadSuggestionEvaluationExcel(filteredExportableRows);

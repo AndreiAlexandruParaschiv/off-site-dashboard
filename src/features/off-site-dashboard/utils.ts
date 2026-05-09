@@ -406,6 +406,12 @@ export function normalizeOpportunityType(rawType: unknown) {
   if (
     compactValue === 'url' ||
     compactValue === 'urls' ||
+    // `includes('cited')` covers cited-urls, top-cited-urls, AND
+    // cited-analysis (the backend's current name for the Cited URLs
+    // opportunity type). The narrower citedurl(s) / topcitedurl(s)
+    // rules above are kept as explicit anchors so the intent stays
+    // readable even if `cited` ever needs scoping.
+    compactValue.includes('cited') ||
     compactValue.includes('citedurl') ||
     compactValue.includes('citedurls') ||
     compactValue.includes('topcitedurl') ||

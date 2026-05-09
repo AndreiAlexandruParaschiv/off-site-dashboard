@@ -2109,6 +2109,167 @@ a:hover {
   line-height: 1.2;
 }
 
+/* === Suggestions Patcher === */
+
+.patcher-pickers {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 2fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.patcher-picker-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.patcher-card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.patcher-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border-soft, #e5e7eb);
+  border-radius: 12px;
+  background: var(--surface-base, #ffffff);
+}
+
+.patcher-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.patcher-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.patcher-card-rank {
+  font-weight: 600;
+}
+
+.patcher-card-type {
+  padding: 2px 8px;
+  background: var(--surface-soft, #f3f4f6);
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.patcher-card-status {
+  padding: 2px 8px;
+  background: var(--surface-soft, #f3f4f6);
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.patcher-card-dirty {
+  padding: 2px 8px;
+  background: #fff3c4;
+  color: #78350f;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.patcher-card-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+.patcher-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+
+.patcher-field span {
+  font-weight: 600;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.patcher-field-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.patcher-field-row span {
+  margin: 0;
+}
+
+.patcher-field-row .select-input {
+  width: auto;
+  min-width: 140px;
+}
+
+.patcher-action-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border-soft, #e5e7eb);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.patcher-action-items legend {
+  padding: 0 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.patcher-action-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.patcher-action-item-row .textarea-input {
+  flex: 1;
+}
+
+.patcher-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.status-pill-success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+@media (max-width: 720px) {
+  .patcher-pickers {
+    grid-template-columns: 1fr;
+  }
+
+  .patcher-card-actions {
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 1140px) {
   .dashboard-hero,
   .dashboard-overview-grid,

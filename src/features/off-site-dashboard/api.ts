@@ -577,6 +577,168 @@ export async function evaluateWikipediaUrl(
   );
 }
 
+// === Suggestions Patcher API ===
+//
+// The patcher works against the raw SpaceCat suggestion shape (NOT the
+// trimmed SuggestionRecord used elsewhere in the dashboard). The raw
+// payload preserves every field the server returns so the user can
+// edit the full data, copy/paste between suggestions, etc.
+
+export interface RawOpportunitySummary {
+  id: string;
+  type: string;
+  title?: string;
+  status?: string;
+  updatedAt?: string;
+}
+
+export interface RawSuggestion {
+  id: string;
+  opportunityId: string;
+  type: string;
+  rank?: number;
+  status?: string;
+  data: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export async function fetchSiteOpportunitySummaries(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  proxyConfig?: SpacecatProxyConfig;
+}): Promise<RawOpportunitySummary[]> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities`,
+  );
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const items = Array.isArray(payload) ? payload : [];
+  return items
+    .map((item): RawOpportunitySummary | null => {
+      const record = asRecord(item);
+      const id = asString(record.id);
+      const type = asString(record.type);
+      if (!id || !type) return null;
+      return {
+        id,
+        type,
+        title: asString(record.title),
+        status: asString(record.status),
+        updatedAt: asString(record.updatedAt),
+      };
+    })
+    .filter((entry): entry is RawOpportunitySummary => entry !== null);
+}
+
+export async function fetchOpportunitySuggestionsRaw(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  proxyConfig?: SpacecatProxyConfig;
+}): Promise<RawSuggestion[]> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}/suggestions`,
+  );
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const items = Array.isArray(payload) ? payload : [];
+  return items
+    .map((item): RawSuggestion | null => {
+      const record = asRecord(item);
+      const id = asString(record.id);
+      const type = asString(record.type);
+      const opportunityId = asString(record.opportunityId);
+      if (!id || !type || !opportunityId) return null;
+      return {
+        id,
+        opportunityId,
+        type,
+        rank: asNumber(record.rank),
+        status: asString(record.status),
+        data: asRecord(record.data),
+        createdAt: asString(record.createdAt),
+        updatedAt: asString(record.updatedAt),
+        updatedBy: asString(record.updatedBy),
+      };
+    })
+    .filter((entry): entry is RawSuggestion => entry !== null);
+}
+
+/**
+ * PATCH a single suggestion's `data` payload. The body shape matches the
+ * SpaceCat API's expected partial-update format: { data: { ...partial } }.
+ * Returns the server's response payload (typically the updated suggestion).
+ */
+export async function patchSuggestion(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  suggestionId: string;
+  partialData: Record<string, unknown>;
+  proxyConfig?: SpacecatProxyConfig;
+}): Promise<RawSuggestion> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}/suggestions/${encodeURIComponent(args.suggestionId)}`,
+  );
+  const useProxy = args.proxyConfig?.configured === true;
+  const requestUrl = useProxy
+    ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
+    : url;
+  const trimmedApiKey = args.apiKey.trim();
+
+  const response = await fetch(requestUrl, {
+    method: 'PATCH',
+    cache: 'no-store',
+    headers: useProxy
+      ? {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+        }
+      : {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'x-api-key': trimmedApiKey,
+        },
+    body: JSON.stringify({ data: args.partialData }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Failed to patch suggestion (HTTP ${response.status}).`,
+      { status: response.status },
+    );
+  }
+
+  const result = (await response.json()) as RawSuggestion;
+  return result;
+}
+
 export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {
   try {
     const response = await fetch(buildInternalApiUrl(SPACECAT_PROXY_CONFIG_API_PATH), {

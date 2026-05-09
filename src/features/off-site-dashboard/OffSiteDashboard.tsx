@@ -13,6 +13,7 @@ import {
   getConfidenceBand,
   getConfidenceLabel,
 } from './evaluation';
+import { SuggestionsPatcherView } from './SuggestionsPatcherView';
 import { ALL_OPPORTUNITIES_VALUE, useOffSiteDashboard } from './useOffSiteDashboard';
 import {
   formatTimestamp,
@@ -2392,7 +2393,11 @@ function SovEvaluationTable(props: {
   );
 }
 
-type WorkspaceMode = 'opportunities' | 'evaluation' | 'wikipedia-check';
+type WorkspaceMode =
+  | 'opportunities'
+  | 'evaluation'
+  | 'wikipedia-check'
+  | 'suggestions-patcher';
 
 type WikipediaCheckVerdict =
   | 'likely-correct'
@@ -2894,7 +2899,9 @@ export function OffSiteDashboard() {
       ? 'Opportunities'
       : activeWorkspace === 'evaluation'
         ? 'Evaluation'
-        : 'Wikipedia Check';
+        : activeWorkspace === 'wikipedia-check'
+          ? 'Wikipedia Check'
+          : 'Suggestions Patcher';
   const wikipediaBatchSites = normalizeSiteList(wikipediaBatchInputText);
   const workspaceActionButtons = (className: string) => (
     <div className={className}>
@@ -3167,6 +3174,13 @@ export function OffSiteDashboard() {
                 description="Enter a domain and check whether the backend’s Wikipedia page looks aligned with it."
                 label="Wikipedia Check"
                 onClick={() => setActiveWorkspace('wikipedia-check')}
+              />
+              <WorkspaceNavButton
+                active={activeWorkspace === 'suggestions-patcher'}
+                count=""
+                description="Edit suggestion title, body, rationale, action items, priority, and persona — and save back to the SpaceCat API."
+                label="Suggestions Patcher"
+                onClick={() => setActiveWorkspace('suggestions-patcher')}
               />
             </div>
 
@@ -4270,6 +4284,15 @@ export function OffSiteDashboard() {
                   );
                 })() : null}
               </div>
+            )}
+
+            {activeWorkspace === 'suggestions-patcher' && (
+              <SuggestionsPatcherView
+                apiBaseUrl={effectiveApiBaseUrl}
+                apiKey={dashboard.config.apiKey}
+                proxyConfig={dashboard.spacecatProxyConfig}
+                siteCards={dashboard.siteCards}
+              />
             )}
           </div>
         </section>

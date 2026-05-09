@@ -61,11 +61,16 @@ export async function handleSpacecatProxyConfigRequest(
   return buildJsonResponse(getSpacecatProxyConfig(env));
 }
 
+// HTTP methods the proxy will forward upstream. GET for normal reads;
+// PATCH for the Suggestions Patcher feature, which writes partial
+// `data` updates to opportunity suggestions.
+const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH']);
+
 export async function handleSpacecatProxyRequest(
   request: Request,
   env: SpacecatProxyEnv = {},
 ) {
-  if (request.method !== 'GET') {
+  if (!PROXY_ALLOWED_METHODS.has(request.method)) {
     return buildJsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
@@ -92,15 +97,21 @@ export async function handleSpacecatProxyRequest(
     );
   }
 
+  // For mutating methods, forward the JSON request body upstream so the
+  // backend can apply the partial update.
+  const body = request.method === 'GET' ? undefined : await request.text();
+
   try {
     const upstreamResponse = await fetch(targetUrl, {
-      method: 'GET',
+      method: request.method,
       cache: 'no-store',
       headers: {
         accept: 'application/json',
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         authorization: `Bearer ${env.SPACECAT_API_KEY?.trim()}`,
         'x-api-key': env.SPACECAT_API_KEY?.trim() || '',
       },
+      body,
     });
     const responseBody = await upstreamResponse.text();
     const responseHeaders = new Headers();

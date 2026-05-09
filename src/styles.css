@@ -2255,6 +2255,47 @@ a:hover {
   padding-top: 4px;
 }
 
+.patcher-validation-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #7f1d1d;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.patcher-validation-errors ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.patcher-confirm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #78350f;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.patcher-confirm-panel ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.patcher-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 .status-pill-success {
   background: #d1fae5;
   color: #065f46;

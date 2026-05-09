@@ -80,6 +80,69 @@ function fieldsAreDirty(fields: PatcherDraftFields, original: PatcherDraftFields
 }
 
 /**
+ * Required-field validation. SpaceCat's LLMO UI hides any suggestion whose
+ * title is missing, so saving an empty title effectively makes the row
+ * disappear. Priority is also a required field on the backend. We block save
+ * (with an inline error) until both are present.
+ */
+function validateFields(fields: PatcherDraftFields): string[] {
+  const errors: string[] = [];
+  if (!fields.title.trim()) errors.push('Title is required.');
+  if (!fields.priority.trim()) errors.push('Priority is required.');
+  return errors;
+}
+
+/**
+ * Summarize what's about to change so the confirm panel can show the user
+ * exactly which fields they're touching before the PATCH fires. For action
+ * items, we show count delta and add/remove counts since full diffs would
+ * bloat the panel.
+ */
+function describeChanges(
+  fields: PatcherDraftFields,
+  original: PatcherDraftFields,
+): string[] {
+  const changes: string[] = [];
+  if (fields.title !== original.title) changes.push('Title');
+  if (fields.priority !== original.priority) changes.push('Priority');
+  if (fields.persona !== original.persona) changes.push('Persona');
+  if (fields.description !== original.description) changes.push('Description');
+  if (fields.rationale !== original.rationale) changes.push('Rationale');
+  if (fields.expectedOutcome !== original.expectedOutcome) {
+    changes.push('Expected outcome');
+  }
+
+  const before = original.actionItems.map((entry) => entry.trim()).filter(Boolean);
+  const after = fields.actionItems.map((entry) => entry.trim()).filter(Boolean);
+  const beforeSet = new Set(before);
+  const afterSet = new Set(after);
+  const removed = before.filter((entry) => !afterSet.has(entry)).length;
+  const added = after.filter((entry) => !beforeSet.has(entry)).length;
+  const orderChanged =
+    before.length === after.length && before.some((entry, idx) => entry !== after[idx]);
+
+  if (added > 0 || removed > 0 || orderChanged) {
+    const deltaParts: string[] = [];
+    if (added > 0) deltaParts.push(`+${added} added`);
+    if (removed > 0) deltaParts.push(`-${removed} removed`);
+    if (orderChanged && deltaParts.length === 0) deltaParts.push('order changed');
+    changes.push(
+      `Action items (${before.length} → ${after.length}${
+        deltaParts.length > 0 ? `, ${deltaParts.join(', ')}` : ''
+      })`,
+    );
+  }
+
+  return changes;
+}
+
+interface UndoSnapshot {
+  fields: PatcherDraftFields;
+  data: Record<string, unknown>;
+  capturedAt: string;
+}
+
+/**
  * Build the data payload to send in a PATCH.
  *
  * IMPORTANT: SpaceCat's PATCH on /suggestions/{id} REPLACES the entire `data`
@@ -144,6 +207,17 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   const [drafts, setDrafts] = useState<Record<string, DraftEntry>>({});
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
   const [pasteErrors, setPasteErrors] = useState<Record<string, string>>({});
+  // Inline validation errors per card — populated when Save is pressed with
+  // missing required fields. Cleared as soon as the user retries Save with
+  // valid input.
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
+  // Per-card "are you sure?" panel state. When non-null, Save is pending the
+  // user's confirmation; the array lists which fields will be sent.
+  const [pendingConfirm, setPendingConfirm] = useState<Record<string, string[]>>({});
+  // Per-card snapshot of the server state BEFORE the most recent successful
+  // save, so the user can one-click Undo back to it. Cleared on a fresh
+  // load, on a successful Undo, or on subsequent Save.
+  const [undoSnapshots, setUndoSnapshots] = useState<Record<string, UndoSnapshot>>({});
 
   const isReady = props.proxyConfig.configured || props.apiKey.trim().length > 0;
 
@@ -157,6 +231,9 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     setDrafts({});
     setSaveStates({});
     setPasteErrors({});
+    setValidationErrors({});
+    setPendingConfirm({});
+    setUndoSnapshots({});
   }, [selectedSiteId]);
 
   // Load opportunities for the selected site.
@@ -221,6 +298,9 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           }, {}),
         );
         setPasteErrors({});
+        setValidationErrors({});
+        setPendingConfirm({});
+        setUndoSnapshots({});
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -337,6 +417,16 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       delete next[suggestionId];
       return next;
     });
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      delete next[suggestionId];
+      return next;
+    });
+    setPendingConfirm((prev) => {
+      const next = { ...prev };
+      delete next[suggestionId];
+      return next;
+    });
   }, []);
 
   const copyDraftJson = useCallback(
@@ -421,18 +511,19 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     }
   }, []);
 
-  const saveDraft = useCallback(
-    async (suggestionId: string) => {
-      const entry = drafts[suggestionId];
-      if (!entry) return;
+  // Send a PATCH with the user's edits, capture the pre-save state for Undo,
+  // and update the cached drafts/suggestions with the server's response. Used
+  // by both Save (after confirm) and the Undo button (which sends a PATCH
+  // back to the previous server state).
+  const sendPatch = useCallback(
+    async (
+      suggestionId: string,
+      fieldsToSend: PatcherDraftFields,
+      baseData: Record<string, unknown>,
+      undoCapture?: UndoSnapshot,
+    ): Promise<void> => {
       if (!selectedSiteId || !selectedOpportunityId) return;
-      // Short-circuit if nothing actually changed.
-      if (!fieldsAreDirty(entry.fields, entry.originalFields)) return;
-      // Build a COMPLETE data payload (not just the dirty fields). SpaceCat's
-      // PATCH replaces the entire `data` object, so we must include every
-      // field — both edited and untouched — to avoid wiping required fields
-      // like title and priority.
-      const payload = buildPatchPayload(entry.fields, entry.originalData);
+      const payload = buildPatchPayload(fieldsToSend, baseData);
 
       setSaveStates((prev) => ({ ...prev, [suggestionId]: { kind: 'saving' } }));
       try {
@@ -459,6 +550,19 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           ...prev,
           [suggestionId]: { kind: 'saved', at: new Date().toISOString() },
         }));
+        // Update the undo snapshot: store the pre-save state so a subsequent
+        // Undo PATCHes back to it. If undoCapture is undefined (e.g., the
+        // caller IS the Undo button), clear the snapshot — once you undo,
+        // there's nothing to redo.
+        if (undoCapture) {
+          setUndoSnapshots((prev) => ({ ...prev, [suggestionId]: undoCapture }));
+        } else {
+          setUndoSnapshots((prev) => {
+            const next = { ...prev };
+            delete next[suggestionId];
+            return next;
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to save.';
         setSaveStates((prev) => ({
@@ -468,13 +572,91 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       }
     },
     [
-      drafts,
       selectedSiteId,
       selectedOpportunityId,
       props.apiBaseUrl,
       props.apiKey,
       props.proxyConfig,
     ],
+  );
+
+  // Step 1 of save: validate and (if valid) open the confirm panel. Does NOT
+  // send the PATCH yet — the user has to click "Confirm save" to do that.
+  const requestSave = useCallback(
+    (suggestionId: string) => {
+      const entry = drafts[suggestionId];
+      if (!entry) return;
+      if (!fieldsAreDirty(entry.fields, entry.originalFields)) return;
+
+      const errors = validateFields(entry.fields);
+      if (errors.length > 0) {
+        setValidationErrors((prev) => ({ ...prev, [suggestionId]: errors }));
+        // Clear any stale pending-confirm so we don't show both at once.
+        setPendingConfirm((prev) => {
+          const next = { ...prev };
+          delete next[suggestionId];
+          return next;
+        });
+        return;
+      }
+
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next[suggestionId];
+        return next;
+      });
+      setPendingConfirm((prev) => ({
+        ...prev,
+        [suggestionId]: describeChanges(entry.fields, entry.originalFields),
+      }));
+    },
+    [drafts],
+  );
+
+  // Step 2 of save: user clicked "Confirm save" in the confirm panel. Capture
+  // the pre-save state for Undo, fire the PATCH, then dismiss the panel.
+  const confirmSave = useCallback(
+    async (suggestionId: string) => {
+      const entry = drafts[suggestionId];
+      if (!entry) return;
+      const undoCapture: UndoSnapshot = {
+        fields: {
+          ...entry.originalFields,
+          actionItems: [...entry.originalFields.actionItems],
+        },
+        data: { ...entry.originalData },
+        capturedAt: new Date().toISOString(),
+      };
+      // Optimistically dismiss the confirm panel — sendPatch will re-show
+      // a Save error pill if the request fails.
+      setPendingConfirm((prev) => {
+        const next = { ...prev };
+        delete next[suggestionId];
+        return next;
+      });
+      await sendPatch(suggestionId, entry.fields, entry.originalData, undoCapture);
+    },
+    [drafts, sendPatch],
+  );
+
+  const cancelConfirm = useCallback((suggestionId: string) => {
+    setPendingConfirm((prev) => {
+      const next = { ...prev };
+      delete next[suggestionId];
+      return next;
+    });
+  }, []);
+
+  // PATCH the server back to the snapshot we captured before the previous
+  // save. The Undo button is only visible when an undoSnapshot exists, so the
+  // user can never undo into nothing.
+  const undoLastSave = useCallback(
+    async (suggestionId: string) => {
+      const snapshot = undoSnapshots[suggestionId];
+      if (!snapshot) return;
+      await sendPatch(suggestionId, snapshot.fields, snapshot.data);
+    },
+    [undoSnapshots, sendPatch],
   );
 
   return (
@@ -586,6 +768,11 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
               const dirty = fieldsAreDirty(draft.fields, draft.originalFields);
               const saveState = saveStates[suggestion.id] ?? { kind: 'idle' };
               const pasteError = pasteErrors[suggestion.id];
+              const validationErrorList = validationErrors[suggestion.id] ?? [];
+              const confirmList = pendingConfirm[suggestion.id];
+              const undoSnapshot = undoSnapshots[suggestion.id];
+              const isSaving = saveState.kind === 'saving';
+              const confirmActive = Array.isArray(confirmList);
 
               return (
                 <article key={suggestion.id} className="patcher-card">
@@ -719,6 +906,16 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                   {pasteError ? (
                     <p className="status-pill status-pill-error">{pasteError}</p>
                   ) : null}
+                  {validationErrorList.length > 0 ? (
+                    <div className="patcher-validation-errors">
+                      <strong>Cannot save:</strong>
+                      <ul>
+                        {validationErrorList.map((message) => (
+                          <li key={message}>{message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   {saveState.kind === 'error' ? (
                     <p className="status-pill status-pill-error">
                       Save failed: {saveState.message}
@@ -730,20 +927,66 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                     </p>
                   ) : null}
 
+                  {confirmActive ? (
+                    <div className="patcher-confirm-panel">
+                      <strong>About to save these changes:</strong>
+                      {confirmList && confirmList.length > 0 ? (
+                        <ul>
+                          {confirmList.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="metric-copy">No detectable field changes.</p>
+                      )}
+                      <div className="patcher-confirm-actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={() => void confirmSave(suggestion.id)}
+                          disabled={isSaving}
+                        >
+                          {isSaving ? 'Saving…' : 'Confirm save'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => cancelConfirm(suggestion.id)}
+                          disabled={isSaving}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="patcher-card-actions">
                     <button
                       type="button"
                       className="primary-button"
-                      onClick={() => void saveDraft(suggestion.id)}
-                      disabled={!dirty || saveState.kind === 'saving'}
+                      onClick={() => requestSave(suggestion.id)}
+                      disabled={!dirty || isSaving || confirmActive}
                     >
-                      {saveState.kind === 'saving' ? 'Saving…' : 'Save'}
+                      {isSaving ? 'Saving…' : 'Save'}
                     </button>
+                    {undoSnapshot ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => void undoLastSave(suggestion.id)}
+                        disabled={isSaving || confirmActive}
+                        title={`Undo the save from ${new Date(
+                          undoSnapshot.capturedAt,
+                        ).toLocaleTimeString()}`}
+                      >
+                        Undo last save
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="ghost-button"
                       onClick={() => resetDraft(suggestion.id)}
-                      disabled={!dirty || saveState.kind === 'saving'}
+                      disabled={!dirty || isSaving || confirmActive}
                     >
                       Reset to original
                     </button>
@@ -751,6 +994,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                       type="button"
                       className="ghost-button"
                       onClick={() => void copyDraftJson(suggestion.id)}
+                      disabled={isSaving}
                     >
                       Copy JSON
                     </button>
@@ -758,6 +1002,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                       type="button"
                       className="ghost-button"
                       onClick={() => void pasteDraftJson(suggestion.id)}
+                      disabled={isSaving || confirmActive}
                     >
                       Paste JSON
                     </button>

@@ -37,7 +37,11 @@ export function buildCorsHeaders(request: Request, env: ApiCorsEnv = {}) {
     headers.set('vary', 'origin');
   }
 
-  headers.set('access-control-allow-methods', 'GET,POST,OPTIONS');
+  // PATCH is needed by the Suggestions Patcher (server/spacecat-proxy.ts
+  // forwards PATCH upstream). PATCH is a non-simple method, so the browser
+  // sends a CORS preflight before the actual call — without PATCH on this
+  // allow-list, the preflight fails and the PATCH never leaves the browser.
+  headers.set('access-control-allow-methods', 'GET,POST,PATCH,OPTIONS');
   headers.set(
     'access-control-allow-headers',
     'content-type, authorization, x-api-key',

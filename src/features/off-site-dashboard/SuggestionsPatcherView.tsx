@@ -80,36 +80,38 @@ function fieldsAreDirty(fields: PatcherDraftFields, original: PatcherDraftFields
 }
 
 /**
- * Build the partial-data payload to send in a PATCH. We send only fields that
- * actually changed AND scrub out empty action-item lines so the server gets a
- * clean array.
+ * Build the data payload to send in a PATCH.
+ *
+ * IMPORTANT: SpaceCat's PATCH on /suggestions/{id} REPLACES the entire `data`
+ * object rather than merging fields into it. So even if only one field changed,
+ * we MUST send a complete data object — otherwise unspecified fields like
+ * title, priority, description, rationale would be wiped on the server.
+ *
+ * We layer the user's edits on top of the originalData snapshot we captured
+ * at fetch time. This preserves any fields we don't expose in the editor
+ * (e.g., bindings, internal IDs, server-computed values) along with whatever
+ * the user changed.
+ *
+ * Empty action-item lines are stripped so the server receives a clean array.
  */
 function buildPatchPayload(
   fields: PatcherDraftFields,
-  original: PatcherDraftFields,
+  originalData: Record<string, unknown>,
 ): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
-  if (fields.title !== original.title) payload.title = fields.title;
-  if (fields.description !== original.description) payload.description = fields.description;
-  if (fields.rationale !== original.rationale) payload.rationale = fields.rationale;
-  if (fields.expectedOutcome !== original.expectedOutcome) {
-    payload.expectedOutcome = fields.expectedOutcome;
-  }
-  if (fields.priority !== original.priority) payload.priority = fields.priority;
-  if (fields.persona !== original.persona) payload.persona = fields.persona;
-
-  const cleanedActionItems = fields.actionItems.map((item) => item.trim()).filter(Boolean);
-  const cleanedOriginalActionItems = original.actionItems
+  const cleanedActionItems = fields.actionItems
     .map((item) => item.trim())
     .filter(Boolean);
-  const actionItemsChanged =
-    cleanedActionItems.length !== cleanedOriginalActionItems.length ||
-    cleanedActionItems.some((item, idx) => item !== cleanedOriginalActionItems[idx]);
-  if (actionItemsChanged) {
-    payload.actionItems = cleanedActionItems;
-  }
 
-  return payload;
+  return {
+    ...originalData,
+    title: fields.title,
+    description: fields.description,
+    rationale: fields.rationale,
+    expectedOutcome: fields.expectedOutcome,
+    priority: fields.priority,
+    persona: fields.persona,
+    actionItems: cleanedActionItems,
+  };
 }
 
 interface SuggestionsPatcherViewProps {
@@ -424,8 +426,13 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       const entry = drafts[suggestionId];
       if (!entry) return;
       if (!selectedSiteId || !selectedOpportunityId) return;
-      const partial = buildPatchPayload(entry.fields, entry.originalFields);
-      if (Object.keys(partial).length === 0) return;
+      // Short-circuit if nothing actually changed.
+      if (!fieldsAreDirty(entry.fields, entry.originalFields)) return;
+      // Build a COMPLETE data payload (not just the dirty fields). SpaceCat's
+      // PATCH replaces the entire `data` object, so we must include every
+      // field — both edited and untouched — to avoid wiping required fields
+      // like title and priority.
+      const payload = buildPatchPayload(entry.fields, entry.originalData);
 
       setSaveStates((prev) => ({ ...prev, [suggestionId]: { kind: 'saving' } }));
       try {
@@ -435,7 +442,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           siteId: selectedSiteId,
           opportunityId: selectedOpportunityId,
           suggestionId,
-          partialData: partial,
+          partialData: payload,
           proxyConfig: props.proxyConfig,
         });
         // Treat the server's response as the new canonical original.

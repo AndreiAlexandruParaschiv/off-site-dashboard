@@ -7,9 +7,22 @@ import {
   type RawSuggestion,
 } from './api';
 import type {
+  CanonicalOpportunityType,
   SiteDashboardResult,
   SpacecatProxyConfig,
 } from './types';
+import { normalizeOpportunityType } from './utils';
+
+// The patcher is for off-site sources only — backend opportunity types like
+// "site-audit" or other non-off-site categories are filtered out of the
+// dropdown so they can't be opened here. Keep this Set in sync with the
+// off-site lanes elsewhere in the dashboard.
+const OFF_SITE_OPPORTUNITY_TYPES = new Set<CanonicalOpportunityType>([
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+  'Wikipedia',
+]);
 
 type SaveState =
   | { kind: 'idle' }
@@ -220,6 +233,41 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   const [undoSnapshots, setUndoSnapshots] = useState<Record<string, UndoSnapshot>>({});
 
   const isReady = props.proxyConfig.configured || props.apiKey.trim().length > 0;
+
+  // The dropdown only shows the four off-site opportunity types (Reddit,
+  // YouTube, Cited URLs, Wikipedia). Each row carries its canonical label
+  // alongside the original raw type so the option text can read e.g.
+  // "Cited URLs — Top cited URLs analysis…" instead of "cited-analysis…".
+  const offSiteOpportunityOptions = useMemo(() => {
+    const filtered: Array<{
+      opportunity: RawOpportunitySummary;
+      canonical: CanonicalOpportunityType;
+    }> = [];
+    for (const opportunity of opportunities ?? []) {
+      const canonical = normalizeOpportunityType(opportunity.type) as
+        | CanonicalOpportunityType
+        | null;
+      if (canonical && OFF_SITE_OPPORTUNITY_TYPES.has(canonical)) {
+        filtered.push({ opportunity, canonical });
+      }
+    }
+    return filtered;
+  }, [opportunities]);
+
+  // If the currently-selected opportunity disappears from the filtered list
+  // (e.g. site changed, opportunity reload trimmed it out, or filter set
+  // tightened in a future change), clear the selection so the suggestions
+  // panel doesn't try to render against a stale id.
+  useEffect(() => {
+    if (!selectedOpportunityId) return;
+    if (
+      !offSiteOpportunityOptions.some(
+        (entry) => entry.opportunity.id === selectedOpportunityId,
+      )
+    ) {
+      setSelectedOpportunityId('');
+    }
+  }, [offSiteOpportunityOptions, selectedOpportunityId]);
 
   // Reset dependent state when the selected site changes.
   useEffect(() => {
@@ -711,15 +759,17 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
               <option value="">
                 {loadingOpportunities
                   ? 'Loading...'
-                  : opportunities && opportunities.length > 0
-                    ? '— Select an opportunity —'
-                    : 'No opportunities loaded yet'}
+                  : offSiteOpportunityOptions.length > 0
+                    ? '— Select an off-site opportunity —'
+                    : opportunities
+                      ? 'No off-site opportunities for this site'
+                      : 'No opportunities loaded yet'}
               </option>
-              {(opportunities ?? []).map((opportunity) => (
+              {offSiteOpportunityOptions.map(({ opportunity, canonical }) => (
                 <option key={opportunity.id} value={opportunity.id}>
                   {opportunity.title
-                    ? `${opportunity.type} — ${opportunity.title.slice(0, 80)}`
-                    : `${opportunity.type} (${opportunity.id.slice(0, 8)}…)`}
+                    ? `${canonical} — ${opportunity.title.slice(0, 80)}`
+                    : `${canonical} (${opportunity.id.slice(0, 8)}…)`}
                 </option>
               ))}
             </select>

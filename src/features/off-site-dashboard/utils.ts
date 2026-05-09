@@ -457,7 +457,7 @@ function flattenRecordSignals(record: Record<string, unknown>) {
   return signals;
 }
 
-function inferOpportunityType(record: Record<string, unknown>) {
+export function inferOpportunityType(record: Record<string, unknown>) {
   const signals = flattenRecordSignals(record);
 
   if (signals.length === 0) {

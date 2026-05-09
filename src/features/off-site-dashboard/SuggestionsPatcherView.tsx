@@ -11,7 +11,6 @@ import type {
   SiteDashboardResult,
   SpacecatProxyConfig,
 } from './types';
-import { normalizeOpportunityType } from './utils';
 
 // The patcher is for off-site sources only — backend opportunity types like
 // "site-audit" or other non-off-site categories are filtered out of the
@@ -244,9 +243,11 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       canonical: CanonicalOpportunityType;
     }> = [];
     for (const opportunity of opportunities ?? []) {
-      const canonical = normalizeOpportunityType(opportunity.type) as
-        | CanonicalOpportunityType
-        | null;
+      // Trust the canonical type pre-computed by the API helper — it uses
+      // the same two-step classifier (type string → tag/signal inference)
+      // as the Opportunities tab, so the patcher dropdown's count matches
+      // the sidebar's "Cited URLs / Reddit / YouTube / Wikipedia" badges.
+      const canonical = opportunity.canonicalType;
       if (canonical && OFF_SITE_OPPORTUNITY_TYPES.has(canonical)) {
         filtered.push({ opportunity, canonical });
       }

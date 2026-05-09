@@ -1,10 +1,12 @@
 import {
   buildStatusMessage,
   buildLookupCandidates,
+  inferOpportunityType,
   summarizeOpportunityPresence,
   extractSiteId,
   normalizeApiBaseUrl,
   normalizeOpportunityCollection,
+  normalizeOpportunityType,
   normalizeSuggestionCollection,
   normalizeSiteInput,
 } from './utils';
@@ -17,6 +19,7 @@ import {
   WIKIPEDIA_URL_EVALUATOR_API_PATH,
 } from './constants';
 import type {
+  CanonicalOpportunityType,
   FetchSiteParams,
   FetchSiteSuccessResult,
   OpportunityRecord,
@@ -590,6 +593,15 @@ export interface RawOpportunitySummary {
   title?: string;
   status?: string;
   updatedAt?: string;
+  /**
+   * Canonical opportunity classification, computed via the same two-step
+   * classifier the Opportunities tab uses (raw type → tag/signal inference
+   * fallback). Consumers like the Suggestions Patcher should filter on this
+   * field rather than re-running their own classifier so the dashboard
+   * stays consistent across surfaces. May be undefined if the opportunity
+   * couldn't be classified.
+   */
+  canonicalType?: CanonicalOpportunityType;
 }
 
 export interface RawSuggestion {
@@ -636,12 +648,21 @@ export async function fetchSiteOpportunitySummaries(args: {
       const id = asString(record.id);
       const type = asString(record.type);
       if (!id || !type) return null;
+      // Two-step classifier — same path the Opportunities tab uses. Step 1
+      // matches on the raw `type` string. Step 2 falls back to scanning
+      // tags/labels/keywords for cases like an opportunity whose type is
+      // unrecognized but tags include "TopCitedUrls".
+      const canonicalType =
+        ((normalizeOpportunityType(type) ?? inferOpportunityType(record)) as
+          | CanonicalOpportunityType
+          | null) ?? undefined;
       return {
         id,
         type,
         title: asString(record.title),
         status: asString(record.status),
         updatedAt: asString(record.updatedAt),
+        canonicalType,
       };
     })
     .filter((entry): entry is RawOpportunitySummary => entry !== null);

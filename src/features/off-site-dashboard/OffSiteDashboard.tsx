@@ -3178,7 +3178,7 @@ export function OffSiteDashboard() {
               <WorkspaceNavButton
                 active={activeWorkspace === 'suggestions-patcher'}
                 count=""
-                description="Edit suggestion title, body, rationale, action items, priority, and persona — and save back to the SpaceCat API."
+                description="Edit suggestion title, body, rationale, action items, priority, and persona — and save back."
                 label="Suggestions Patcher"
                 onClick={() => setActiveWorkspace('suggestions-patcher')}
               />

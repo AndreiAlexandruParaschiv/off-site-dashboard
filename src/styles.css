@@ -2113,7 +2113,7 @@ a:hover {
 
 .patcher-pickers {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(280px, 2fr);
+  grid-template-columns: minmax(200px, 1.2fr) minmax(160px, 0.8fr) minmax(260px, 2.4fr);
   gap: 16px;
   margin-top: 16px;
 }

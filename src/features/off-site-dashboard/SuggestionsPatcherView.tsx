@@ -23,6 +23,19 @@ const OFF_SITE_OPPORTUNITY_TYPES = new Set<CanonicalOpportunityType>([
   'Wikipedia',
 ]);
 
+type OpportunityStatusFilter = 'all' | 'active' | 'ignored';
+
+/**
+ * SpaceCat opportunity statuses are uppercase strings ("NEW", "IGNORED",
+ * "RESOLVED", etc.). For the patcher's two-bucket filter we collapse them
+ * into "ignored" (exactly "IGNORED") vs "active" (everything else). Anything
+ * non-string is treated as active so a missing status doesn't accidentally
+ * hide a row.
+ */
+function isIgnoredOpportunityStatus(status: string | undefined): boolean {
+  return typeof status === 'string' && status.trim().toUpperCase() === 'IGNORED';
+}
+
 type SaveState =
   | { kind: 'idle' }
   | { kind: 'saving' }
@@ -231,16 +244,28 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   // load, on a successful Undo, or on subsequent Save.
   const [undoSnapshots, setUndoSnapshots] = useState<Record<string, UndoSnapshot>>({});
 
+  // Active / Ignored filter for the opportunity dropdown. The Opportunities
+  // tab shows everything including ignored; the patcher gives an explicit
+  // toggle so a reviewer can find a specific status without skimming a
+  // mixed list. Defaults to "active" since that's the most common edit
+  // target.
+  const [statusFilter, setStatusFilter] =
+    useState<OpportunityStatusFilter>('active');
+
   const isReady = props.proxyConfig.configured || props.apiKey.trim().length > 0;
 
   // The dropdown only shows the four off-site opportunity types (Reddit,
   // YouTube, Cited URLs, Wikipedia). Each row carries its canonical label
   // alongside the original raw type so the option text can read e.g.
   // "Cited URLs — Top cited URLs analysis…" instead of "cited-analysis…".
-  const offSiteOpportunityOptions = useMemo(() => {
-    const filtered: Array<{
+  // Each row also carries an `ignored` flag so the option label can be
+  // decorated with a status tag and so the active/ignored filter can
+  // partition the list without re-iterating.
+  const allOffSiteOpportunities = useMemo(() => {
+    const result: Array<{
       opportunity: RawOpportunitySummary;
       canonical: CanonicalOpportunityType;
+      ignored: boolean;
     }> = [];
     for (const opportunity of opportunities ?? []) {
       // Trust the canonical type pre-computed by the API helper — it uses
@@ -249,11 +274,36 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       // the sidebar's "Cited URLs / Reddit / YouTube / Wikipedia" badges.
       const canonical = opportunity.canonicalType;
       if (canonical && OFF_SITE_OPPORTUNITY_TYPES.has(canonical)) {
-        filtered.push({ opportunity, canonical });
+        result.push({
+          opportunity,
+          canonical,
+          ignored: isIgnoredOpportunityStatus(opportunity.status),
+        });
       }
     }
-    return filtered;
+    return result;
   }, [opportunities]);
+
+  // Status counts feed the filter labels ("Active (4) / Ignored (2) /
+  // All (6)") so the user can see at a glance how many opportunities are
+  // hidden behind the current filter.
+  const statusCounts = useMemo(() => {
+    let active = 0;
+    let ignored = 0;
+    for (const entry of allOffSiteOpportunities) {
+      if (entry.ignored) ignored += 1;
+      else active += 1;
+    }
+    return { active, ignored, all: active + ignored };
+  }, [allOffSiteOpportunities]);
+
+  const offSiteOpportunityOptions = useMemo(() => {
+    if (statusFilter === 'all') return allOffSiteOpportunities;
+    if (statusFilter === 'ignored') {
+      return allOffSiteOpportunities.filter((entry) => entry.ignored);
+    }
+    return allOffSiteOpportunities.filter((entry) => !entry.ignored);
+  }, [allOffSiteOpportunities, statusFilter]);
 
   // If the currently-selected opportunity disappears from the filtered list
   // (e.g. site changed, opportunity reload trimmed it out, or filter set
@@ -750,6 +800,22 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           </label>
 
           <label className="patcher-picker-field">
+            <span className="filter-label">Status</span>
+            <select
+              className="select-input"
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(event.target.value as OpportunityStatusFilter)
+              }
+              disabled={!selectedSiteId || loadingOpportunities || !opportunities}
+            >
+              <option value="active">Active ({statusCounts.active})</option>
+              <option value="ignored">Ignored ({statusCounts.ignored})</option>
+              <option value="all">All ({statusCounts.all})</option>
+            </select>
+          </label>
+
+          <label className="patcher-picker-field">
             <span className="filter-label">Opportunity</span>
             <select
               className="select-input"
@@ -763,16 +829,21 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                   : offSiteOpportunityOptions.length > 0
                     ? '— Select an off-site opportunity —'
                     : opportunities
-                      ? 'No off-site opportunities for this site'
+                      ? statusFilter === 'all'
+                        ? 'No off-site opportunities for this site'
+                        : `No ${statusFilter} off-site opportunities for this site`
                       : 'No opportunities loaded yet'}
               </option>
-              {offSiteOpportunityOptions.map(({ opportunity, canonical }) => (
-                <option key={opportunity.id} value={opportunity.id}>
-                  {opportunity.title
-                    ? `${canonical} — ${opportunity.title.slice(0, 80)}`
-                    : `${canonical} (${opportunity.id.slice(0, 8)}…)`}
-                </option>
-              ))}
+              {offSiteOpportunityOptions.map(({ opportunity, canonical, ignored }) => {
+                const label = opportunity.title
+                  ? `${canonical} — ${opportunity.title.slice(0, 80)}`
+                  : `${canonical} (${opportunity.id.slice(0, 8)}…)`;
+                return (
+                  <option key={opportunity.id} value={opportunity.id}>
+                    {ignored ? `${label} [IGNORED]` : label}
+                  </option>
+                );
+              })}
             </select>
           </label>
         </div>

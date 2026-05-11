@@ -3079,7 +3079,7 @@ export function OffSiteDashboard() {
     <div className="dashboard-shell">
       <header className="dashboard-hero">
         <div className="hero-copy">
-          <h1>Off-Site Opportunity Monitor</h1>
+          <h1>Off-Site Dashboard Evaluator</h1>
           <p>
             Resolve site IDs, pull fresh off-site opportunity rows, and verify
             suggestions, sentiment, and share of voice in one review workspace.

@@ -1200,9 +1200,23 @@ function addBrandShare(
   if (
     isIgnorableSovBrand(cleanedBrand) ||
     !Number.isFinite(sharePct) ||
-    sharePct < 0 ||
-    seenBrands.has(normalizedBrand)
+    sharePct < 0
   ) {
+    return;
+  }
+
+  // If the same canonical brand was already added under a different spelling
+  // ("SunLife" vs "Sun Life" vs "Sun-Life" all normalize to "sunlife"), fold
+  // this entry's share into the existing one rather than dropping it. The
+  // backend sometimes emits variant casings/spacings on separate lines that
+  // should be summed, not deduped-and-discarded.
+  if (seenBrands.has(normalizedBrand)) {
+    const existing = nextShares.find(
+      (share) => normalizeBrandKey(share.brand) === normalizedBrand,
+    );
+    if (existing) {
+      existing.sharePct += sharePct;
+    }
     return;
   }
 
@@ -1352,10 +1366,18 @@ function buildEvaluatedBrandShares(input: {
       foldedSubBrandCount += count;
     } else {
       // Genuine non-target brand — keep as a separate denominator entry.
-      mentionCounts.set(normalizedBrand, {
-        brand: cleanedBrand,
-        mentionCount: count,
-      });
+      // If the LLM emitted multiple spelling variants of the same brand
+      // ("SunLife" + "Sun Life" + "Sun-Life" all → "sunlife"), sum the
+      // counts so we don't silently drop mentions by overwriting the entry.
+      const existing = mentionCounts.get(normalizedBrand);
+      if (existing) {
+        existing.mentionCount += count;
+      } else {
+        mentionCounts.set(normalizedBrand, {
+          brand: cleanedBrand,
+          mentionCount: count,
+        });
+      }
     }
   }
 
@@ -2587,6 +2609,7 @@ function buildLlmPrompt(
     '',
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
+    '  - Treat case, spacing, and punctuation variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. For example, "SunLife", "Sun Life", and "Sun-Life" are all the same brand (3 mentions total → ONE entry with mentionCount: 3, not three entries). Same rule applies to "Coca-Cola"/"Coca Cola"/"CocaCola" and any similar compound names. Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
     '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. When an "Authoritative brand profile" is provided above, it is the definitive reference: only items in the "Owned products / sub-brands" list count as target-brand mentions; anything in the "Brands NOT owned" list NEVER counts even if it appears in the evidence. Without a profile, fall back to your general knowledge — but never count products from competitors in the same category. When uncertain whether a product belongs to the target brand, do NOT count it.',
     '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, set targetBrandMentionCount = 0 and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
     '  - Do not inflate counts to match the backend. If you count 3 mentions and the backend claims 8, return 3.',

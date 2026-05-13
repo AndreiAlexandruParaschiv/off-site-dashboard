@@ -2244,6 +2244,15 @@ interface BrandProfile {
    * Wealth Management" over the looser "Finance").
    */
   primaryIndustry?: string;
+  /**
+   * Whether the brand is itself a retailer, marketplace, or distribution
+   * channel (Amazon, Walmart, Target, Costco, Best Buy, Shopify storefront,
+   * app store, etc.). When false (the common case — most brands sell
+   * THROUGH retailers), retailer mentions in the evidence are NOT competing
+   * SOV brands and must be excluded from the denominator. When true, other
+   * retailers ARE legitimate competitors and get counted normally.
+   */
+  isSalesChannel?: boolean;
   ownedProducts: string[];
   parentOrganization?: string;
   knownCompetitors: string[];
@@ -2393,9 +2402,10 @@ async function fetchBrandProfileFromLlm(
     'Return a JSON object with these fields:',
     '- targetBrand: the canonical brand or company name WITHOUT any regional or country qualifier (e.g., return "Rice Krispies", not "Rice Krispies Canada" or "Rice Krispies US" — regional sites still represent the same brand for SOV purposes)',
     '- primaryIndustry: the specific industry/category this brand operates in. Use a concrete, narrow phrase that draws a tight competitive boundary — prefer "Life Insurance & Wealth Management" over "Finance"; "Ready-to-Eat Breakfast Cereal" over "Food"; "Luxury Electric Vehicles" over "Automotive". This is used to filter out unrelated brand mentions from the SOV denominator, so it must be precise enough to exclude brands that share a vague sector but do not actually compete.',
+    '- isSalesChannel: boolean — true ONLY if this brand is itself a retailer, marketplace, distribution channel, or storefront whose primary business is RESELLING products from other brands (e.g., Amazon, Walmart, Target, Costco, Best Buy, eBay, Etsy, an app store). For brands that PRODUCE goods or services and sell through retailers (e.g., Rice Krispies, Sun Life, Toyota, Nike), set this to false. This flag controls whether retailer mentions in evidence count as competing SOV brands.',
     '- ownedProducts: array of well-known products, models, and sub-brands OWNED by this brand',
     '- parentOrganization: parent company name if applicable, otherwise empty string',
-    '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand. ALL competitors must operate in the same primaryIndustry as the target brand.',
+    '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand. ALL competitors must operate in the same primaryIndustry as the target brand. Do NOT list retailers, marketplaces, or sales channels as competitors UNLESS isSalesChannel is true for the target brand.',
     '',
     'Use only well-known, widely-recognized facts. Be concise — limit each list to ~10-15 entries.',
     'Do not include speculative entries. Do not include the target brand itself in knownCompetitors.',
@@ -2421,6 +2431,7 @@ async function fetchBrandProfileFromLlm(
           properties: {
             targetBrand: { type: 'string' },
             primaryIndustry: { type: 'string' },
+            isSalesChannel: { type: 'boolean' },
             ownedProducts: { type: 'array', items: { type: 'string' } },
             parentOrganization: { type: 'string' },
             knownCompetitors: { type: 'array', items: { type: 'string' } },
@@ -2428,6 +2439,7 @@ async function fetchBrandProfileFromLlm(
           required: [
             'targetBrand',
             'primaryIndustry',
+            'isSalesChannel',
             'ownedProducts',
             'parentOrganization',
             'knownCompetitors',
@@ -2496,6 +2508,7 @@ async function fetchBrandProfileFromLlm(
   const candidate = parsed as {
     targetBrand?: unknown;
     primaryIndustry?: unknown;
+    isSalesChannel?: unknown;
     ownedProducts?: unknown;
     parentOrganization?: unknown;
     knownCompetitors?: unknown;
@@ -2529,10 +2542,19 @@ async function fetchBrandProfileFromLlm(
       ? candidate.primaryIndustry.trim()
       : '';
 
+  // Default to false (the much more common case — most analyzed brands are
+  // not themselves retailers) so a missing/malformed flag from the LLM never
+  // accidentally enables retailer-as-competitor counting.
+  const isSalesChannel =
+    typeof candidate.isSalesChannel === 'boolean'
+      ? candidate.isSalesChannel
+      : false;
+
   return {
     site,
     targetBrand,
     primaryIndustry: primaryIndustry || undefined,
+    isSalesChannel,
     ownedProducts: stringList(candidate.ownedProducts),
     parentOrganization: parent ? parent : undefined,
     knownCompetitors: stringList(candidate.knownCompetitors),
@@ -2593,6 +2615,7 @@ function buildLlmPrompt(
       ...(brandProfile.primaryIndustry
         ? [`  Primary industry: ${brandProfile.primaryIndustry}`]
         : []),
+      `  Is sales channel / retailer: ${brandProfile.isSalesChannel ? 'YES — other retailers ARE competitors for SOV purposes' : 'NO — retailers and sales channels are NOT competitors and must be excluded from SOV'}`,
       `  Owned products / sub-brands of ${brandProfile.targetBrand} (DO count these as target-brand mentions): ${brandProfile.ownedProducts.join(', ') || 'None known'}`,
       `  Brands NOT owned by ${brandProfile.targetBrand} (do NOT count these as target-brand mentions, even if they share the same product category): ${brandProfile.knownCompetitors.join(', ') || 'None known'}`,
       ...(brandProfile.parentOrganization
@@ -2639,6 +2662,7 @@ function buildLlmPrompt(
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
     '  - Treat case, spacing, and punctuation variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. For example, "SunLife", "Sun Life", and "Sun-Life" are all the same brand (3 mentions total → ONE entry with mentionCount: 3, not three entries). Same rule applies to "Coca-Cola"/"Coca Cola"/"CocaCola" and any similar compound names. Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
     '  - INDUSTRY FILTER (critical for SOV correctness): brandMentions must ONLY contain brands that operate in the SAME primary industry as the target brand (see "Primary industry" in the brand profile above). Out-of-industry brands — even when they appear in the evidence — are NOT competitors and must be EXCLUDED from brandMentions. They do not belong in the SOV denominator. Example: if the target brand is Sun Life (Life Insurance & Wealth Management) and the evidence mentions Tesla, Nike, or Adobe, those are NOT competitors and MUST NOT appear in brandMentions. If a brand listed in "Known competitor brands" is clearly from a different industry, exclude it too (the brand profile may be wrong) and note the discrepancy in your rationale. When uncertain whether a brand competes in the same industry, exclude it — false competitors corrupt the SOV denominator far more than missing ones.',
+    '  - SALES CHANNEL FILTER: if the brand profile says "Is sales channel / retailer: NO", retailers, marketplaces, and distribution channels (Amazon, Walmart, Target, Costco, Best Buy, eBay, Etsy, Walgreens, CVS, Loblaws, Sobeys, app stores, Shopify storefronts, etc.) are WHERE the product is sold, not COMPETITORS of the product. EXCLUDE them entirely from brandMentions — they do not belong in the SOV denominator. Example: for Rice Krispies (a cereal producer, not a retailer), a Reddit thread mentioning "I bought it at Walmart and Costco" must NOT add Walmart or Costco to brandMentions. Only when the target brand IS a sales channel (Is sales channel / retailer: YES) do other retailers count as legitimate competing brands. When uncertain whether something is a retailer vs a producer in the target\'s industry, exclude it — channel pollution corrupts the denominator far more than missing one borderline brand.',
     '  - MENTION INTENT FILTER (avoid inflating counts with incidental usage): only count an occurrence as a brand/product mention if the discussion is genuinely ABOUT the brand or product — its quality, performance, value, experience, fit, support, comparison to alternatives, etc. Do NOT count occurrences where the brand name is used as:',
     '       (a) an ingredient or component in a recipe ("Rice Krispies treats", "Oreo crust", "Nutella sandwich") — that is a cooking discussion, not a brand discussion;',
     '       (b) a generic category synonym ("a Kleenex" meaning any tissue, "a Band-Aid solution") — that is language, not brand engagement;',

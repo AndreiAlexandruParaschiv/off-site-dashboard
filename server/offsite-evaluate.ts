@@ -85,11 +85,27 @@ type SourceEvidence = {
 
 type LlmEvaluation = {
   targetBrand: string;
-  targetBrandMentionCount: number;
+  /**
+   * VERBATIM short snippets quoted from the evidence — one entry per
+   * distinct mention of the target brand or its aliases / owned products.
+   * The count is derived from this array's length (mentions.length), NOT
+   * supplied by the LLM, so the model cannot hallucinate a count.
+   *
+   * Each snippet should be 1-25 words: enough context to verify the
+   * mention (e.g., "I switched from Kellogg to General Mills last month")
+   * without bloating the response. Keep the snippet exactly as it appears
+   * in the evidence; do not paraphrase.
+   */
+  targetBrandMentions: string[];
   evaluatedSentiment: string;
   brandMentions: Array<{
     brand: string;
-    mentionCount: number;
+    /**
+     * VERBATIM short snippets — same rules as targetBrandMentions. The
+     * count for this brand is mentions.length. An entry with mentions = []
+     * is a legitimate "known competitor with zero mentions" record.
+     */
+    mentions: string[];
   }>;
   evidenceSufficient: boolean;
   confidence: 'high' | 'medium' | 'low';
@@ -1384,7 +1400,11 @@ function buildEvaluatedBrandShares(input: {
   }
 
   const mentionCounts = new Map<string, { brand: string; mentionCount: number }>();
-  const llmTargetCount = Math.max(0, Math.round(input.llmResult.targetBrandMentionCount));
+  // Counts are derived from the LLM's verbatim-snippet arrays, not supplied
+  // as numbers — this makes hallucinated counts mechanically impossible.
+  const llmTargetCount = Array.isArray(input.llmResult.targetBrandMentions)
+    ? input.llmResult.targetBrandMentions.length
+    : 0;
   let foldedSubBrandCount = 0;
   let llmAlsoListedTarget = false;
 
@@ -1393,12 +1413,14 @@ function buildEvaluatedBrandShares(input: {
     const normalizedBrand = normalizeBrandKey(cleanedBrand);
     if (!normalizedBrand || isIgnorableSovBrand(cleanedBrand)) continue;
 
-    const count = Math.max(0, Math.round(brandMention.mentionCount));
+    const count = Array.isArray(brandMention.mentions)
+      ? brandMention.mentions.length
+      : 0;
 
     if (normalizedBrand === targetBrandKey) {
       // The LLM listed the target brand explicitly in brandMentions. The
-      // prompt instructs it to put the same count in both fields, so this is
-      // typically redundant with targetBrandMentionCount.
+      // prompt instructs it to put the same snippets in both fields, so
+      // this is typically redundant with targetBrandMentions.length.
       llmAlsoListedTarget = true;
     } else if (targetEquivalentKeys.has(normalizedBrand)) {
       // The LLM listed an owned sub-brand (e.g., Frosted Mini-Wheats) as a
@@ -1421,8 +1443,8 @@ function buildEvaluatedBrandShares(input: {
     }
   }
 
-  // Final target mention count after combining the LLM's targetBrandMentionCount
-  // with any owned-sub-brand mentions the LLM listed separately.
+  // Final target mention count after combining targetBrandMentions.length
+  // with any owned-sub-brand mention snippets the LLM listed separately.
   const targetCount = combineTargetAndSubBrandCounts({
     llmTargetCount,
     llmAlsoListedTarget,
@@ -1472,17 +1494,17 @@ function buildEvaluatedBrandShares(input: {
 
 /**
  * Decide the final target-brand mention count given:
- * - `llmTargetCount`: what the LLM put in `targetBrandMentionCount`.
+ * - `llmTargetCount`: targetBrandMentions.length from the LLM response.
  * - `llmAlsoListedTarget`: whether the LLM ALSO listed the target brand as
- *   a separate `brandMentions` entry (its count is NOT included in
+ *   a separate `brandMentions` entry (its snippet count is NOT included in
  *   `foldedSubBrandCount` — only owned sub-brand mentions are).
- * - `foldedSubBrandCount`: the SUM of `brandMentions` entries whose keys
- *   matched owned products / sub-brands from the brand profile (e.g.,
- *   Frosted Mini-Wheats for a Kellogg site), excluding any mention of the
- *   target brand itself.
+ * - `foldedSubBrandCount`: the SUM of brandMention.mentions.length values
+ *   for entries whose keys matched owned products / sub-brands from the
+ *   brand profile (e.g., Frosted Mini-Wheats for a Kellogg site),
+ *   excluding any mention of the target brand itself.
  *
  * Rule: simple addition. The LLM is instructed to fold owned-product
- * mentions into `targetBrandMentionCount`, but in practice it sometimes
+ * mentions into `targetBrandMentions`, but in practice it sometimes
  * splits them out as separate `brandMentions` entries. Adding the two
  * together captures both scenarios — if the LLM folded correctly,
  * `foldedSubBrandCount` is 0 and the sum equals `llmTargetCount`; if it
@@ -2299,7 +2321,7 @@ interface BrandProfile {
    * General Electric: ["GE"]; for Hewlett-Packard: ["HP", "Hewlett Packard"].
    *
    * Used by the SOV evaluator to:
-   *   1. Count alias mentions in evidence toward targetBrandMentionCount.
+   *   1. Count alias mentions in evidence toward targetBrandMentions.
    *   2. Fold any "alias" entries the LLM emits as separate brandMentions
    *      into the target via targetEquivalentKeys (the same merge path used
    *      for ownedProducts).
@@ -2692,10 +2714,13 @@ function buildLlmPrompt(
     '',
     'Process:',
     '  1. Use the Item Title as a fast topical signal before reading the body (e.g., "Manulife RRSP" signals a retirement-plan thread). Count any target-brand mentions that appear in the title.',
-    `  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and count explicit mentions of the target brand (→ targetBrandMentionCount) AND every brand you identify in the evidence (→ brandMentions). For EVERY brand in "Known competitor brands", include an entry in brandMentions — even if its count is 0. Also include any OTHER competing brands you find mentioned in the evidence that are NOT in "Known competitor brands" — add them with their actual mention count. These additional brands are critical: they form the SOV denominator.`,
+    `  2. Read the fetched evidence (post + comments for Reddit, video metadata / transcript for YouTube, page text for web) and EXTRACT explicit mentions as VERBATIM SHORT SNIPPETS (1-25 words each, copied exactly from the evidence — do NOT paraphrase, do NOT supply a number):`,
+    '       → targetBrandMentions: an array of snippets, one per distinct mention of the target brand (or its aliases / owned products).',
+    `       → brandMentions: an array of { brand, mentions: snippet[] } entries. For EVERY brand in "Known competitor brands", include an entry — with mentions: [] if zero hits. Also include any OTHER same-industry competitors you discover in the evidence that are not in the seed list. These additional brands are critical: they form the SOV denominator.`,
+    '       Counts are derived by the server from these arrays\' lengths, so emitting an accurate, complete snippet list is MORE important than getting a count right. Every snippet must be a verbatim quote — quote the surrounding clause/sentence so the mention is verifiable. If a snippet would exceed ~25 words, trim to the smallest contextual window that still contains the brand reference and one or two adjacent words.',
     '  3. Judge the sentiment toward the target brand — i.e. how the brand is PERCEIVED AND TALKED ABOUT in the content — as "Favorable" | "Neutral" | "Unfavorable". Use "No brand mentions" if neither the brand name nor any of its well-known products, models, or sub-brands appear in the evidence. Use "Needs Review" ONLY if the evidence is too sparse to form any judgment — never use it merely because the exact brand name is absent when its products are clearly present.',
     '     IMPORTANT: Sentiment reflects how the brand is perceived by the community, NOT the tone of the original poster\'s question. A post that is simply asking for advice is not automatically Neutral if the replies show strong positive or negative reactions to the brand.',
-    '  4. Return integer mention counts — do NOT compute percentages. The system derives SOV percentages from your counts and compares them against the backend\'s extracted values.',
+    '  4. Do NOT supply numeric counts or compute percentages. The server derives counts from your snippet arrays (length) and SOV percentages from those counts. Your job is to produce accurate, complete, verbatim snippet arrays — the math follows.',
   );
 
   if (evidence.usedComments) {
@@ -2725,7 +2750,7 @@ function buildLlmPrompt(
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
     '  - Treat case, spacing, punctuation, regional, possessive, and alias variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. Specifically:',
-    '       (a) Case/spacing/punctuation — "SunLife" = "Sun Life" = "Sun-Life" (all 3 → ONE entry with mentionCount: 3). Same for "Coca-Cola"/"Coca Cola"/"CocaCola".',
+    '       (a) Case/spacing/punctuation — "SunLife" = "Sun Life" = "Sun-Life" (all three are the SAME brand; put all three snippets in ONE brandMentions entry). Same for "Coca-Cola"/"Coca Cola"/"CocaCola".',
     '       (b) Regional / country qualifiers — "WK Kellogg" = "WK Kellogg Canada" = "WK Kellogg US" = "WK Kellogg (North America)". The country is a storefront, not a different brand. Strip it before counting.',
     '       (c) Possessive forms — "Kellogg" = "Kellogg\'s" = "Kelloggs". "McDonald" = "McDonald\'s" = "McDonalds". The possessive marker is grammatical, not a brand distinction.',
     '       (d) Aliases / acronyms / well-known nicknames — when an alternate official name, acronym, or widely-used nickname refers to the same entity, merge them. For the TARGET BRAND, prefer the "Also known as / aliases" list in the brand profile above as the authoritative source. For COMPETITOR BRANDS, use your general knowledge: "KFC" = "Kentucky Fried Chicken"; "GE" = "General Electric"; "HP" = "Hewlett-Packard" = "Hewlett Packard"; "IBM" = "International Business Machines" = "Big Blue"; "JPM" = "JPMorgan" = "JPMorgan Chase". Be CONSERVATIVE: only merge well-known, widely-recognized aliases. Do NOT invent or speculate (e.g., do not assume a random 3-letter token is an acronym for a brand mentioned elsewhere in the evidence — require an established public association).',
@@ -2741,12 +2766,12 @@ function buildLlmPrompt(
     '  - THREAD MEANINGFULNESS GATE (avoid inferring sentiment from informational content): before assigning Favorable / Unfavorable, verify the evidence actually contains expressions of opinion, experience, preference, recommendation, complaint, or comparison about the target brand. If the entire evidence is purely informational — definitional ("X is a Y that does Z"), procedural ("here is how to file a claim"), factual ("the company was founded in YYYY"), or news-summary with no editorial slant — the thread does NOT support a Favorable/Unfavorable judgment.',
     '     In that case: set evaluatedSentiment = "Neutral" with LOW confidence and explicitly state in sentimentRationale that the thread is informational/definitional with no opinion signal. Do NOT fabricate a positive or negative tone from the absence of complaints. Note the lack of opinion content in rationale so the audit flags this thread as low-signal for SOV interpretation purposes.',
     '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. When an "Authoritative brand profile" is provided above, it is the definitive reference: only items in the "Owned products / sub-brands" list count as target-brand mentions; anything in the "Brands NOT owned" list NEVER counts even if it appears in the evidence. Without a profile, fall back to your general knowledge — but never count products from competitors in the same category. When uncertain whether a product belongs to the target brand, do NOT count it.',
-    '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, set targetBrandMentionCount = 0 and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
-    '  - Do not inflate counts to match the backend. If you count 3 mentions and the backend claims 8, return 3.',
+    '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, return targetBrandMentions = [] (empty array) and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
+    '  - Do not pad the snippet arrays to match the backend. If you find 3 verifiable mentions and the backend claims 8, return 3 snippets. Each snippet must be a real verbatim quote — fabricating snippets to inflate counts will fail the audit (snippets are inspectable).',
     '  - Adjacent sentiment labels (e.g., Favorable vs Neutral) are still a disagreement — only return the label you actually judged from the evidence.',
-    '  - Title-only mentions count toward targetBrandMentionCount but the sentiment should be judged from the body/transcript when available, not from the title alone.',
-    '  - If the target brand is already one of the extracted SOV brands, use the same count in both that brand\'s mentionCount and targetBrandMentionCount.',
-    '  - Always include an entry in brandMentions for every brand listed in "Known competitor brands", even if that brand has 0 mentions in the evidence. Additionally, include any other competing brands you find in the evidence with their actual mention count — they are required so the SOV denominator is correct. For example, if the evidence mentions Special K (1), Lenny & Larry\'s (1), ON (1) and Kashi (2), brandMentions must list all four brands so the total is 5, not just 2.',
+    '  - Title-only mentions belong in targetBrandMentions (quote the title verbatim) but the sentiment should be judged from the body/transcript when available, not from the title alone.',
+    '  - If the target brand also appears in the extracted SOV list, list each occurrence as a snippet in BOTH targetBrandMentions AND the matching brandMentions entry. The server reconciles them.',
+    '  - Always include an entry in brandMentions for every brand listed in "Known competitor brands", even if that brand has 0 mentions (mentions: []). Additionally, include any other competing brands you find in the evidence with their actual snippets — they are required so the SOV denominator is correct. For example, if the evidence mentions Special K (1 quote), Lenny & Larry\'s (1 quote), ON (1 quote) and Kashi (2 quotes), brandMentions must list all four brands so the derived total is 5 snippets, not just 2.',
     '  - OPEN-WORLD COMPETITOR DISCOVERY (critical — do NOT treat the competitors list as a closed set): the "Known competitor brands" list is a NON-EXHAUSTIVE seed. Your job is to ACTIVELY DISCOVER additional same-industry brands in the evidence and add them to brandMentions, even when the brand profile did not anticipate them. If a brand appears in the evidence and is clearly in the same primary industry as the target brand (regardless of which parent company owns it, regardless of whether it is a sub-brand of a competitor parent), INCLUDE it as a separate brandMentions entry with its mention count. Do NOT drop a same-industry competitor just because it is owned by a different parent company than expected.',
     '     WORKED EXAMPLE: target brand = Kellogg (primary industry: Ready-to-Eat Breakfast Cereal). Evidence mentions Captain Crunch and Nutella. Captain Crunch is a Quaker / PepsiCo cereal product → it IS a same-industry competitor and MUST be added to brandMentions (count it). Nutella is a Ferrero spread (different industry) → it must NOT be added. Even though "Captain Crunch" is not in the seed competitors list, omitting it would inflate Kellogg\'s SOV toward 100% and corrupt the audit. Do NOT write language like "X was not counted because it was not in the known competitors list" — that reasoning is wrong; the list is a seed, not a boundary.',
     '     Rule of thumb: a brand belongs in brandMentions if (a) it appears in the evidence, AND (b) it competes in the same primary industry, AND (c) it is not a retailer/sales channel when the target is a producer. Parent-company ownership is irrelevant — competing sub-brands of competing parent companies still compete with the target.',
@@ -2773,9 +2798,9 @@ function buildBedrockPrompt(
     'Use this exact schema:',
     '{',
     '  "targetBrand": string,',
-    '  "targetBrandMentionCount": number,',
+    '  "targetBrandMentions": string[],  // verbatim short snippets (1-25 words each) — one per distinct target-brand mention; do NOT supply a count, it is derived from the array length',
     '  "evaluatedSentiment": "Favorable" | "Neutral" | "Unfavorable" | "No brand mentions" | "Needs Review",',
-    '  "brandMentions": Array<{ "brand": string, "mentionCount": number }>,',
+    '  "brandMentions": Array<{ "brand": string, "mentions": string[] }>,  // same verbatim-snippet rule; mentions may be [] for a known competitor with zero hits',
     '  "evidenceSufficient": boolean,',
     '  "confidence": "high" | "medium" | "low",',
     '  "rationale": string,',
@@ -2818,11 +2843,29 @@ function parseLlmEvaluationPayload(value: unknown) {
     throw new Error('Failed to parse evaluator response.');
   }
 
-  const candidate = value as Partial<LlmEvaluation>;
+  const candidate = value as Partial<LlmEvaluation> & {
+    // Legacy numeric-count fields the LLM may still emit. We accept them
+    // for backward compatibility and convert to the array shape using
+    // empty strings as placeholders so .length still equals the count.
+    targetBrandMentionCount?: unknown;
+  };
+
+  // Accept either the new array shape OR the legacy numeric shape — but
+  // normalize to the array shape so downstream code stays simple.
+  if (
+    !Array.isArray(candidate.targetBrandMentions) &&
+    typeof candidate.targetBrandMentionCount === 'number'
+  ) {
+    const fallback = Math.max(
+      0,
+      Math.round(candidate.targetBrandMentionCount as number),
+    );
+    candidate.targetBrandMentions = Array.from({ length: fallback }, () => '');
+  }
 
   if (
     typeof candidate.targetBrand !== 'string' ||
-    typeof candidate.targetBrandMentionCount !== 'number' ||
+    !Array.isArray(candidate.targetBrandMentions) ||
     typeof candidate.evaluatedSentiment !== 'string' ||
     !Array.isArray(candidate.brandMentions) ||
     typeof candidate.evidenceSufficient !== 'boolean' ||
@@ -2834,18 +2877,39 @@ function parseLlmEvaluationPayload(value: unknown) {
     throw new Error('Failed to parse evaluator response.');
   }
 
-  if (
-    candidate.brandMentions.some(
-      (entry) =>
-        !entry ||
-        typeof entry !== 'object' ||
-        Array.isArray(entry) ||
-        typeof (entry as { brand?: string }).brand !== 'string' ||
-        typeof (entry as { mentionCount?: number }).mentionCount !== 'number',
-    )
-  ) {
-    throw new Error('Failed to parse evaluator response.');
+  // Validate each brandMentions entry. Accept legacy { mentionCount }
+  // shape too and normalize to { mentions: [] of length N }.
+  for (const entry of candidate.brandMentions) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('Failed to parse evaluator response.');
+    }
+    const entryRecord = entry as {
+      brand?: unknown;
+      mentions?: unknown;
+      mentionCount?: unknown;
+    };
+    if (typeof entryRecord.brand !== 'string') {
+      throw new Error('Failed to parse evaluator response.');
+    }
+    if (!Array.isArray(entryRecord.mentions)) {
+      if (typeof entryRecord.mentionCount === 'number') {
+        const fallback = Math.max(0, Math.round(entryRecord.mentionCount));
+        entryRecord.mentions = Array.from({ length: fallback }, () => '');
+      } else {
+        throw new Error('Failed to parse evaluator response.');
+      }
+    }
+    // Coerce any non-string snippets to strings to keep the type contract.
+    entryRecord.mentions = (entryRecord.mentions as unknown[]).map((m) =>
+      typeof m === 'string' ? m : String(m ?? ''),
+    );
   }
+
+  // Coerce target snippets to strings too.
+  candidate.targetBrandMentions = (candidate.targetBrandMentions as unknown[]).map(
+    (m) => (typeof m === 'string' ? m : String(m ?? '')),
+  );
+
   return candidate as LlmEvaluation;
 }
 
@@ -2889,7 +2953,9 @@ async function fetchBedrockEvaluation(
               },
             ],
             inferenceConfig: {
-              maxTokens: 700,
+              // Bumped from 700: snippet arrays add weight relative to the
+              // old numeric-count shape (~10-50 short quotes per response).
+              maxTokens: 1500,
               temperature: 0.1,
             },
           }),
@@ -2990,7 +3056,10 @@ async function fetchLlmEvaluation(
           additionalProperties: false,
           properties: {
             targetBrand: { type: 'string' },
-            targetBrandMentionCount: { type: 'number' },
+            // Verbatim short snippets quoted from the evidence — one per
+            // distinct mention of the target brand. Counts are derived
+            // from .length, so they cannot be hallucinated.
+            targetBrandMentions: { type: 'array', items: { type: 'string' } },
             evaluatedSentiment: {
               type: 'string',
               enum: [
@@ -3008,9 +3077,9 @@ async function fetchLlmEvaluation(
                 additionalProperties: false,
                 properties: {
                   brand: { type: 'string' },
-                  mentionCount: { type: 'number' },
+                  mentions: { type: 'array', items: { type: 'string' } },
                 },
-                required: ['brand', 'mentionCount'],
+                required: ['brand', 'mentions'],
               },
             },
             evidenceSufficient: { type: 'boolean' },
@@ -3024,7 +3093,7 @@ async function fetchLlmEvaluation(
           },
           required: [
             'targetBrand',
-            'targetBrandMentionCount',
+            'targetBrandMentions',
             'evaluatedSentiment',
             'brandMentions',
             'evidenceSufficient',
@@ -3036,7 +3105,9 @@ async function fetchLlmEvaluation(
         },
       },
     },
-    max_output_tokens: 700,
+    // Bumped from 700: snippet arrays add weight relative to the old
+    // numeric-count shape (~10-50 short quotes per response).
+    max_output_tokens: 1500,
   };
   const response = await fetch(
     useAzure ? `${azureBaseUrl}responses` : OPENAI_API_URL,

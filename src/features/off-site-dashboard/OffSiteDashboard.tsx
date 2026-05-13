@@ -270,6 +270,89 @@ function HeroSignal(props: {
   );
 }
 
+type ResetEvaluatorCacheState =
+  | { kind: 'idle' }
+  | { kind: 'busy' }
+  | {
+      kind: 'done';
+      serverCleared: number;
+      brandProfilesCleared: number;
+      localCleared: number;
+    }
+  | { kind: 'error'; message: string };
+
+/**
+ * Button that wipes both the server's in-memory evaluator cache and the
+ * locally-stored sentiment evaluation results, so the next click on
+ * Evaluate runs the full pipeline (fresh evidence + fresh LLM call). The
+ * confirm() guard keeps a misclick from blowing away a completed batch.
+ */
+function ResetEvaluatorCacheButton(props: {
+  onReset: () => Promise<{
+    serverCleared: number;
+    brandProfilesCleared: number;
+    localCleared: number;
+  }>;
+}) {
+  const [state, setState] = useState<ResetEvaluatorCacheState>({ kind: 'idle' });
+
+  const handleClick = async () => {
+    if (state.kind === 'busy') return;
+    const confirmed =
+      typeof window === 'undefined'
+        ? true
+        : window.confirm(
+            'Clear the saved evaluator results?\n\nThis wipes the server’s in-memory cache and your locally stored evaluations. The next click on Evaluate will run a fresh evidence fetch and LLM call.',
+          );
+    if (!confirmed) return;
+    setState({ kind: 'busy' });
+    try {
+      const result = await props.onReset();
+      setState({ kind: 'done', ...result });
+    } catch (error) {
+      setState({
+        kind: 'error',
+        message:
+          error instanceof Error ? error.message : 'Failed to clear evaluator cache.',
+      });
+    }
+  };
+
+  const statusLabel =
+    state.kind === 'busy'
+      ? 'Clearing…'
+      : state.kind === 'done'
+        ? `Cleared ${state.serverCleared} server / ${state.localCleared} local · ${state.brandProfilesCleared} brand profiles`
+        : state.kind === 'error'
+          ? state.message
+          : null;
+
+  return (
+    <div className="reset-evaluator-cache">
+      <button
+        type="button"
+        className="ghost-button"
+        onClick={() => void handleClick()}
+        disabled={state.kind === 'busy'}
+        title="Wipe server + local evaluator caches and force a fresh evaluation on the next click."
+      >
+        Reset evaluator cache
+      </button>
+      {statusLabel ? (
+        <span
+          className={
+            state.kind === 'error'
+              ? 'status-pill status-pill-error'
+              : 'status-pill status-pill-neutral'
+          }
+        >
+          {statusLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function PanelToggleButton(props: {
   expanded: boolean;
   onClick: () => void;
@@ -3101,6 +3184,9 @@ export function OffSiteDashboard() {
             />
           </div>
           {!isManagedConnection ? workspaceActionButtons('hero-actions') : null}
+          <ResetEvaluatorCacheButton
+            onReset={dashboard.resetEvaluatorCache}
+          />
         </div>
         <aside className="hero-command">
           <div className="hero-command-copy">

@@ -120,3 +120,16 @@ export function saveSuggestionEvaluationStore(store: SuggestionEvaluationStore) 
     JSON.stringify(store),
   );
 }
+
+/**
+ * Wipe the local sentiment-evaluation cache so the next click on Evaluate
+ * runs the full server pipeline (after the server-side cache is also
+ * cleared via clearEvaluatorCache). Pair this with clearEvaluatorCache()
+ * from api.ts when the user clicks the "Reset evaluator cache" button.
+ */
+export function clearSentimentEvaluationStore() {
+  if (!hasWindow()) {
+    return;
+  }
+  window.localStorage.removeItem(SENTIMENT_EVALUATION_STORAGE_KEY);
+}

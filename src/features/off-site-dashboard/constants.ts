@@ -29,5 +29,6 @@ export const WIKIPEDIA_URL_EVALUATOR_VERSION = 'offsite-wikipedia-url-evaluator.
 export const EVALUATOR_API_PATH = '/api/offsite-evaluate';
 export const SUGGESTION_EVALUATOR_API_PATH = '/api/offsite-evaluate-suggestion';
 export const WIKIPEDIA_URL_EVALUATOR_API_PATH = '/api/offsite-evaluate-wikipedia-url';
+export const EVALUATOR_CACHE_CLEAR_API_PATH = '/api/offsite-evaluate-cache-clear';
 
 export const DEFAULT_PAGE_SIZE = 25;

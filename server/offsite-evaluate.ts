@@ -3182,6 +3182,91 @@ async function fetchLlmEvaluation(
   };
 }
 
+/**
+ * In-memory evaluator cache.
+ *
+ * Goal: make repeat evaluations of the SAME source deterministic, cheap,
+ * and stable across re-runs. The evidence fetch (BrightData) and LLM call
+ * are the two non-deterministic + costly steps; both produce the same
+ * INPUT for the scoring layer every time we re-evaluate a given source.
+ * Caching the evidence + llmResult lets a re-evaluation just re-run the
+ * comparison against whatever the backend\'s extractedSov / extractedSentiment
+ * happen to be on the new request — same evaluator judgment, possibly
+ * different backend claim, predictable verdict.
+ *
+ * Two entry kinds:
+ *  - 'short-circuit': the brand-owned and fetch-failed paths short-circuit
+ *    BEFORE the LLM. Their result depends only on the evidence/source, not
+ *    on the backend claim, so we cache the final result verbatim.
+ *  - 'full': the normal LLM-driven path. We cache evidence + llmResult and
+ *    re-run the scoring layer (extractedBrandShares, buildEvaluatedBrandShares,
+ *    confidence scores) against the new request\'s extractedSov / Sentiment.
+ *
+ * The cache is in-memory only — survives until the server restarts or
+ * clearEvaluationResultCache() is called via the cache-clear endpoint.
+ * Unbounded by design: for a dashboard workload this fits comfortably in
+ * memory (~tens of KB per entry, hundreds of opportunities).
+ *
+ * Key: (site, opportunityType, opportunityId, item). Backend claim values
+ * (extractedSov, extractedSentiment) are deliberately NOT in the key —
+ * they are inputs to the comparison, not identity of the source.
+ */
+type EvaluationCacheEntry =
+  | {
+      kind: 'short-circuit';
+      result: SentimentEvaluationResult;
+      cachedAt: string;
+    }
+  | {
+      kind: 'full';
+      evidence: SourceEvidence;
+      llmResult: LlmEvaluation;
+      llmProvider: 'openai' | 'azure' | 'bedrock';
+      llmModel: string;
+      cachedAt: string;
+    };
+
+const EVALUATION_RESULT_CACHE = new Map<string, EvaluationCacheEntry>();
+
+function evaluationCacheKey(payload: SentimentEvaluationRequest): string {
+  return [
+    payload.site.trim().toLowerCase(),
+    payload.opportunityType,
+    payload.opportunityId,
+    payload.item.trim().toLowerCase(),
+  ].join('|');
+}
+
+export function clearEvaluationResultCache(): {
+  cleared: number;
+  brandProfilesCleared: number;
+} {
+  const cleared = EVALUATION_RESULT_CACHE.size;
+  EVALUATION_RESULT_CACHE.clear();
+  // Also clear the per-site brand profile cache so a fresh evaluation
+  // re-fetches a fresh profile (industry/aliases/competitors may have
+  // changed since last fetch).
+  const brandProfilesCleared = BRAND_PROFILE_CACHE.size;
+  BRAND_PROFILE_CACHE.clear();
+  return { cleared, brandProfilesCleared };
+}
+
+export async function handleOffsiteEvaluateCacheClearRequest(
+  request: Request,
+  _env: ServerEnv = {},
+) {
+  if (request.method !== 'POST' && request.method !== 'DELETE') {
+    return buildJsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+  const { cleared, brandProfilesCleared } = clearEvaluationResultCache();
+  return buildJsonResponse({
+    ok: true,
+    cleared,
+    brandProfilesCleared,
+    clearedAt: new Date().toISOString(),
+  });
+}
+
 export async function runOffsiteEvaluation(
   rawPayload: unknown,
   env: ServerEnv = {},
@@ -3190,6 +3275,25 @@ export async function runOffsiteEvaluation(
 
   if (!payload) {
     throw new Error('Invalid evaluator request payload.');
+  }
+
+  const cacheKey = evaluationCacheKey(payload);
+  const cached = EVALUATION_RESULT_CACHE.get(cacheKey);
+
+  // Cache hit — short-circuit paths return verbatim; full-eval paths
+  // re-run only the scoring layer against the (possibly new) backend claim.
+  if (cached?.kind === 'short-circuit') {
+    return cached.result;
+  }
+  if (cached?.kind === 'full') {
+    return buildFullEvaluationResult({
+      payload,
+      evidence: cached.evidence,
+      llmResult: cached.llmResult,
+      llmProvider: cached.llmProvider,
+      llmModel: cached.llmModel,
+      env,
+    });
   }
 
   const evidence = await fetchEvidenceForRequest(payload, env);
@@ -3207,7 +3311,7 @@ export async function runOffsiteEvaluation(
           ? ' No viewer comments were available.'
           : '';
 
-    return {
+    const brandOwnedResult: SentimentEvaluationResult = {
       evaluatedSentiment: 'Favorable',
       sentimentConfidence: 65,
       evaluatedSov: 'Needs Review',
@@ -3230,6 +3334,12 @@ export async function runOffsiteEvaluation(
       },
       targetBrand: '',
     };
+    EVALUATION_RESULT_CACHE.set(cacheKey, {
+      kind: 'short-circuit',
+      result: brandOwnedResult,
+      cachedAt: new Date().toISOString(),
+    });
+    return brandOwnedResult;
   }
 
   if (
@@ -3248,7 +3358,7 @@ export async function runOffsiteEvaluation(
           ? 'YouTube'
           : 'The source';
 
-    return {
+    const weakEvidenceResult: SentimentEvaluationResult = {
       evaluatedSentiment: 'Needs Review',
       sentimentConfidence: weakEvidenceScore,
       evaluatedSov: 'Needs Review',
@@ -3275,15 +3385,67 @@ export async function runOffsiteEvaluation(
       },
       targetBrand: '',
     };
+    // Cache fetch-failed short-circuits too — we don't want a flaky
+    // BrightData call to trigger a fresh fetch every evaluation. Use the
+    // explicit clear button to retry the fetch.
+    EVALUATION_RESULT_CACHE.set(cacheKey, {
+      kind: 'short-circuit',
+      result: weakEvidenceResult,
+      cachedAt: new Date().toISOString(),
+    });
+    return weakEvidenceResult;
   }
 
   const llmResponse = await fetchLlmEvaluation(payload, evidence, env);
   const llmResult = llmResponse.evaluation;
-  const extractedBrandShares = extractSovBrandShares(payload.extractedSov, llmResult.targetBrand);
-  // Re-fetch the brand profile (cache hit — already populated by fetchLlmEvaluation).
-  // We pass it into buildEvaluatedBrandShares so owned products / sub-brands
-  // that the LLM listed as separate brandMentions entries can fold back into
-  // the target brand's count.
+
+  // Populate cache BEFORE final scoring so subsequent runs reuse the
+  // evidence + llmResult and only re-run the comparison.
+  EVALUATION_RESULT_CACHE.set(cacheKey, {
+    kind: 'full',
+    evidence,
+    llmResult,
+    llmProvider: llmResponse.provider,
+    llmModel: llmResponse.model,
+    cachedAt: new Date().toISOString(),
+  });
+
+  return buildFullEvaluationResult({
+    payload,
+    evidence,
+    llmResult,
+    llmProvider: llmResponse.provider,
+    llmModel: llmResponse.model,
+    env,
+  });
+}
+
+/**
+ * Scoring layer for the LLM-driven evaluation path. Pure-ish: given a
+ * cached evidence + llmResult, produces a SentimentEvaluationResult by
+ * comparing against the latest backend extractedSov / extractedSentiment.
+ * Called both on cache miss (after fresh evidence fetch + LLM call) and
+ * on cache hit (using the previously-cached evidence + llmResult).
+ */
+async function buildFullEvaluationResult(input: {
+  payload: SentimentEvaluationRequest;
+  evidence: SourceEvidence;
+  llmResult: LlmEvaluation;
+  llmProvider: 'openai' | 'azure' | 'bedrock';
+  llmModel: string;
+  env: ServerEnv;
+}): Promise<SentimentEvaluationResult> {
+  const { payload, evidence, llmResult, llmProvider, llmModel, env } = input;
+
+  const extractedBrandShares = extractSovBrandShares(
+    payload.extractedSov,
+    llmResult.targetBrand,
+  );
+  // Brand profile is itself cached per site (BRAND_PROFILE_CACHE) — this
+  // is just a Map lookup unless the cache was cleared since the original
+  // evaluation. We pass it into buildEvaluatedBrandShares so owned
+  // products / sub-brands / aliases that the LLM listed as separate
+  // brandMentions entries can fold back into the target brand's count.
   const brandProfile = await getBrandProfile(payload.site, env);
   const evaluatedBrandShares = buildEvaluatedBrandShares({
     extractedBrandShares,
@@ -3319,8 +3481,8 @@ export async function runOffsiteEvaluation(
       trimMultilineText(llmResult.evidenceSnippet) || evidence.fallbackSnippet,
     evaluatedAt: new Date().toISOString(),
     evaluatorVersion: SENTIMENT_EVALUATOR_VERSION,
-    evaluatorProvider: llmResponse.provider,
-    evaluatorModel: llmResponse.model,
+    evaluatorProvider: llmProvider,
+    evaluatorModel: llmModel,
     fetch: {
       status: evidence.status,
       sourceType: evidence.sourceType,

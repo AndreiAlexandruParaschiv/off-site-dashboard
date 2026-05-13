@@ -1,6 +1,9 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import { runOffsiteEvaluation } from './server/offsite-evaluate';
+import {
+  clearEvaluationResultCache,
+  runOffsiteEvaluation,
+} from './server/offsite-evaluate';
 import { runOffsiteSuggestionEvaluation } from './server/offsite-evaluate-suggestion';
 import { runWikipediaUrlEvaluation } from './server/offsite-evaluate-wikipedia-url';
 import {
@@ -73,6 +76,28 @@ function evaluationDevMiddleware(env: Record<string, string>) {
             });
             res.end(await response.text());
           })();
+          return;
+        }
+
+        // Cache-clear endpoint: clears the in-memory evaluator + brand
+        // profile caches so the next evaluation runs fresh end-to-end.
+        if (requestUrl === '/api/offsite-evaluate-cache-clear') {
+          if (requestMethod !== 'POST' && requestMethod !== 'DELETE') {
+            res.statusCode = 405;
+            res.end('');
+            return;
+          }
+          const { cleared, brandProfilesCleared } = clearEvaluationResultCache();
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(
+            JSON.stringify({
+              ok: true,
+              cleared,
+              brandProfilesCleared,
+              clearedAt: new Date().toISOString(),
+            }),
+          );
           return;
         }
 

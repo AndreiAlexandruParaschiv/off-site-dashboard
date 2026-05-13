@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_API_BASE_URL,
   EVALUATOR_API_PATH,
+  EVALUATOR_CACHE_CLEAR_API_PATH,
   SPACECAT_PROXY_API_PATH,
   SPACECAT_PROXY_CONFIG_API_PATH,
   SUGGESTION_EVALUATOR_API_PATH,
@@ -578,6 +579,37 @@ export async function evaluateWikipediaUrl(
     WIKIPEDIA_URL_EVALUATOR_API_PATH,
     payload,
   );
+}
+
+/**
+ * Clear the server-side in-memory evaluator cache (and the brand-profile
+ * cache that piggybacks on it). The next evaluation runs end-to-end fresh.
+ *
+ * Server returns { ok, cleared, brandProfilesCleared, clearedAt }.
+ * Note: in Vercel production each warm container has its own cache; this
+ * call only clears the instance that handles the request.
+ */
+export async function clearEvaluatorCache(): Promise<{
+  cleared: number;
+  brandProfilesCleared: number;
+  clearedAt: string;
+}> {
+  const response = await fetch(buildInternalApiUrl(EVALUATOR_CACHE_CLEAR_API_PATH), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+  });
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Evaluator cache clear failed with ${response.status}.`,
+      { status: response.status },
+    );
+  }
+  return (await response.json()) as {
+    cleared: number;
+    brandProfilesCleared: number;
+    clearedAt: string;
+  };
 }
 
 // === Suggestions Patcher API ===

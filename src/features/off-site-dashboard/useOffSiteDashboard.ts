@@ -21,6 +21,7 @@ import {
 } from './csv';
 import {
   SpacecatApiError,
+  clearEvaluatorCache,
   evaluateSentimentRow,
   evaluateSuggestionRow,
   fetchSpacecatProxyConfig,
@@ -1007,6 +1008,31 @@ export function useOffSiteDashboard() {
     [suggestionEvaluationRequestMap],
   );
 
+  /**
+   * Clear the server's in-memory evaluator cache AND wipe all locally
+   * stored sentiment-evaluation results so the next click on Evaluate
+   * runs the full pipeline (fresh evidence fetch + fresh LLM call).
+   *
+   * Use the button in the dashboard header to trigger this. Returns the
+   * cleared counts from the server so the UI can surface them.
+   */
+  const resetEvaluatorCache = useCallback(async (): Promise<{
+    serverCleared: number;
+    brandProfilesCleared: number;
+    localCleared: number;
+  }> => {
+    const localCleared = Object.keys(sentimentEvaluationResults).length;
+    const serverResponse = await clearEvaluatorCache();
+    setSentimentEvaluationResults({});
+    setSentimentEvaluationStatuses({});
+    setSentimentEvaluationErrors({});
+    return {
+      serverCleared: serverResponse.cleared,
+      brandProfilesCleared: serverResponse.brandProfilesCleared,
+      localCleared,
+    };
+  }, [sentimentEvaluationResults]);
+
   return {
     config,
     spacecatProxyConfig,
@@ -1082,6 +1108,7 @@ export function useOffSiteDashboard() {
     setSuggestionRowSelections,
     evaluateSentimentRows: runSentimentEvaluation,
     evaluateSuggestionRows: runSuggestionEvaluation,
+    resetEvaluatorCache,
     setPage,
     setPageSize,
   };

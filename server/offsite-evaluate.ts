@@ -2234,6 +2234,16 @@ async function fetchEvidenceForRequest(
 interface BrandProfile {
   site: string;
   targetBrand: string;
+  /**
+   * The brand's primary industry / category — used by the verdict LLM to
+   * filter out unrelated brand mentions from the SOV denominator. E.g., for
+   * a Sun Life Financial site (industry: "Life Insurance & Financial
+   * Services"), mentions of Tesla, Nike, or Adobe must not be counted as
+   * competitors even if they appear in the evidence. The string should be
+   * specific enough to draw a tight boundary (prefer "Life Insurance &
+   * Wealth Management" over the looser "Finance").
+   */
+  primaryIndustry?: string;
   ownedProducts: string[];
   parentOrganization?: string;
   knownCompetitors: string[];
@@ -2382,9 +2392,10 @@ async function fetchBrandProfileFromLlm(
     '',
     'Return a JSON object with these fields:',
     '- targetBrand: the canonical brand or company name WITHOUT any regional or country qualifier (e.g., return "Rice Krispies", not "Rice Krispies Canada" or "Rice Krispies US" — regional sites still represent the same brand for SOV purposes)',
+    '- primaryIndustry: the specific industry/category this brand operates in. Use a concrete, narrow phrase that draws a tight competitive boundary — prefer "Life Insurance & Wealth Management" over "Finance"; "Ready-to-Eat Breakfast Cereal" over "Food"; "Luxury Electric Vehicles" over "Automotive". This is used to filter out unrelated brand mentions from the SOV denominator, so it must be precise enough to exclude brands that share a vague sector but do not actually compete.',
     '- ownedProducts: array of well-known products, models, and sub-brands OWNED by this brand',
     '- parentOrganization: parent company name if applicable, otherwise empty string',
-    '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand',
+    '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand. ALL competitors must operate in the same primaryIndustry as the target brand.',
     '',
     'Use only well-known, widely-recognized facts. Be concise — limit each list to ~10-15 entries.',
     'Do not include speculative entries. Do not include the target brand itself in knownCompetitors.',
@@ -2409,11 +2420,18 @@ async function fetchBrandProfileFromLlm(
           additionalProperties: false,
           properties: {
             targetBrand: { type: 'string' },
+            primaryIndustry: { type: 'string' },
             ownedProducts: { type: 'array', items: { type: 'string' } },
             parentOrganization: { type: 'string' },
             knownCompetitors: { type: 'array', items: { type: 'string' } },
           },
-          required: ['targetBrand', 'ownedProducts', 'parentOrganization', 'knownCompetitors'],
+          required: [
+            'targetBrand',
+            'primaryIndustry',
+            'ownedProducts',
+            'parentOrganization',
+            'knownCompetitors',
+          ],
         },
       },
     },
@@ -2477,6 +2495,7 @@ async function fetchBrandProfileFromLlm(
 
   const candidate = parsed as {
     targetBrand?: unknown;
+    primaryIndustry?: unknown;
     ownedProducts?: unknown;
     parentOrganization?: unknown;
     knownCompetitors?: unknown;
@@ -2505,9 +2524,15 @@ async function fetchBrandProfileFromLlm(
       ? candidate.parentOrganization.trim()
       : '';
 
+  const primaryIndustry =
+    typeof candidate.primaryIndustry === 'string'
+      ? candidate.primaryIndustry.trim()
+      : '';
+
   return {
     site,
     targetBrand,
+    primaryIndustry: primaryIndustry || undefined,
     ownedProducts: stringList(candidate.ownedProducts),
     parentOrganization: parent ? parent : undefined,
     knownCompetitors: stringList(candidate.knownCompetitors),
@@ -2565,6 +2590,9 @@ function buildLlmPrompt(
     promptLines.push(
       '',
       `Authoritative brand profile for ${brandProfile.targetBrand} (use this to decide what counts as a target-brand mention):`,
+      ...(brandProfile.primaryIndustry
+        ? [`  Primary industry: ${brandProfile.primaryIndustry}`]
+        : []),
       `  Owned products / sub-brands of ${brandProfile.targetBrand} (DO count these as target-brand mentions): ${brandProfile.ownedProducts.join(', ') || 'None known'}`,
       `  Brands NOT owned by ${brandProfile.targetBrand} (do NOT count these as target-brand mentions, even if they share the same product category): ${brandProfile.knownCompetitors.join(', ') || 'None known'}`,
       ...(brandProfile.parentOrganization
@@ -2610,6 +2638,7 @@ function buildLlmPrompt(
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
     '  - Treat case, spacing, and punctuation variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. For example, "SunLife", "Sun Life", and "Sun-Life" are all the same brand (3 mentions total → ONE entry with mentionCount: 3, not three entries). Same rule applies to "Coca-Cola"/"Coca Cola"/"CocaCola" and any similar compound names. Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
+    '  - INDUSTRY FILTER (critical for SOV correctness): brandMentions must ONLY contain brands that operate in the SAME primary industry as the target brand (see "Primary industry" in the brand profile above). Out-of-industry brands — even when they appear in the evidence — are NOT competitors and must be EXCLUDED from brandMentions. They do not belong in the SOV denominator. Example: if the target brand is Sun Life (Life Insurance & Wealth Management) and the evidence mentions Tesla, Nike, or Adobe, those are NOT competitors and MUST NOT appear in brandMentions. If a brand listed in "Known competitor brands" is clearly from a different industry, exclude it too (the brand profile may be wrong) and note the discrepancy in your rationale. When uncertain whether a brand competes in the same industry, exclude it — false competitors corrupt the SOV denominator far more than missing ones.',
     '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. When an "Authoritative brand profile" is provided above, it is the definitive reference: only items in the "Owned products / sub-brands" list count as target-brand mentions; anything in the "Brands NOT owned" list NEVER counts even if it appears in the evidence. Without a profile, fall back to your general knowledge — but never count products from competitors in the same category. When uncertain whether a product belongs to the target brand, do NOT count it.',
     '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, set targetBrandMentionCount = 0 and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
     '  - Do not inflate counts to match the backend. If you count 3 mentions and the backend claims 8, return 3.',

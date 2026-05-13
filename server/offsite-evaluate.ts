@@ -1372,6 +1372,16 @@ function buildEvaluatedBrandShares(input: {
       if (productKey) targetEquivalentKeys.add(productKey);
     }
   }
+  // Aliases (e.g., "KFC" for Kentucky Fried Chicken, "GE" for General
+  // Electric) fold into the target via the same machinery as ownedProducts.
+  // If the LLM emits an alias as a separate brandMentions entry despite the
+  // prompt rule, this server-side fold catches it deterministically.
+  if (input.brandProfile?.targetBrandAliases) {
+    for (const alias of input.brandProfile.targetBrandAliases) {
+      const aliasKey = normalizeBrandKey(alias);
+      if (aliasKey) targetEquivalentKeys.add(aliasKey);
+    }
+  }
 
   const mentionCounts = new Map<string, { brand: string; mentionCount: number }>();
   const llmTargetCount = Math.max(0, Math.round(input.llmResult.targetBrandMentionCount));
@@ -2283,6 +2293,22 @@ interface BrandProfile {
    * retailers ARE legitimate competitors and get counted normally.
    */
   isSalesChannel?: boolean;
+  /**
+   * Alternate official names, common acronyms, and well-known nicknames for
+   * the target brand — e.g. for Kentucky Fried Chicken: ["KFC"]; for
+   * General Electric: ["GE"]; for Hewlett-Packard: ["HP", "Hewlett Packard"].
+   *
+   * Used by the SOV evaluator to:
+   *   1. Count alias mentions in evidence toward targetBrandMentionCount.
+   *   2. Fold any "alias" entries the LLM emits as separate brandMentions
+   *      into the target via targetEquivalentKeys (the same merge path used
+   *      for ownedProducts).
+   *
+   * Only well-known, widely-recognized aliases — not spelling variants
+   * (handled separately by normalizeBrandKey) and not parent-organization
+   * names (handled via parentOrganization).
+   */
+  targetBrandAliases?: string[];
   ownedProducts: string[];
   parentOrganization?: string;
   knownCompetitors: string[];
@@ -2433,6 +2459,7 @@ async function fetchBrandProfileFromLlm(
     '- targetBrand: the canonical brand or company name WITHOUT any regional or country qualifier (e.g., return "Rice Krispies", not "Rice Krispies Canada" or "Rice Krispies US" — regional sites still represent the same brand for SOV purposes)',
     '- primaryIndustry: the specific industry/category this brand operates in. Use a concrete, narrow phrase that draws a tight competitive boundary — prefer "Life Insurance & Wealth Management" over "Finance"; "Ready-to-Eat Breakfast Cereal" over "Food"; "Luxury Electric Vehicles" over "Automotive". This is used to filter out unrelated brand mentions from the SOV denominator, so it must be precise enough to exclude brands that share a vague sector but do not actually compete.',
     '- isSalesChannel: boolean — true ONLY if this brand is itself a retailer, marketplace, distribution channel, or storefront whose primary business is RESELLING products from other brands (e.g., Amazon, Walmart, Target, Costco, Best Buy, eBay, Etsy, an app store). For brands that PRODUCE goods or services and sell through retailers (e.g., Rice Krispies, Sun Life, Toyota, Nike), set this to false. This flag controls whether retailer mentions in evidence count as competing SOV brands.',
+    '- targetBrandAliases: array of well-known alternate names, common acronyms, and widely-recognized nicknames for the target brand. Examples: for "Kentucky Fried Chicken" → ["KFC"]; for "General Electric" → ["GE"]; for "Hewlett-Packard" → ["HP", "Hewlett Packard"]; for "International Business Machines" → ["IBM", "Big Blue"]; for "JPMorgan Chase" → ["JPMC", "Chase"]. Only include aliases that are widely used in real-world content — do NOT invent or speculate. Return an empty array if no widely-used aliases exist. Do NOT list mere spelling variants (case/spacing/punctuation/possessive — those are handled separately) or the parent organization.',
     '- ownedProducts: array of well-known products, models, and sub-brands OWNED by this brand',
     '- parentOrganization: parent company name if applicable, otherwise empty string',
     '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand. ALL competitors must operate in the same primaryIndustry as the target brand. Do NOT list retailers, marketplaces, or sales channels as competitors UNLESS isSalesChannel is true for the target brand.',
@@ -2462,6 +2489,7 @@ async function fetchBrandProfileFromLlm(
             targetBrand: { type: 'string' },
             primaryIndustry: { type: 'string' },
             isSalesChannel: { type: 'boolean' },
+            targetBrandAliases: { type: 'array', items: { type: 'string' } },
             ownedProducts: { type: 'array', items: { type: 'string' } },
             parentOrganization: { type: 'string' },
             knownCompetitors: { type: 'array', items: { type: 'string' } },
@@ -2470,6 +2498,7 @@ async function fetchBrandProfileFromLlm(
             'targetBrand',
             'primaryIndustry',
             'isSalesChannel',
+            'targetBrandAliases',
             'ownedProducts',
             'parentOrganization',
             'knownCompetitors',
@@ -2539,6 +2568,7 @@ async function fetchBrandProfileFromLlm(
     targetBrand?: unknown;
     primaryIndustry?: unknown;
     isSalesChannel?: unknown;
+    targetBrandAliases?: unknown;
     ownedProducts?: unknown;
     parentOrganization?: unknown;
     knownCompetitors?: unknown;
@@ -2580,11 +2610,14 @@ async function fetchBrandProfileFromLlm(
       ? candidate.isSalesChannel
       : false;
 
+  const aliases = stringList(candidate.targetBrandAliases);
+
   return {
     site,
     targetBrand,
     primaryIndustry: primaryIndustry || undefined,
     isSalesChannel,
+    targetBrandAliases: aliases.length > 0 ? aliases : undefined,
     ownedProducts: stringList(candidate.ownedProducts),
     parentOrganization: parent ? parent : undefined,
     knownCompetitors: stringList(candidate.knownCompetitors),
@@ -2646,6 +2679,7 @@ function buildLlmPrompt(
         ? [`  Primary industry: ${brandProfile.primaryIndustry}`]
         : []),
       `  Is sales channel / retailer: ${brandProfile.isSalesChannel ? 'YES — other retailers ARE competitors for SOV purposes' : 'NO — retailers and sales channels are NOT competitors and must be excluded from SOV'}`,
+      `  Also known as / aliases for ${brandProfile.targetBrand} (DO count these as target-brand mentions; do NOT list them as separate brandMentions entries): ${(brandProfile.targetBrandAliases ?? []).join(', ') || 'None known'}`,
       `  Owned products / sub-brands of ${brandProfile.targetBrand} (DO count these as target-brand mentions): ${brandProfile.ownedProducts.join(', ') || 'None known'}`,
       `  Brands NOT owned by ${brandProfile.targetBrand} (do NOT count these as target-brand mentions, even if they share the same product category): ${brandProfile.knownCompetitors.join(', ') || 'None known'}`,
       ...(brandProfile.parentOrganization
@@ -2690,11 +2724,12 @@ function buildLlmPrompt(
     '',
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
-    '  - Treat case, spacing, punctuation, regional, and possessive variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. Specifically:',
+    '  - Treat case, spacing, punctuation, regional, possessive, and alias variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. Specifically:',
     '       (a) Case/spacing/punctuation — "SunLife" = "Sun Life" = "Sun-Life" (all 3 → ONE entry with mentionCount: 3). Same for "Coca-Cola"/"Coca Cola"/"CocaCola".',
     '       (b) Regional / country qualifiers — "WK Kellogg" = "WK Kellogg Canada" = "WK Kellogg US" = "WK Kellogg (North America)". The country is a storefront, not a different brand. Strip it before counting.',
     '       (c) Possessive forms — "Kellogg" = "Kellogg\'s" = "Kelloggs". "McDonald" = "McDonald\'s" = "McDonalds". The possessive marker is grammatical, not a brand distinction.',
-    '     Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
+    '       (d) Aliases / acronyms / well-known nicknames — when an alternate official name, acronym, or widely-used nickname refers to the same entity, merge them. For the TARGET BRAND, prefer the "Also known as / aliases" list in the brand profile above as the authoritative source. For COMPETITOR BRANDS, use your general knowledge: "KFC" = "Kentucky Fried Chicken"; "GE" = "General Electric"; "HP" = "Hewlett-Packard" = "Hewlett Packard"; "IBM" = "International Business Machines" = "Big Blue"; "JPM" = "JPMorgan" = "JPMorgan Chase". Be CONSERVATIVE: only merge well-known, widely-recognized aliases. Do NOT invent or speculate (e.g., do not assume a random 3-letter token is an acronym for a brand mentioned elsewhere in the evidence — require an established public association).',
+    '     Pick one canonical spelling (typically the longer/full form) and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
     '  - INDUSTRY FILTER (critical for SOV correctness): brandMentions must ONLY contain brands that operate in the SAME primary industry as the target brand (see "Primary industry" in the brand profile above). Out-of-industry brands — even when they appear in the evidence — are NOT competitors and must be EXCLUDED from brandMentions. They do not belong in the SOV denominator. Example: if the target brand is Sun Life (Life Insurance & Wealth Management) and the evidence mentions Tesla, Nike, or Adobe, those are NOT competitors and MUST NOT appear in brandMentions. If a brand listed in "Known competitor brands" is clearly from a different industry, exclude it too (the brand profile may be wrong) and note the discrepancy in your rationale. This filter is about CROSS-INDUSTRY noise — it is NOT permission to omit clear same-industry competitors that happen to be missing from the seed competitors list (see OPEN-WORLD COMPETITOR DISCOVERY below). When a brand is plainly in the same industry as the target (e.g., another breakfast cereal for a cereal brand, another life insurer for an insurance brand), INCLUDE it regardless of whether it appears in the seed list.',
     '  - SALES CHANNEL FILTER: if the brand profile says "Is sales channel / retailer: NO", retailers, marketplaces, and distribution channels (Amazon, Walmart, Target, Costco, Best Buy, eBay, Etsy, Walgreens, CVS, Loblaws, Sobeys, app stores, Shopify storefronts, etc.) are WHERE the product is sold, not COMPETITORS of the product. EXCLUDE them entirely from brandMentions — they do not belong in the SOV denominator. Example: for Rice Krispies (a cereal producer, not a retailer), a Reddit thread mentioning "I bought it at Walmart and Costco" must NOT add Walmart or Costco to brandMentions. Only when the target brand IS a sales channel (Is sales channel / retailer: YES) do other retailers count as legitimate competing brands. When uncertain whether something is a retailer vs a producer in the target\'s industry, exclude it — channel pollution corrupts the denominator far more than missing one borderline brand.',
     '  - MENTION INTENT FILTER (avoid inflating counts with incidental usage): only count an occurrence as a brand/product mention if the discussion is genuinely ABOUT the brand or product — its quality, performance, value, experience, fit, support, comparison to alternatives, etc. Do NOT count occurrences where the brand name is used as:',

@@ -81,10 +81,34 @@ function parsePercentageValue(value: string): number | null {
 }
 
 /**
- * Normalize a brand name for comparison (lowercase, alphanumeric only).
+ * Mirror of the backend REGIONAL_BRAND_SUFFIX_PATTERN. Keep in sync with
+ * server/offsite-evaluate.ts — both sides must collapse the same variants
+ * to the same key, otherwise extracted SOV target-share lookups miss when
+ * the backend strips a suffix the frontend kept (or vice versa).
+ */
+const REGIONAL_BRAND_SUFFIX_PATTERN =
+  /[\s\-/]+\(?\s*(?:us|usa|u\.s\.|u\.s\.a\.|canada|uk|u\.k\.|gb|eu|emea|apac|latam|mena|global|international|worldwide|mexico|brazil|australia|aus|new\s*zealand|nz|germany|france|spain|italy|japan|china|india|north\s*america|south\s*america)\s*\)?$/i;
+
+/**
+ * Normalize a brand name for comparison.
+ *
+ * Mirrors server/offsite-evaluate.ts: strips regional/country suffixes
+ * ("WK Kellogg Canada" → "WK Kellogg"), possessives ("Kellogg's" → "Kellogg"),
+ * lowercases, then removes all non-alphanumeric characters so spelling
+ * variants collapse to a single key.
  */
 function normalizeBrandKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let canonical = value.trim();
+  // Strip up to two trailing regional tokens (handles nested qualifiers
+  // like "Brand (North America) US").
+  for (let i = 0; i < 2; i += 1) {
+    const next = canonical.replace(REGIONAL_BRAND_SUFFIX_PATTERN, '').trim();
+    if (next === canonical || !next) break;
+    canonical = next;
+  }
+  // Strip trailing possessive 's / s' so "Kellogg's" and "Kellogg" merge.
+  canonical = canonical.replace(/[’']\s*s\b/gi, '').replace(/s[’']\s*$/i, 's');
+  return canonical.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**

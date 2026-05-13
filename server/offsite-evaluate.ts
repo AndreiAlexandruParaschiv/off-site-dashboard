@@ -1124,13 +1124,43 @@ type BrandShare = {
   sharePct: number;
 };
 
+/**
+ * Apply variant-stripping to a brand name BEFORE computing its comparison
+ * key, so different spellings of the same brand collapse to a single entry:
+ *
+ *   "WK Kellogg Canada"  →  "WK Kellogg"   (regional suffix)
+ *   "Kellogg's"          →  "Kellogg"      (possessive)
+ *   "Kellogg's Canada"   →  "Kellogg"      (both)
+ *   "Sun-Life"           →  "Sun-Life"     (untouched — punctuation handled later)
+ *
+ * Keep this conservative: only strip well-known regional tokens (see
+ * REGIONAL_BRAND_SUFFIX_PATTERN) and the trailing possessive marker, so we
+ * never accidentally fold genuinely distinct brands together.
+ */
+function canonicalizeBrandForKey(value: string): string {
+  let result = stripRegionalBrandSuffix(value);
+  // Strip trailing possessive 's / s' so "Kellogg's" and "Kellogg" merge.
+  // The Unicode curly apostrophe is normalized to the straight one by the
+  // non-alphanumeric strip below, but doing it here keeps the canonical
+  // form readable for any caller that uses the pre-key string.
+  result = result.replace(/[’']\s*s\b/gi, '').replace(/s[’']\s*$/i, 's');
+  return result.trim();
+}
+
 function normalizeBrandKey(value: string) {
   // Strip ALL non-alphanumeric characters (not just collapsing them to spaces
   // like normalizeComparableText does). This makes "WK Kellogg", "Wkkellogg",
   // "WK-Kellogg", and "WK_Kellogg" all map to the same key "wkkellogg" so
   // brand variants merge correctly in the SOV calculation. Mirrors the
   // frontend's normalizeBrandKey in src/features/off-site-dashboard/evaluation.ts.
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  //
+  // Also applies canonicalizeBrandForKey first to collapse regional
+  // suffixes ("WK Kellogg Canada" → "WK Kellogg") and possessives
+  // ("Kellogg's" → "Kellogg") into a single key — without this, the LLM's
+  // variant spellings end up as separate SOV entries.
+  return canonicalizeBrandForKey(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }
 
 /**
@@ -2660,7 +2690,11 @@ function buildLlmPrompt(
     '',
     'Auditing rules (these override any instinct to agree with the backend):',
     '  - Brand mentions: count the exact target brand name AND its well-known products, models, or sub-brands using your general knowledge (e.g. "Range Rover" and "Defender" are Land Rover models; "iPhone" is an Apple product; "Corolla" is a Toyota model). Do NOT require an exact brand-name match — a product mention IS a brand mention.',
-    '  - Treat case, spacing, and punctuation variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. For example, "SunLife", "Sun Life", and "Sun-Life" are all the same brand (3 mentions total → ONE entry with mentionCount: 3, not three entries). Same rule applies to "Coca-Cola"/"Coca Cola"/"CocaCola" and any similar compound names. Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
+    '  - Treat case, spacing, punctuation, regional, and possessive variants of a brand as the SAME brand and merge their counts into a single brandMentions entry. Specifically:',
+    '       (a) Case/spacing/punctuation — "SunLife" = "Sun Life" = "Sun-Life" (all 3 → ONE entry with mentionCount: 3). Same for "Coca-Cola"/"Coca Cola"/"CocaCola".',
+    '       (b) Regional / country qualifiers — "WK Kellogg" = "WK Kellogg Canada" = "WK Kellogg US" = "WK Kellogg (North America)". The country is a storefront, not a different brand. Strip it before counting.',
+    '       (c) Possessive forms — "Kellogg" = "Kellogg\'s" = "Kelloggs". "McDonald" = "McDonald\'s" = "McDonalds". The possessive marker is grammatical, not a brand distinction.',
+    '     Pick one canonical spelling and report the summed count once. If the backend\'s extracted SOV lists these variants as separate brands, treat that as a backend error and report the merged count in your audit.',
     '  - INDUSTRY FILTER (critical for SOV correctness): brandMentions must ONLY contain brands that operate in the SAME primary industry as the target brand (see "Primary industry" in the brand profile above). Out-of-industry brands — even when they appear in the evidence — are NOT competitors and must be EXCLUDED from brandMentions. They do not belong in the SOV denominator. Example: if the target brand is Sun Life (Life Insurance & Wealth Management) and the evidence mentions Tesla, Nike, or Adobe, those are NOT competitors and MUST NOT appear in brandMentions. If a brand listed in "Known competitor brands" is clearly from a different industry, exclude it too (the brand profile may be wrong) and note the discrepancy in your rationale. This filter is about CROSS-INDUSTRY noise — it is NOT permission to omit clear same-industry competitors that happen to be missing from the seed competitors list (see OPEN-WORLD COMPETITOR DISCOVERY below). When a brand is plainly in the same industry as the target (e.g., another breakfast cereal for a cereal brand, another life insurer for an insurance brand), INCLUDE it regardless of whether it appears in the seed list.',
     '  - SALES CHANNEL FILTER: if the brand profile says "Is sales channel / retailer: NO", retailers, marketplaces, and distribution channels (Amazon, Walmart, Target, Costco, Best Buy, eBay, Etsy, Walgreens, CVS, Loblaws, Sobeys, app stores, Shopify storefronts, etc.) are WHERE the product is sold, not COMPETITORS of the product. EXCLUDE them entirely from brandMentions — they do not belong in the SOV denominator. Example: for Rice Krispies (a cereal producer, not a retailer), a Reddit thread mentioning "I bought it at Walmart and Costco" must NOT add Walmart or Costco to brandMentions. Only when the target brand IS a sales channel (Is sales channel / retailer: YES) do other retailers count as legitimate competing brands. When uncertain whether something is a retailer vs a producer in the target\'s industry, exclude it — channel pollution corrupts the denominator far more than missing one borderline brand.',
     '  - MENTION INTENT FILTER (avoid inflating counts with incidental usage): only count an occurrence as a brand/product mention if the discussion is genuinely ABOUT the brand or product — its quality, performance, value, experience, fit, support, comparison to alternatives, etc. Do NOT count occurrences where the brand name is used as:',

@@ -1134,6 +1134,35 @@ function normalizeBrandKey(value: string) {
 }
 
 /**
+ * Regional/country qualifiers we strip from the LLM-returned targetBrand.
+ *
+ * Background: for sites like ricekrispies.ca or ricekrispies.com, the brand
+ * profile LLM tends to return "Rice Krispies Canada" or "Rice Krispies US"
+ * as targetBrand. But "Rice Krispies" is the actual brand — the country is
+ * just the storefront. If targetBrand carries the country suffix, the SOV
+ * denominator won't match plain "Rice Krispies" mentions and SOV breaks.
+ *
+ * Pattern matches a trailing region token preceded by space, dash, slash,
+ * or an opening paren (so "Rice Krispies (Canada)" works too). Kept
+ * conservative — only the most common country/region words, so we don't
+ * accidentally strip legitimate name parts like "Bank of America".
+ */
+const REGIONAL_BRAND_SUFFIX_PATTERN =
+  /[\s\-/]+\(?\s*(?:us|usa|u\.s\.|u\.s\.a\.|canada|uk|u\.k\.|gb|eu|emea|apac|latam|mena|global|international|worldwide|mexico|brazil|australia|aus|new\s*zealand|nz|germany|france|spain|italy|japan|china|india|north\s*america|south\s*america)\s*\)?$/i;
+
+function stripRegionalBrandSuffix(value: string): string {
+  let result = value.trim();
+  // Strip up to two trailing region tokens in case of nested qualifiers like
+  // "Rice Krispies (North America) US".
+  for (let i = 0; i < 2; i += 1) {
+    const next = result.replace(REGIONAL_BRAND_SUFFIX_PATTERN, '').trim();
+    if (next === result || !next) break;
+    result = next;
+  }
+  return result;
+}
+
+/**
  * Pattern that matches placeholder brand names injected by the SpaceCat backend,
  * e.g. "ProductA", "ProductB", "CompetitorX", "CompetitorY", "BrandA".
  * These are generic template tokens, not real competitor brands, and must be
@@ -2330,7 +2359,7 @@ async function fetchBrandProfileFromLlm(
     `Identify the brand or company associated with this URL: ${site}`,
     '',
     'Return a JSON object with these fields:',
-    '- targetBrand: the canonical brand or company name',
+    '- targetBrand: the canonical brand or company name WITHOUT any regional or country qualifier (e.g., return "Rice Krispies", not "Rice Krispies Canada" or "Rice Krispies US" — regional sites still represent the same brand for SOV purposes)',
     '- ownedProducts: array of well-known products, models, and sub-brands OWNED by this brand',
     '- parentOrganization: parent company name if applicable, otherwise empty string',
     '- knownCompetitors: array of major competing brand names that are NOT owned by the target brand',
@@ -2439,8 +2468,12 @@ async function fetchBrandProfileFromLlm(
           .filter(Boolean)
       : [];
 
-  const targetBrand =
+  // Strip regional/country suffixes ("Rice Krispies Canada" → "Rice Krispies")
+  // so the same brand on different regional storefronts uses one canonical key.
+  // See stripRegionalBrandSuffix and REGIONAL_BRAND_SUFFIX_PATTERN above.
+  const rawTargetBrand =
     typeof candidate.targetBrand === 'string' ? candidate.targetBrand.trim() : '';
+  const targetBrand = stripRegionalBrandSuffix(rawTargetBrand);
   if (!targetBrand) {
     return undefined;
   }

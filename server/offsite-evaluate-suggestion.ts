@@ -248,11 +248,26 @@ function isWikipediaTemplateImage(fileTitle: string): boolean {
     /^(wikiquote|wiktionary|wikisource|wikinews|wikibooks|wikiversity|wikivoyage|wikidata|meta-wiki)-logo/, // Other sister-project icons
     /^(increase|decrease|steady)\d*\.svg$/,       // Infobox trend arrows
     /^symbol_/,                                   // Category/portal symbol icons
-    /^ambox/,                                     // Article message box (stub, cleanup, etc.)
+    /^ambox/,                                     // Article message box decoration
     /^padlock/,                                   // Page-protection icons
     /^(question_book|edit-clear|disambig)/,       // Cleanup/disambig template icons
     /^red_pog\.svg$/,                             // Map location markers
     /^office-book\.svg$/,                         // Reference/portal icons
+
+    // STUB-MESSAGE IMAGES. Wikipedia stub templates ("This X article is a
+    // stub. You can help...") render an icon inside the message box. The
+    // wrapper has the ambox class but the IMAGE filename is whatever the
+    // stub family uses — most commonly *-stub.svg, or a thematic image
+    // like the Ben Franklin hundred-dollar-bill on US-business stubs.
+    // These are template chrome, not brand-relevant content images, and
+    // their presence inflates the "Live image count" we hand to the LLM.
+    /[-_]stub\.svg$/i,                            // Any *-stub.svg / *_stub.svg
+    /^stub[-_]icon\.svg$/i,                       // Generic stub-icon.svg
+    /^hundred[-_]?dollar[-_]?bill/i,              // US business / retail stub (Ben Franklin)
+    /^benjamin[-_]?franklin/i,                    // Direct Franklin portrait used by US stubs
+    /^usa[-_]?stub/i,
+    /^united[-_]?states[-_]?stub/i,
+    /^p[_-](history|economy|business|geography|sports|literature|science)\b/i, // Portal icons
   ];
 
   return TEMPLATE_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -1954,7 +1969,9 @@ async function fetchWikipediaArticleEvidence(articleTitle: string): Promise<Sour
           typeof liveContentSectionCount === 'number'
             ? `Live content section count (excluding References, External links, Further reading, Notes, See also, etc.): ${liveContentSectionCount}`
             : '',
-          typeof liveImageCount === 'number' ? `Live image count: ${liveImageCount}` : '',
+          typeof liveImageCount === 'number'
+            ? `Live image count (brand-relevant content images; excludes stub icons, sister-project logos, ambox/trend arrows, and other template chrome): ${liveImageCount}`
+            : '',
           liveWordCount > 0 ? `Live word count: ${liveWordCount}` : '',
           wikidataQid ? `Wikidata QID: ${wikidataQid}` : '',
           typeof wikidataPropertyCount === 'number'
@@ -2653,14 +2670,21 @@ function buildSuggestionPrompt(
     '  - Counts of ANY magnitude (sections, images, categories, infobox fields, citations, references, word counts, etc.): ±10% of the larger value, OR ±1 absolute — whichever is LARGER. This means small numbers require small deltas (3 vs 5 is 40% off — FLAG it) while large numbers tolerate proportional drift (298 vs 300 is ~0.7% off — ACCEPT).',
     '  - Dates: same calendar day. Recency claims like "edits in last 30 days" within ±1 edit.',
     '  - Ranks: exact when the competitor set is knowable; otherwise treat rank as directionally correct if the ordering is consistent with the numeric evidence.',
-    'Worked examples:',
-    '  - Backend says 3 sections, live page shows 5. Larger=5, 10% of 5 = 0.5, max(1, 0.5) = 1. Delta=2 exceeds tolerance → Incorrect with corrected count.',
-    '  - Backend says 6 images, live page shows 12. Larger=12, 10% = 1.2, max(1, 1.2) = 1.2. Delta=6 exceeds → Incorrect with corrected count.',
-    '  - Backend says 298 references, live page shows 300. Larger=300, 10% = 30. Delta=2 within → Correct.',
-    '  - Backend says 46 citations, live page shows 48. Larger=48, 10% = 4.8. Delta=2 within → Correct.',
+    'Worked examples (settle the verdict using the formula — do NOT reproduce the arithmetic in your rationale):',
+    '  - Backend says 1 image, live page shows 2. Tolerance=1 (max of 1 and 10% of 2). Delta=1, within → Correct.',
+    '  - Backend says 3 sections, live page shows 5. Tolerance=1. Delta=2, exceeds → Incorrect.',
+    '  - Backend says 6 images, live page shows 12. Tolerance≈1.2. Delta=6, exceeds → Incorrect.',
+    '  - Backend says 298 references, live page shows 300. Tolerance=30. Delta=2, within → Correct.',
+    '  - Backend says 46 citations, live page shows 48. Tolerance≈4.8. Delta=2, within → Correct.',
+    'RATIONALE FORMAT (strict):',
+    '  - Decide the verdict FIRST using the tolerance formula, then write the rationale.',
+    '  - Rationale must be 1-3 sentences. State: live value, claim value, tolerance, delta, conclusion. Nothing else.',
+    '  - Example shape: "Live page shows 2 images; the suggestion claims 1. Tolerance is ±1, delta is 1 — within tolerance, so the claim is correct."',
+    '  - Do NOT show the arithmetic chain (no "10% of 2 = 0.2, max(1, 0.2) = 1, ..."), do NOT say "wait", "let me re-read", "actually", or "I\'ll mark this as", do NOT self-correct mid-paragraph. Settle the call before writing.',
+    '  - The conclusion stated in your rationale MUST match the verdict field. If you wrote "within tolerance, so correct", the verdict field must be "Correct". A mismatch is the worst possible output.',
     'When a live fetched page contradicts a backend aggregate BEYOND tolerance, mark Incorrect and return a correctedSuggestion using the live value.',
     'When the suggestion\'s central claim is correct but a sub-claim cannot be verified from the evidence available (e.g., only one competitor page was fetched so a "N of M competitors" claim can\'t be fully recomputed), state that limitation in the rationale but still mark Correct with MEDIUM or HIGH confidence if the central claim itself is verified. Do not downgrade solely because peripheral aggregates were not independently reconstructed.',
-    'Wikipedia-specific notes: (a) For section count claims, prefer the "Live content section count" (which already excludes References, External links, Further reading, Notes, See also, Bibliography, etc.) over the "Live top-level section count". Backend section counts almost always reflect content sections only. If the content-section count is unavailable, fall back to top-level count after manually subtracting any appendix sections you can identify. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified. (c) For Wikidata claims (e.g., "Wikidata entry has N statements", "Wikidata ID Q12345"), use the "Wikidata QID", "Wikidata distinct property count", and "Wikidata total statement count" lines in the evidence. Backend "statement" counts typically map to the distinct property count (statements grouped by property); if neither distinct nor total matches within tolerance, the claim is Incorrect.',
+    'Wikipedia-specific notes: (a) For section count claims, prefer the "Live content section count" (which already excludes References, External links, Further reading, Notes, See also, Bibliography, etc.) over the "Live top-level section count". Backend section counts almost always reflect content sections only. If the content-section count is unavailable, fall back to top-level count after manually subtracting any appendix sections you can identify. (b) Infobox field lists from the backend are flattened from the article\'s infobox template; when the live page clearly surfaces the same fields (by label or by equivalent prose), count that as verified. (c) For Wikidata claims (e.g., "Wikidata entry has N statements", "Wikidata ID Q12345"), use the "Wikidata QID", "Wikidata distinct property count", and "Wikidata total statement count" lines in the evidence. Backend "statement" counts typically map to the distinct property count (statements grouped by property); if neither distinct nor total matches within tolerance, the claim is Incorrect. (d) For Wikipedia IMAGE-count claims, the "Live image count" already excludes template chrome (stub-message icons like the Ben Franklin US-business-stub, sister-project logos, ambox decorations, trend arrows). Compare the backend\'s claim against this filtered number — do NOT add or imagine additional stub/chrome images into the count.',
     'Wikipedia opportunities do not have extracted Sentiment & SOV rows. For Wikipedia, use the current payload evidence items and fetched Wikipedia pages as the local source of truth.',
     'Distinguish article-level maintenance warnings from section-level warnings. If the evidence says "This section needs to be updated", do not describe the whole article as outdated. Name the affected section when the evidence provides it.',
     'For Cited URLs suggestions, use the local extracted Sentiment & SOV rows to verify which third-party URLs are part of the extracted opportunity context.',

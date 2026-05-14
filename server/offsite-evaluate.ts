@@ -2793,7 +2793,12 @@ function buildLlmPrompt(
     '  - THREAD MEANINGFULNESS GATE (avoid inferring sentiment from informational content): before assigning Favorable / Unfavorable, verify the evidence actually contains expressions of opinion, experience, preference, recommendation, complaint, or comparison about the target brand. If the entire evidence is purely informational — definitional ("X is a Y that does Z"), procedural ("here is how to file a claim"), factual ("the company was founded in YYYY"), or news-summary with no editorial slant — the thread does NOT support a Favorable/Unfavorable judgment.',
     '     In that case: set evaluatedSentiment = "Neutral" with LOW confidence and explicitly state in sentimentRationale that the thread is informational/definitional with no opinion signal. Do NOT fabricate a positive or negative tone from the absence of complaints. Note the lack of opinion content in rationale so the audit flags this thread as low-signal for SOV interpretation purposes.',
     '  - CRITICAL: a product only counts as a target-brand mention if the product is actually OWNED by the target brand. Products from a competing company in the same category do NOT count. For example, if the target brand is WK Kellogg, "Cheerios" is a General Mills product and is NOT a Kellogg mention; "Honey Nut Cheerios" is also General Mills. When an "Authoritative brand profile" is provided above, it is the definitive reference: only items in the "Owned products / sub-brands" list count as target-brand mentions; anything in the "Brands NOT owned" list NEVER counts even if it appears in the evidence. Without a profile, fall back to your general knowledge — but never count products from competitors in the same category. When uncertain whether a product belongs to the target brand, do NOT count it.',
-    '  - If neither the target brand name NOR any of its OWNED products/models appear in the evidence, return targetBrandMentions = [] (empty array) and evaluatedSentiment = "No brand mentions" with high confidence. This is the correct verdict even if the evidence discusses competitor brands at length, and even if Extracted SOV claims a non-zero share — that disagreement is a backend error the system needs to flag. Do NOT pick "Neutral" or any other sentiment label when only competitor brands appear; "Neutral" requires the target brand to actually be present.',
+    '  - HARD RULE — NO SENTIMENT WITHOUT A BRAND: if neither the target brand name NOR any of its OWNED products / models / aliases appear in the evidence, you MUST return targetBrandMentions = [] (empty array) AND evaluatedSentiment = "No brand mentions" with high confidence. There is no brand subject to be Favorable / Neutral / Unfavorable about — those labels require the target brand to actually be present. This is the correct verdict EVEN IF:',
+    '       (i) the evidence discusses competitor brands at length;',
+    '       (ii) the Extracted SOV claims a non-zero target share (that disagreement is a backend error to flag in the rationale);',
+    '       (iii) the topic is adjacent to the brand\'s industry but no instance of the brand appears.',
+    '     Concrete example: a Reddit thread about retirement plans that mentions Manulife, Sun Life, and RBC but never mentions WK Kellogg → targetBrandMentions = [], evaluatedSentiment = "No brand mentions". Do NOT emit Neutral as a hedge. Do NOT emit Favorable because the discussion is constructive. Do NOT emit Unfavorable because the absence of mentions feels unflattering. ONLY emit "No brand mentions".',
+    '     Note: a server-side guardrail will OVERRIDE any Favorable / Neutral / Unfavorable label to "No brand mentions" when targetBrandMentions is empty and no owned-sub-brand mentions appear in brandMentions. Treat that as the contract — emit the right label up front so your sentimentRationale doesn\'t contradict the final result.',
     '  - Do not pad the snippet arrays to match the backend. If you find 3 verifiable mentions and the backend claims 8, return 3 snippets. Each snippet must be a real verbatim quote — fabricating snippets to inflate counts will fail the audit (snippets are inspectable).',
     '  - Adjacent sentiment labels (e.g., Favorable vs Neutral) are still a disagreement — only return the label you actually judged from the evidence.',
     '  - Title-only mentions belong in targetBrandMentions (quote the title verbatim) but the sentiment should be judged from the body/transcript when available, not from the title alone.',
@@ -3448,6 +3453,44 @@ export async function runOffsiteEvaluation(
 }
 
 /**
+ * Total count of evidence-grounded TARGET-brand mentions, summing the
+ * LLM's direct target snippets with any owned-sub-brand / alias snippets
+ * it listed under brandMentions. Mirrors the fold logic in
+ * buildEvaluatedBrandShares so the "no brand mentions" guardrail uses the
+ * same definition of target-brand presence as the SOV calculation.
+ */
+function computeEffectiveTargetMentionCount(
+  llmResult: LlmEvaluation,
+  brandProfile?: BrandProfile,
+): number {
+  const targetEquivalentKeys = new Set<string>();
+  const targetKey = normalizeBrandKey(llmResult.targetBrand);
+  if (targetKey) targetEquivalentKeys.add(targetKey);
+  if (brandProfile?.ownedProducts) {
+    for (const product of brandProfile.ownedProducts) {
+      const key = normalizeBrandKey(product);
+      if (key) targetEquivalentKeys.add(key);
+    }
+  }
+  if (brandProfile?.targetBrandAliases) {
+    for (const alias of brandProfile.targetBrandAliases) {
+      const key = normalizeBrandKey(alias);
+      if (key) targetEquivalentKeys.add(key);
+    }
+  }
+  const directCount = Array.isArray(llmResult.targetBrandMentions)
+    ? llmResult.targetBrandMentions.length
+    : 0;
+  const foldedCount = llmResult.brandMentions
+    .filter((bm) => targetEquivalentKeys.has(normalizeBrandKey(bm.brand)))
+    .reduce(
+      (sum, bm) => sum + (Array.isArray(bm.mentions) ? bm.mentions.length : 0),
+      0,
+    );
+  return directCount + foldedCount;
+}
+
+/**
  * Scoring layer for the LLM-driven evaluation path. Pure-ish: given a
  * cached evidence + llmResult, produces a SentimentEvaluationResult by
  * comparing against the latest backend extractedSov / extractedSentiment.
@@ -3462,18 +3505,50 @@ async function buildFullEvaluationResult(input: {
   llmModel: string;
   env: ServerEnv;
 }): Promise<SentimentEvaluationResult> {
-  const { payload, evidence, llmResult, llmProvider, llmModel, env } = input;
+  const { payload, evidence, llmResult: rawLlmResult, llmProvider, llmModel, env } = input;
 
-  const extractedBrandShares = extractSovBrandShares(
-    payload.extractedSov,
-    llmResult.targetBrand,
-  );
   // Brand profile is itself cached per site (BRAND_PROFILE_CACHE) — this
   // is just a Map lookup unless the cache was cleared since the original
   // evaluation. We pass it into buildEvaluatedBrandShares so owned
   // products / sub-brands / aliases that the LLM listed as separate
   // brandMentions entries can fold back into the target brand's count.
   const brandProfile = await getBrandProfile(payload.site, env);
+
+  // SENTIMENT GUARDRAIL: if the evaluator produced ZERO target-brand
+  // snippets (direct + folded owned sub-brands + aliases), there is no
+  // brand to be Favorable / Neutral / Unfavorable about. Force the label
+  // to "No brand mentions" regardless of what the LLM emitted, with a
+  // deterministic rationale that names the guardrail.
+  //
+  // Why we don't trust the LLM here: the verdict prompt already tells
+  // the model to emit "No brand mentions" in this case, but models
+  // occasionally hallucinate a sentiment label anyway (especially when
+  // competitor mentions dominate the evidence). This is the hard-stop
+  // that makes hallucinated sentiment mechanically impossible.
+  const effectiveTargetCount = computeEffectiveTargetMentionCount(
+    rawLlmResult,
+    brandProfile,
+  );
+  const rawSentimentKey = normalizeSentimentValue(rawLlmResult.evaluatedSentiment);
+  const shouldGuardrail =
+    effectiveTargetCount === 0 &&
+    rawSentimentKey !== 'no_brand_mentions' &&
+    rawSentimentKey !== 'needs_review';
+  const llmResult: LlmEvaluation = shouldGuardrail
+    ? {
+        ...rawLlmResult,
+        evaluatedSentiment: 'No brand mentions',
+        sentimentRationale:
+          'No target-brand mentions were found in the evidence, so sentiment cannot be evaluated. (Server-side guardrail: the evaluator emitted "' +
+          rawLlmResult.evaluatedSentiment +
+          '" but produced zero target-brand snippets — that label was overridden to prevent hallucinated sentiment over an absent brand.)',
+      }
+    : rawLlmResult;
+
+  const extractedBrandShares = extractSovBrandShares(
+    payload.extractedSov,
+    llmResult.targetBrand,
+  );
   const evaluatedBrandShares = buildEvaluatedBrandShares({
     extractedBrandShares,
     llmResult,

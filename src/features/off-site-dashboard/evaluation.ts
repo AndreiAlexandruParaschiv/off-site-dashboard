@@ -90,12 +90,21 @@ const REGIONAL_BRAND_SUFFIX_PATTERN =
   /[\s\-/]+\(?\s*(?:us|usa|u\.s\.|u\.s\.a\.|canada|uk|u\.k\.|gb|eu|emea|apac|latam|mena|global|international|worldwide|mexico|brazil|australia|aus|new\s*zealand|nz|germany|france|spain|italy|japan|china|india|north\s*america|south\s*america)\s*\)?$/i;
 
 /**
+ * Mirror of the backend ENTITY_SUFFIX_PATTERN. Strips trailing legal-entity
+ * suffixes (Company, Inc., Corp., Ltd., LLC, Co., GmbH, AG, S.A., PLC, ...).
+ */
+const ENTITY_SUFFIX_PATTERN =
+  /[\s,]+(?:the\s+)?(?:company|incorporated|inc\.?|corporation|corp\.?|limited|ltd\.?|llc|l\.?l\.?c\.?|co\.?|gmbh|ag|s\.?a\.?|s\.?a\.?s\.?|plc|p\.?l\.?c\.?|l\.?p\.?|n\.?v\.?|kk|k\.?k\.?|holdings|group|brands)\s*\.?\s*$/i;
+
+/**
  * Normalize a brand name for comparison.
  *
  * Mirrors server/offsite-evaluate.ts: strips regional/country suffixes
  * ("WK Kellogg Canada" → "WK Kellogg"), possessives ("Kellogg's" → "Kellogg"),
- * lowercases, then removes all non-alphanumeric characters so spelling
- * variants collapse to a single key.
+ * trailing entity suffixes ("Coca-Cola Inc." → "Coca-Cola"), leading "The "
+ * ("The Coca-Cola Company" → "Coca-Cola Company" → "Coca-Cola"), lowercases,
+ * then removes all non-alphanumeric characters so spelling variants
+ * collapse to a single key.
  */
 function normalizeBrandKey(value: string): string {
   let canonical = value.trim();
@@ -108,6 +117,17 @@ function normalizeBrandKey(value: string): string {
   }
   // Strip trailing possessive 's / s' so "Kellogg's" and "Kellogg" merge.
   canonical = canonical.replace(/[’']\s*s\b/gi, '').replace(/s[’']\s*$/i, 's');
+  // Strip trailing legal-entity / business-form suffixes (Company, Inc.,
+  // Corp., Ltd., LLC, Co., ...). Loop in case of doubled suffixes like
+  // "Inc. Holdings".
+  for (let i = 0; i < 2; i += 1) {
+    const next = canonical.replace(ENTITY_SUFFIX_PATTERN, '').trim();
+    if (next === canonical || !next) break;
+    canonical = next;
+  }
+  // Strip a leading "The " so "The Coca-Cola Company" and "Coca-Cola
+  // Company" collapse to the same key (after the entity strip above).
+  canonical = canonical.replace(/^the\s+/i, '');
   return canonical.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 

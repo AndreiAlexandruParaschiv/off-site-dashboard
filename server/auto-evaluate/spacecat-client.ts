@@ -242,6 +242,17 @@ interface RawSuggestionRecord {
   suggestionId?: unknown;
   data?: unknown;
   evidence?: unknown;
+  [key: string]: unknown;
+}
+
+// Cap the size of debug samples so a single oversized field can't blow
+// up the JSON response or the GitHub Actions log.
+function truncateForDebug(value: unknown, maxChars = 1200): unknown {
+  const serialized = JSON.stringify(value, null, 2);
+  if (!serialized) return value;
+  return serialized.length > maxChars
+    ? `${serialized.slice(0, maxChars - 1)}…`
+    : serialized;
 }
 
 function extractSuggestionText(record: RawSuggestionRecord): string {
@@ -374,21 +385,33 @@ export async function listOpportunities(
   };
 }
 
+export interface ListSuggestionsResult {
+  suggestions: RawSpacecatSuggestion[];
+  /**
+   * Debug-only: when the parsed shape returns zero suggestions but the raw
+   * payload had entries, expose one sample record so we can extend the
+   * extractor without another deploy round-trip.
+   */
+  unparseableSample?: unknown;
+  rawEntryCount: number;
+}
+
 export async function listSuggestions(
   siteId: string,
   opportunityId: string,
   opportunityType: AutoEvalOpportunityType,
   env: SpacecatClientEnv,
-): Promise<RawSpacecatSuggestion[]> {
+): Promise<ListSuggestionsResult> {
   const { apiKey, baseUrl } = getCredentials(env);
   const url = `${baseUrl}/sites/${encodeURIComponent(
     siteId,
   )}/opportunities/${encodeURIComponent(opportunityId)}/suggestions`;
   const payload = await spacecatRequest<unknown>(url, apiKey);
 
-  const result: RawSpacecatSuggestion[] = [];
+  const suggestions: RawSpacecatSuggestion[] = [];
+  const rawEntries = unwrapList(payload);
 
-  for (const entry of unwrapList(payload)) {
+  for (const entry of rawEntries) {
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as RawSuggestionRecord;
     const id =
@@ -400,7 +423,7 @@ export async function listSuggestions(
     const suggestionText = extractSuggestionText(record);
     if (!id || !suggestionText) continue;
 
-    result.push({
+    suggestions.push({
       suggestionId: id,
       suggestionText,
       suggestionUrl: extractSuggestionUrl(record),
@@ -414,5 +437,12 @@ export async function listSuggestions(
   // types per-site).
   void opportunityType;
 
-  return result;
+  return {
+    suggestions,
+    rawEntryCount: rawEntries.length,
+    unparseableSample:
+      suggestions.length === 0 && rawEntries.length > 0
+        ? truncateForDebug(rawEntries[0])
+        : undefined,
+  };
 }

@@ -85,9 +85,16 @@ export interface SiteDiscoveryReport {
   siteId?: string;
   rawOpportunities: number;
   classifiedOpportunities: number;
-  totalSuggestions: number;
+  totalRawSuggestions: number;
+  totalParsedSuggestions: number;
   newlyClaimed: number;
   unclassifiedRawTypes?: string[];
+  /**
+   * Debug-only: when the raw suggestion payload has entries but our
+   * extractor returns nothing, we surface a sample so we can adapt the
+   * parser. Cleared on healthy runs.
+   */
+  sampleUnparseableSuggestion?: unknown;
 }
 
 export interface ScanSummary {
@@ -180,7 +187,8 @@ async function discoverNewSuggestions(
       site,
       rawOpportunities: 0,
       classifiedOpportunities: 0,
-      totalSuggestions: 0,
+      totalRawSuggestions: 0,
+      totalParsedSuggestions: 0,
       newlyClaimed: 0,
     };
     summary.discovery.push(siteReport);
@@ -222,9 +230,9 @@ async function discoverNewSuggestions(
     }
 
     for (const opportunity of opportunities) {
-      let suggestions;
+      let suggestionListing;
       try {
-        suggestions = await listSuggestions(
+        suggestionListing = await listSuggestions(
           siteId,
           opportunity.opportunityId,
           opportunity.opportunityType,
@@ -239,9 +247,17 @@ async function discoverNewSuggestions(
         });
         continue;
       }
-      siteReport.totalSuggestions += suggestions.length;
+      siteReport.totalRawSuggestions += suggestionListing.rawEntryCount;
+      siteReport.totalParsedSuggestions += suggestionListing.suggestions.length;
+      if (
+        suggestionListing.unparseableSample &&
+        !siteReport.sampleUnparseableSuggestion
+      ) {
+        siteReport.sampleUnparseableSuggestion =
+          suggestionListing.unparseableSample;
+      }
 
-      for (const suggestion of suggestions) {
+      for (const suggestion of suggestionListing.suggestions) {
         if (work.length >= maxPerRun) break;
 
         const seenKey = buildSeenKey(

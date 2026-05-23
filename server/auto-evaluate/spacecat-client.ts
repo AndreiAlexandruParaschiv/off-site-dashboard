@@ -176,36 +176,63 @@ export async function resolveSiteId(
   );
 }
 
-const KNOWN_TYPES: Record<string, AutoEvalOpportunityType> = {
-  reddit: 'Reddit',
-  youtube: 'YouTube',
-  'youtube-video': 'YouTube',
-  'cited-urls': 'Cited URLs',
-  'cited urls': 'Cited URLs',
-  citedurl: 'Cited URLs',
-  'citation-gap': 'Cited URLs',
-  wikipedia: 'Wikipedia',
-};
-
-// Conservative classifier: only match well-known raw type strings. The
-// dashboard has richer fuzzy classification, but for the cron we prefer
-// false negatives (skip the suggestion) over false positives (waste an
-// LLM/BrightData call on an unrelated opportunity). Anything missed here
-// stays in the dashboard for manual evaluation.
+// Mirror of the dashboard's `normalizeOpportunityType` in
+// src/features/off-site-dashboard/utils.ts. Duplicated here (rather than
+// imported) because utils.ts pulls in browser-only modules; this server
+// runs in a pure Node serverless context. Keep the two implementations in
+// sync — they read the same SpaceCat payloads.
 function classifyOpportunityType(
-  rawType: string,
+  rawValue: string,
 ): AutoEvalOpportunityType | undefined {
-  const normalized = rawType.trim().toLowerCase();
-  if (KNOWN_TYPES[normalized]) {
-    return KNOWN_TYPES[normalized];
-  }
-  if (normalized.includes('reddit')) return 'Reddit';
-  if (normalized.includes('youtube')) return 'YouTube';
-  if (normalized.includes('wikipedia') || normalized.includes('wiki')) {
-    return 'Wikipedia';
-  }
-  if (normalized.includes('cited') || normalized.includes('citation')) {
+  if (!rawValue) return undefined;
+  const typeValue = rawValue.trim().toLowerCase();
+  const compactValue = typeValue.replace(/[^a-z0-9]+/g, '');
+  if (!compactValue) return undefined;
+
+  if (compactValue.includes('reddit')) return 'Reddit';
+  if (compactValue.includes('youtube')) return 'YouTube';
+  if (compactValue.includes('wikipedia')) return 'Wikipedia';
+
+  // 'Prompt Gap' is in the dashboard's classifier but isn't a suggestion-
+  // evaluation type, so we deliberately skip it here.
+
+  if (
+    compactValue === 'url' ||
+    compactValue === 'urls' ||
+    compactValue.includes('cited') ||
+    compactValue.startsWith('url') ||
+    compactValue.endsWith('urls')
+  ) {
     return 'Cited URLs';
+  }
+
+  return undefined;
+}
+
+// The dashboard infers opportunity type from multiple signal fields when
+// `type` itself is generic (e.g. "guidance"). We replicate that fallback
+// so the cron never misses opportunities that the UI would surface.
+const OPPORTUNITY_SIGNAL_KEYS = [
+  'type',
+  'opportunityType',
+  'name',
+  'kind',
+  'category',
+  'title',
+  'description',
+] as const;
+
+function classifyOpportunityFromRecord(
+  record: Record<string, unknown>,
+): { opportunityType: AutoEvalOpportunityType; rawSignal: string } | undefined {
+  for (const key of OPPORTUNITY_SIGNAL_KEYS) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      const opportunityType = classifyOpportunityType(candidate);
+      if (opportunityType) {
+        return { opportunityType, rawSignal: candidate };
+      }
+    }
   }
   return undefined;
 }
@@ -286,43 +313,65 @@ interface RawOpportunityRecord {
   suggestions?: unknown;
 }
 
+export interface ListOpportunitiesDiagnostics {
+  rawCount: number;
+  classifiedCount: number;
+  unclassifiedRawTypes: string[];
+}
+
+export interface ListOpportunitiesResult {
+  opportunities: RawSpacecatOpportunity[];
+  diagnostics: ListOpportunitiesDiagnostics;
+}
+
 export async function listOpportunities(
   siteId: string,
   env: SpacecatClientEnv,
-): Promise<RawSpacecatOpportunity[]> {
+): Promise<ListOpportunitiesResult> {
   const { apiKey, baseUrl } = getCredentials(env);
   const url = `${baseUrl}/sites/${encodeURIComponent(siteId)}/opportunities`;
   const payload = await spacecatRequest<unknown>(url, apiKey);
 
-  const result: RawSpacecatOpportunity[] = [];
+  const opportunities: RawSpacecatOpportunity[] = [];
+  const unclassifiedRawTypes = new Set<string>();
+  const rawEntries = unwrapList(payload);
 
-  for (const entry of unwrapList(payload)) {
+  for (const entry of rawEntries) {
     if (!entry || typeof entry !== 'object') continue;
-    const record = entry as RawOpportunityRecord;
+    const record = entry as Record<string, unknown>;
     const id =
-      typeof record.id === 'string'
-        ? record.id
-        : typeof record.opportunityId === 'string'
-          ? record.opportunityId
-          : '';
-    if (!id) continue;
-    const rawType =
-      (typeof record.type === 'string' && record.type) ||
-      (typeof record.opportunityType === 'string' && record.opportunityType) ||
+      (typeof record.id === 'string' && record.id) ||
+      (typeof record.opportunityId === 'string' && record.opportunityId) ||
       '';
-    const opportunityType = classifyOpportunityType(rawType);
-    if (!opportunityType) continue;
+    if (!id) continue;
 
-    result.push({
+    const classification = classifyOpportunityFromRecord(record);
+    if (!classification) {
+      const fallbackSignal =
+        (typeof record.type === 'string' && record.type) ||
+        (typeof record.name === 'string' && record.name) ||
+        '(no type/name)';
+      unclassifiedRawTypes.add(fallbackSignal);
+      continue;
+    }
+
+    opportunities.push({
       opportunityId: id,
-      opportunityType,
-      rawType,
+      opportunityType: classification.opportunityType,
+      rawType: classification.rawSignal,
       status: typeof record.status === 'string' ? record.status : '',
       suggestions: [],
     });
   }
 
-  return result;
+  return {
+    opportunities,
+    diagnostics: {
+      rawCount: rawEntries.length,
+      classifiedCount: opportunities.length,
+      unclassifiedRawTypes: Array.from(unclassifiedRawTypes).slice(0, 10),
+    },
+  };
 }
 
 export async function listSuggestions(

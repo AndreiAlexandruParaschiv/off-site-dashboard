@@ -80,10 +80,21 @@ const SEEN_TTL_SECONDS = 180 * 24 * 60 * 60;
 const DEFAULT_MAX_PER_RUN = 2;
 const INBOX_KEY = 'auto-eval:inbox:incorrect';
 
+export interface SiteDiscoveryReport {
+  site: string;
+  siteId?: string;
+  rawOpportunities: number;
+  classifiedOpportunities: number;
+  totalSuggestions: number;
+  newlyClaimed: number;
+  unclassifiedRawTypes?: string[];
+}
+
 export interface ScanSummary {
   ran: boolean;
   skippedReason?: string;
   sites: string[];
+  discovery: SiteDiscoveryReport[];
   processed: number;
   flaggedIncorrect: number;
   issuesCreated: number;
@@ -165,7 +176,16 @@ async function discoverNewSuggestions(
   const work: ScanWorkItem[] = [];
 
   for (const site of trackedSites) {
-    if (work.length >= maxPerRun) break;
+    const siteReport: SiteDiscoveryReport = {
+      site,
+      rawOpportunities: 0,
+      classifiedOpportunities: 0,
+      totalSuggestions: 0,
+      newlyClaimed: 0,
+    };
+    summary.discovery.push(siteReport);
+
+    if (work.length >= maxPerRun) continue;
 
     let siteId: string;
     let siteUrl: string;
@@ -173,6 +193,7 @@ async function discoverNewSuggestions(
       const resolved = await resolveSiteId(site, env);
       siteId = resolved.siteId;
       siteUrl = resolved.siteUrl;
+      siteReport.siteId = siteId;
     } catch (error) {
       summary.errors.push({
         site,
@@ -182,8 +203,11 @@ async function discoverNewSuggestions(
     }
 
     let opportunities;
+    let diagnostics;
     try {
-      opportunities = await listOpportunities(siteId, env);
+      const result = await listOpportunities(siteId, env);
+      opportunities = result.opportunities;
+      diagnostics = result.diagnostics;
     } catch (error) {
       summary.errors.push({
         site,
@@ -191,10 +215,13 @@ async function discoverNewSuggestions(
       });
       continue;
     }
+    siteReport.rawOpportunities = diagnostics.rawCount;
+    siteReport.classifiedOpportunities = diagnostics.classifiedCount;
+    if (diagnostics.unclassifiedRawTypes.length > 0) {
+      siteReport.unclassifiedRawTypes = diagnostics.unclassifiedRawTypes;
+    }
 
     for (const opportunity of opportunities) {
-      if (work.length >= maxPerRun) break;
-
       let suggestions;
       try {
         suggestions = await listSuggestions(
@@ -212,6 +239,7 @@ async function discoverNewSuggestions(
         });
         continue;
       }
+      siteReport.totalSuggestions += suggestions.length;
 
       for (const suggestion of suggestions) {
         if (work.length >= maxPerRun) break;
@@ -241,6 +269,7 @@ async function discoverNewSuggestions(
           continue;
         }
         if (!claimed) continue;
+        siteReport.newlyClaimed += 1;
 
         work.push({
           site,
@@ -409,6 +438,7 @@ export async function runAutoEvaluateScan(
   const summary: ScanSummary = {
     ran: false,
     sites: trackedSites,
+    discovery: [],
     processed: 0,
     flaggedIncorrect: 0,
     issuesCreated: 0,

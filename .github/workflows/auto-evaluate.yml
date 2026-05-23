@@ -1,23 +1,42 @@
 name: Auto-evaluate off-site opportunities
 
-# Triggered once per day (09:00 UTC). We use GitHub Actions instead of
-# Vercel Cron because the Vercel Hobby plan only allows daily cron
-# schedules anyway, and Actions keeps the cron config next to the
-# application code (and supports workflow_dispatch for ad-hoc runs).
+# Manual-only for now. The scheduled trigger is intentionally disabled —
+# operators run this workflow on-demand from the Actions tab. Re-enable
+# by uncommenting the `schedule:` block below.
 #
-# To change the cadence, edit the cron expression below. Examples:
-#   '0 9 * * *'    daily at 09:00 UTC (current)
+# Cron expression examples for reference:
+#   '0 9 * * *'    daily at 09:00 UTC
 #   '0 */6 * * *'  every 6 hours
 #   '*/30 * * * *' every 30 minutes
+#
+# Workflow inputs let you override Vercel env vars per-run without
+# redeploying, which is handy for ad-hoc scans of a different site or
+# opportunity type.
 #
 # Required repository secrets:
 #   AUTO_EVAL_ENDPOINT  e.g. https://off-site-dashboard.vercel.app/api/cron/scan-opportunities
 #   AUTO_EVAL_TOKEN     matches the CRON_SECRET env var on the Vercel deployment
 
 on:
-  schedule:
-    - cron: '0 9 * * *'
-  workflow_dispatch: {}
+  # schedule:
+  #   - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      sites:
+        description: 'Sites to scan (comma-separated). Overrides AUTO_EVAL_TRACKED_SITES. Leave blank to use Vercel default.'
+        required: false
+        default: ''
+        type: string
+      types:
+        description: 'Opportunity types to evaluate (comma-separated). Overrides AUTO_EVAL_TYPES. Leave blank to use Vercel default.'
+        required: false
+        default: ''
+        type: string
+      max_per_run:
+        description: 'Max evaluations per run. Overrides AUTO_EVAL_MAX_PER_RUN. Leave blank to use Vercel default.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -49,9 +68,29 @@ jobs:
         env:
           AUTO_EVAL_ENDPOINT: ${{ secrets.AUTO_EVAL_ENDPOINT }}
           AUTO_EVAL_TOKEN: ${{ secrets.AUTO_EVAL_TOKEN }}
+          INPUT_SITES: ${{ inputs.sites }}
+          INPUT_TYPES: ${{ inputs.types }}
+          INPUT_MAX_PER_RUN: ${{ inputs.max_per_run }}
         run: |
           set -eu
           response_file="$(mktemp)"
+
+          # Build a JSON body that only includes overrides the user
+          # actually supplied. The endpoint treats missing keys as
+          # "use the Vercel env value", so blank inputs fall through
+          # to the default config.
+          payload="$(jq -n \
+            --arg sites "${INPUT_SITES:-}" \
+            --arg types "${INPUT_TYPES:-}" \
+            --arg max_per_run "${INPUT_MAX_PER_RUN:-}" \
+            '{} + (if $sites == "" then {} else {sites: $sites} end)
+                + (if $types == "" then {} else {types: $types} end)
+                + (if $max_per_run == "" then {} else {maxPerRun: $max_per_run} end)')"
+
+          echo '--- request payload ---'
+          echo "$payload"
+          echo '--- end request payload ---'
+
           status="$(curl --silent --show-error \
             --max-time 90 \
             --retry 2 --retry-delay 5 --retry-connrefused \
@@ -60,6 +99,7 @@ jobs:
             --request POST \
             --header "authorization: Bearer ${AUTO_EVAL_TOKEN}" \
             --header 'content-type: application/json' \
+            --data "$payload" \
             "$AUTO_EVAL_ENDPOINT")"
           echo "HTTP status: $status"
           echo '--- response body ---'

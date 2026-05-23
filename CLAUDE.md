@@ -127,11 +127,22 @@ an automated scan that:
 3. Runs `runOffsiteSuggestionEvaluation` on each new suggestion
 4. Persists the verdict to KV; if `Incorrect`, files a labeled GitHub issue
 
-The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`, daily
-at 09:00 UTC). Actions is used instead of Vercel Cron so the schedule lives next
-to the application code and supports `workflow_dispatch` for ad-hoc runs. The
-Actions job POSTs to `/api/cron/scan-opportunities` with
-`Authorization: Bearer ${CRON_SECRET}`.
+The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`),
+currently manual-only via `workflow_dispatch` (the scheduled trigger is
+commented out — uncomment the `schedule:` block to re-enable). The Actions
+job POSTs to `/api/cron/scan-opportunities` with
+`Authorization: Bearer ${CRON_SECRET}` and an optional JSON body of per-run
+overrides:
+
+```json
+{ "sites": "gmc.com,lovesac.com", "types": "Wikipedia,Reddit", "maxPerRun": "3" }
+```
+
+Each override key is optional. When present, it overlays the corresponding
+Vercel env var (`AUTO_EVAL_TRACKED_SITES`, `AUTO_EVAL_TYPES`,
+`AUTO_EVAL_MAX_PER_RUN`) for that single invocation only. The endpoint
+caps body size and override-string length to keep the surface area small,
+and authentication still gates everything via `CRON_SECRET`.
 
 ### State Management
 

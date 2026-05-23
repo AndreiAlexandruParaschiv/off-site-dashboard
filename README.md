@@ -97,9 +97,20 @@ get GitHub issues filed for `Incorrect` suggestions, enable the cron pipeline:
 3. **Add GitHub repo secrets** (Settings → Secrets and variables → Actions):
    - `AUTO_EVAL_ENDPOINT` — e.g. `https://off-site-dashboard.vercel.app/api/cron/scan-opportunities`
    - `AUTO_EVAL_TOKEN` — same value as `CRON_SECRET`
-4. The workflow at `.github/workflows/auto-evaluate.yml` runs once per day at
-   09:00 UTC. You can trigger it manually from the GitHub Actions tab while
-   testing, and adjust the cron expression to suit your cadence.
+4. The workflow at `.github/workflows/auto-evaluate.yml` is **manual-only**
+   right now (scheduled trigger is commented out). Run it from
+   **GitHub → Actions → "Auto-evaluate off-site opportunities" → Run workflow**.
+   The Run-workflow form exposes three optional inputs that override the
+   Vercel env vars for that single run:
+   - `sites` — comma-separated site URLs, e.g. `gmc.com,lovesac.com`. Falls
+     back to `AUTO_EVAL_TRACKED_SITES` when blank.
+   - `types` — comma-separated opportunity types, e.g. `Wikipedia,Reddit`.
+     Falls back to `AUTO_EVAL_TYPES` when blank.
+   - `max_per_run` — integer cap on evaluations. Falls back to
+     `AUTO_EVAL_MAX_PER_RUN` when blank.
+
+   Re-enable the daily schedule by uncommenting the `schedule:` block in the
+   workflow file.
 
 The pipeline atomically claims each new suggestion in KV, so overlapping runs
 never double-evaluate. Tune the cadence by editing the cron expression in the

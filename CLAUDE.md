@@ -112,6 +112,8 @@ GITHUB_NOTIFY_REPO=AndreiAlexandruParaschiv/off-site-dashboard
 GITHUB_NOTIFY_LABELS=auto-eval,incorrect         # optional, defaults shown
 AUTO_EVAL_TRACKED_SITES=gmc.com,lovesac.com      # comma-separated, no spaces required
 AUTO_EVAL_MAX_PER_RUN=2                          # optional; cap evaluations per cron tick
+AUTO_EVAL_TYPES=Wikipedia                        # optional; defaults to "Wikipedia" (POC mode)
+                                                 # widen with e.g. Wikipedia,Reddit,YouTube,Cited URLs
 AUTO_EVAL_DASHBOARD_URL=https://off-site-evaluator.<id>.amplifyapp.com  # optional deep-link
 ```
 

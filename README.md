@@ -90,6 +90,9 @@ get GitHub issues filed for `Incorrect` suggestions, enable the cron pipeline:
      fine-grained token scoped to the `off-site-dashboard` repo, write Issues)
    - `GITHUB_NOTIFY_REPO` — e.g. `AndreiAlexandruParaschiv/off-site-dashboard`
    - `AUTO_EVAL_TRACKED_SITES` — comma-separated site URLs (e.g. `gmc.com,lovesac.com`)
+   - `AUTO_EVAL_TYPES` — optional, comma-separated allowlist of opportunity types
+     to evaluate. Defaults to `Wikipedia` so deployments start in POC mode. Widen
+     with e.g. `Wikipedia,Reddit,YouTube,Cited URLs` once you trust the pipeline.
    - `AUTO_EVAL_DASHBOARD_URL` — optional, e.g. your Amplify URL, used for deep-links in issues
 3. **Add GitHub repo secrets** (Settings → Secrets and variables → Actions):
    - `AUTO_EVAL_ENDPOINT` — e.g. `https://off-site-dashboard.vercel.app/api/cron/scan-opportunities`

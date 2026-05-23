@@ -34,6 +34,7 @@ import {
   listOpportunities,
   listSuggestions,
   resolveSiteId,
+  type AutoEvalOpportunityType,
   type SpacecatClientEnv,
 } from './spacecat-client.js';
 
@@ -50,6 +51,13 @@ export type AutoEvaluateEnv = KvEnv &
     AUTO_EVAL_MAX_PER_RUN?: string;
     AUTO_EVAL_LOCK_TTL_SECONDS?: string;
     AUTO_EVAL_DASHBOARD_URL?: string;
+    /**
+     * Comma-separated allowlist of opportunity types to evaluate.
+     * Defaults to "Wikipedia" so a fresh deployment starts in POC mode
+     * and only widens scope when the operator explicitly opts in.
+     * Valid values: Reddit, YouTube, Cited URLs, Wikipedia (case-insensitive).
+     */
+    AUTO_EVAL_TYPES?: string;
     // Mirrors of the evaluator's `ServerEnv` so we can pass `env` straight
     // through without losing type information.
     AWS_BEARER_TOKEN_BEDROCK?: string;
@@ -80,6 +88,20 @@ const SEEN_TTL_SECONDS = 180 * 24 * 60 * 60;
 const DEFAULT_MAX_PER_RUN = 2;
 const INBOX_KEY = 'auto-eval:inbox:incorrect';
 
+const ALL_AUTO_EVAL_TYPES: readonly AutoEvalOpportunityType[] = [
+  'Reddit',
+  'YouTube',
+  'Cited URLs',
+  'Wikipedia',
+];
+
+// POC mode: default to Wikipedia only so a fresh deployment starts in a
+// narrow, well-validated scope. Operators widen by setting
+// AUTO_EVAL_TYPES=Wikipedia,Reddit,YouTube,Cited URLs on Vercel.
+const DEFAULT_AUTO_EVAL_TYPES: readonly AutoEvalOpportunityType[] = [
+  'Wikipedia',
+];
+
 export interface SiteDiscoveryReport {
   site: string;
   siteId?: string;
@@ -87,10 +109,17 @@ export interface SiteDiscoveryReport {
   classifiedOpportunities: number;
   inspectedOpportunities: number;
   skippedOpportunities: number;
+  /**
+   * Classified opportunities filtered out by the AUTO_EVAL_TYPES
+   * allowlist (e.g. a Reddit opportunity when only Wikipedia is enabled).
+   */
+  filteredByTypeOpportunities: number;
   totalRawSuggestions: number;
   totalParsedSuggestions: number;
   /** Suggestions from `inspect` opportunities whose content did not match any off-site type. */
   inspectedSuggestionsDropped: number;
+  /** Parsed suggestions filtered out by the AUTO_EVAL_TYPES allowlist (inspect-mode case). */
+  filteredByTypeSuggestions: number;
   newlyClaimed: number;
   unclassifiedRawTypes?: string[];
   /**
@@ -105,6 +134,7 @@ export interface ScanSummary {
   ran: boolean;
   skippedReason?: string;
   sites: string[];
+  enabledTypes: AutoEvalOpportunityType[];
   discovery: SiteDiscoveryReport[];
   processed: number;
   flaggedIncorrect: number;
@@ -118,6 +148,26 @@ function parseTrackedSites(env: AutoEvaluateEnv): string[] {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function parseEnabledTypes(
+  env: AutoEvaluateEnv,
+): ReadonlySet<AutoEvalOpportunityType> {
+  const raw = env.AUTO_EVAL_TYPES?.trim() || '';
+  if (!raw) return new Set(DEFAULT_AUTO_EVAL_TYPES);
+
+  const enabled = new Set<AutoEvalOpportunityType>();
+  for (const piece of raw.split(',')) {
+    const normalized = piece.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    for (const candidate of ALL_AUTO_EVAL_TYPES) {
+      const canonical = candidate.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (canonical === normalized) {
+        enabled.add(candidate);
+      }
+    }
+  }
+
+  return enabled.size > 0 ? enabled : new Set(DEFAULT_AUTO_EVAL_TYPES);
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number) {
@@ -181,6 +231,7 @@ interface ScanWorkItem {
 async function discoverNewSuggestions(
   trackedSites: string[],
   maxPerRun: number,
+  enabledTypes: ReadonlySet<AutoEvalOpportunityType>,
   env: AutoEvaluateEnv,
   summary: ScanSummary,
 ): Promise<ScanWorkItem[]> {
@@ -193,9 +244,11 @@ async function discoverNewSuggestions(
       classifiedOpportunities: 0,
       inspectedOpportunities: 0,
       skippedOpportunities: 0,
+      filteredByTypeOpportunities: 0,
       totalRawSuggestions: 0,
       totalParsedSuggestions: 0,
       inspectedSuggestionsDropped: 0,
+      filteredByTypeSuggestions: 0,
       newlyClaimed: 0,
     };
     summary.discovery.push(siteReport);
@@ -243,6 +296,16 @@ async function discoverNewSuggestions(
         opportunity.classification.mode === 'classified'
           ? opportunity.classification.opportunityType
           : undefined;
+
+      // Skip whole opportunities of a disabled type at this layer
+      // (saves the SpaceCat /suggestions fetch). `inspect` opportunities
+      // still need to be fetched because we don't know their suggestions'
+      // types until we read the content.
+      if (fallbackType && !enabledTypes.has(fallbackType)) {
+        siteReport.filteredByTypeOpportunities += 1;
+        continue;
+      }
+
       let suggestionListing;
       try {
         suggestionListing = await listSuggestions(
@@ -274,6 +337,15 @@ async function discoverNewSuggestions(
 
       for (const classifiedSuggestion of suggestionListing.suggestions) {
         if (work.length >= maxPerRun) break;
+
+        // For `inspect`-mode opportunities, each suggestion's type was
+        // decided per-suggestion. Filter out the ones whose type isn't on
+        // the allowlist.
+        if (!enabledTypes.has(classifiedSuggestion.opportunityType)) {
+          siteReport.filteredByTypeSuggestions += 1;
+          continue;
+        }
+
         const suggestion = classifiedSuggestion.suggestion;
         const seenKey = buildSeenKey(
           siteId,
@@ -466,9 +538,11 @@ export async function runAutoEvaluateScan(
   env: AutoEvaluateEnv,
 ): Promise<ScanSummary> {
   const trackedSites = parseTrackedSites(env);
+  const enabledTypes = parseEnabledTypes(env);
   const summary: ScanSummary = {
     ran: false,
     sites: trackedSites,
+    enabledTypes: Array.from(enabledTypes),
     discovery: [],
     processed: 0,
     flaggedIncorrect: 0,
@@ -517,6 +591,7 @@ export async function runAutoEvaluateScan(
     const work = await discoverNewSuggestions(
       trackedSites,
       maxPerRun,
+      enabledTypes,
       env,
       summary,
     );

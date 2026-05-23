@@ -57,6 +57,11 @@ When adding a new evaluation endpoint, add both a `server/` implementation and a
 | `server/offsite-evaluate-suggestion.ts` | Suggestion fact-checking (multi-source evidence gathering + LLM verdict) |
 | `server/offsite-evaluate-wikipedia-url.ts` | Wikipedia URL validation (title/content matching) |
 | `server/spacecat-proxy.ts` | Optional CORS proxy for SpaceCat API requests |
+| `server/auto-evaluate/scan.ts` | Auto-evaluation orchestrator (claim → evaluate → persist → notify) |
+| `server/auto-evaluate/kv.ts` | Upstash REST wrapper for Vercel KV |
+| `server/auto-evaluate/spacecat-client.ts` | Server-only SpaceCat client (no browser deps) |
+| `server/auto-evaluate/github-notify.ts` | GitHub Issues client for `Incorrect` verdicts |
+| `api/cron/scan-opportunities.ts` | HTTP entry; bearer auth via `CRON_SECRET` |
 
 ### Evaluation Caching
 
@@ -95,7 +100,34 @@ BRIGHTDATA_REDDIT_COMMENT_DATASET_ID=...
 # Amplify + Vercel split deployment:
 VITE_SERVER_API_BASE_URL=https://your-vercel.vercel.app  # frontend only
 APP_ALLOWED_ORIGINS=https://your-amplify-url.com         # backend CORS
+
+# Auto-evaluation cron (optional — only required if running the
+# /api/cron/scan-opportunities endpoint):
+CRON_SECRET=...                                  # bearer token; matches GH Actions secret
+KV_REST_API_URL=https://<id>.upstash.io          # auto-set by Vercel KV integration
+KV_REST_API_TOKEN=...                            # auto-set by Vercel KV integration
+SPACECAT_API_KEY=...                             # also used by /api/spacecat proxy
+GITHUB_NOTIFY_TOKEN=ghp_...                      # PAT with `repo` scope for issue creation
+GITHUB_NOTIFY_REPO=AndreiAlexandruParaschiv/off-site-dashboard
+GITHUB_NOTIFY_LABELS=auto-eval,incorrect         # optional, defaults shown
+AUTO_EVAL_TRACKED_SITES=gmc.com,lovesac.com      # comma-separated, no spaces required
+AUTO_EVAL_MAX_PER_RUN=2                          # optional; cap evaluations per cron tick
+AUTO_EVAL_DASHBOARD_URL=https://off-site-evaluator.<id>.amplifyapp.com  # optional deep-link
 ```
+
+### Auto-evaluation pipeline
+
+Files under `server/auto-evaluate/` and `api/cron/scan-opportunities.ts` implement
+an automated scan that:
+
+1. Walks each site in `AUTO_EVAL_TRACKED_SITES` via the SpaceCat API
+2. Atomically claims new suggestions in Vercel KV (so overlapping runs never double-evaluate)
+3. Runs `runOffsiteSuggestionEvaluation` on each new suggestion
+4. Persists the verdict to KV; if `Incorrect`, files a labeled GitHub issue
+
+The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`, every 30
+min) because the Vercel Hobby plan only allows daily cron schedules. The Actions
+job POSTs to `/api/cron/scan-opportunities` with `Authorization: Bearer ${CRON_SECRET}`.
 
 ### State Management
 

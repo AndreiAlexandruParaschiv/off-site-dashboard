@@ -30,7 +30,14 @@ export interface RawSpacecatSuggestion {
 
 export interface RawSpacecatOpportunity {
   opportunityId: string;
-  opportunityType: AutoEvalOpportunityType;
+  /**
+   * `classified`: opportunity-level signals identified the off-site type.
+   * `inspect`: opportunity is a catchall (e.g. generic-opportunity); we
+   * need to classify each suggestion individually by its content.
+   */
+  classification:
+    | { mode: 'classified'; opportunityType: AutoEvalOpportunityType }
+    | { mode: 'inspect' };
   rawType: string;
   status: string;
   suggestions: RawSpacecatSuggestion[];
@@ -222,19 +229,101 @@ const OPPORTUNITY_SIGNAL_KEYS = [
   'description',
 ] as const;
 
-function classifyOpportunityFromRecord(
+// Hard skip list — on-page / technical SEO opportunity types that have
+// no off-site analysis. Avoids wasting SpaceCat /suggestions fetches and
+// LLM cycles. Keep lowercase; matched after `.toLowerCase().trim()`.
+const SKIP_OPPORTUNITY_RAW_TYPES = new Set([
+  'prerender',
+  'readability',
+  'faq',
+  'meta-tags',
+  'summarization',
+  'canonical',
+  'toc',
+  'high-organic-low-ctr',
+  'sitemap',
+  'alt-text',
+  'cwv',
+  'paid-traffic',
+  'generic-autofix-edge',
+]);
+
+// Types that don't classify on opportunity-level fields BUT may contain
+// off-site analyses in their suggestions' content. We fetch their
+// suggestions and inspect each one individually.
+const INSPECT_OPPORTUNITY_RAW_TYPES = new Set([
+  'generic-opportunity',
+]);
+
+export type OpportunityClassification =
+  | {
+      mode: 'classified';
+      opportunityType: AutoEvalOpportunityType;
+      rawSignal: string;
+    }
+  | { mode: 'inspect'; rawSignal: string }
+  | { mode: 'skip'; rawSignal: string };
+
+export function classifyOpportunityFromRecord(
   record: Record<string, unknown>,
-): { opportunityType: AutoEvalOpportunityType; rawSignal: string } | undefined {
+): OpportunityClassification {
+  const rawTypeValue =
+    (typeof record.type === 'string' && record.type) ||
+    (typeof record.opportunityType === 'string' && record.opportunityType) ||
+    '';
+  const normalizedRawType = rawTypeValue.trim().toLowerCase();
+
+  if (SKIP_OPPORTUNITY_RAW_TYPES.has(normalizedRawType)) {
+    return { mode: 'skip', rawSignal: rawTypeValue || '(no type)' };
+  }
+
   for (const key of OPPORTUNITY_SIGNAL_KEYS) {
     const candidate = record[key];
     if (typeof candidate === 'string' && candidate.trim()) {
       const opportunityType = classifyOpportunityType(candidate);
       if (opportunityType) {
-        return { opportunityType, rawSignal: candidate };
+        return { mode: 'classified', opportunityType, rawSignal: candidate };
       }
     }
   }
-  return undefined;
+
+  if (INSPECT_OPPORTUNITY_RAW_TYPES.has(normalizedRawType)) {
+    return { mode: 'inspect', rawSignal: rawTypeValue || '(no type)' };
+  }
+
+  return { mode: 'skip', rawSignal: rawTypeValue || '(no type)' };
+}
+
+/**
+ * For opportunities that didn't classify on opportunity-level fields
+ * (e.g. generic-opportunity), inspect a single suggestion's content
+ * (markdown body, structured title/rationale) and decide whether it is
+ * actually a Reddit / YouTube / Cited URLs / Wikipedia analysis.
+ */
+export function classifySuggestionContent(
+  record: RawSuggestionRecord,
+): AutoEvalOpportunityType | undefined {
+  const data = (record.data && typeof record.data === 'object'
+    ? (record.data as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+
+  const signals: string[] = [];
+  for (const key of ['suggestionValue', 'title', 'rationale', 'body']) {
+    const value = data[key];
+    if (typeof value === 'string' && value.trim()) {
+      signals.push(value);
+    }
+  }
+  if (Array.isArray(data.actionItems)) {
+    for (const item of data.actionItems as unknown[]) {
+      if (typeof item === 'string' && item.trim()) {
+        signals.push(item);
+      }
+    }
+  }
+  if (signals.length === 0) return undefined;
+
+  return classifyOpportunityType(signals.join(' '));
 }
 
 interface RawSuggestionRecord {
@@ -456,6 +545,8 @@ interface RawOpportunityRecord {
 export interface ListOpportunitiesDiagnostics {
   rawCount: number;
   classifiedCount: number;
+  inspectCount: number;
+  skippedCount: number;
   unclassifiedRawTypes: string[];
 }
 
@@ -474,6 +565,8 @@ export async function listOpportunities(
 
   const opportunities: RawSpacecatOpportunity[] = [];
   const unclassifiedRawTypes = new Set<string>();
+  let inspectCount = 0;
+  let skippedCount = 0;
   const rawEntries = unwrapList(payload);
 
   for (const entry of rawEntries) {
@@ -486,18 +579,31 @@ export async function listOpportunities(
     if (!id) continue;
 
     const classification = classifyOpportunityFromRecord(record);
-    if (!classification) {
-      const fallbackSignal =
-        (typeof record.type === 'string' && record.type) ||
-        (typeof record.name === 'string' && record.name) ||
-        '(no type/name)';
-      unclassifiedRawTypes.add(fallbackSignal);
+
+    if (classification.mode === 'skip') {
+      skippedCount += 1;
+      unclassifiedRawTypes.add(classification.rawSignal);
+      continue;
+    }
+
+    if (classification.mode === 'inspect') {
+      inspectCount += 1;
+      opportunities.push({
+        opportunityId: id,
+        classification: { mode: 'inspect' },
+        rawType: classification.rawSignal,
+        status: typeof record.status === 'string' ? record.status : '',
+        suggestions: [],
+      });
       continue;
     }
 
     opportunities.push({
       opportunityId: id,
-      opportunityType: classification.opportunityType,
+      classification: {
+        mode: 'classified',
+        opportunityType: classification.opportunityType,
+      },
       rawType: classification.rawSignal,
       status: typeof record.status === 'string' ? record.status : '',
       suggestions: [],
@@ -508,14 +614,23 @@ export async function listOpportunities(
     opportunities,
     diagnostics: {
       rawCount: rawEntries.length,
-      classifiedCount: opportunities.length,
+      classifiedCount: opportunities.filter(
+        (opportunity) => opportunity.classification.mode === 'classified',
+      ).length,
+      inspectCount,
+      skippedCount,
       unclassifiedRawTypes: Array.from(unclassifiedRawTypes).slice(0, 10),
     },
   };
 }
 
+export interface ClassifiedSuggestion {
+  suggestion: RawSpacecatSuggestion;
+  opportunityType: AutoEvalOpportunityType;
+}
+
 export interface ListSuggestionsResult {
-  suggestions: RawSpacecatSuggestion[];
+  suggestions: ClassifiedSuggestion[];
   /**
    * Debug-only: when the parsed shape returns zero suggestions but the raw
    * payload had entries, expose one sample record so we can extend the
@@ -523,12 +638,27 @@ export interface ListSuggestionsResult {
    */
   unparseableSample?: unknown;
   rawEntryCount: number;
+  /**
+   * Number of suggestions that parsed correctly but whose content did
+   * not match any off-site type (only relevant for `inspect` mode).
+   */
+  unclassifiedByContentCount: number;
 }
 
+/**
+ * Fetch and parse the suggestions for one opportunity.
+ *
+ * @param fallbackType When the parent opportunity was classified at the
+ * opportunity level, pass its type and every parsed suggestion adopts it.
+ * When undefined (i.e. the parent was 'inspect' mode), each suggestion is
+ * classified individually by its content, and those that don't match an
+ * off-site type are dropped (and counted in
+ * `unclassifiedByContentCount`).
+ */
 export async function listSuggestions(
   siteId: string,
   opportunityId: string,
-  opportunityType: AutoEvalOpportunityType,
+  fallbackType: AutoEvalOpportunityType | undefined,
   env: SpacecatClientEnv,
 ): Promise<ListSuggestionsResult> {
   const { apiKey, baseUrl } = getCredentials(env);
@@ -537,7 +667,8 @@ export async function listSuggestions(
   )}/opportunities/${encodeURIComponent(opportunityId)}/suggestions`;
   const payload = await spacecatRequest<unknown>(url, apiKey);
 
-  const suggestions: RawSpacecatSuggestion[] = [];
+  const suggestions: ClassifiedSuggestion[] = [];
+  let unclassifiedByContentCount = 0;
   const rawEntries = unwrapList(payload);
 
   for (const entry of rawEntries) {
@@ -552,22 +683,27 @@ export async function listSuggestions(
     const suggestionText = extractSuggestionText(record);
     if (!id || !suggestionText) continue;
 
+    const opportunityType =
+      fallbackType ?? classifySuggestionContent(record);
+    if (!opportunityType) {
+      unclassifiedByContentCount += 1;
+      continue;
+    }
+
     suggestions.push({
-      suggestionId: id,
-      suggestionText,
-      suggestionUrl: extractSuggestionUrl(record),
-      evidenceItems: extractEvidenceItems(record),
+      opportunityType,
+      suggestion: {
+        suggestionId: id,
+        suggestionText,
+        suggestionUrl: extractSuggestionUrl(record),
+        evidenceItems: extractEvidenceItems(record),
+      },
     });
   }
 
-  // Opportunity type is captured here so callers can build evaluation
-  // requests without re-classifying. Currently unused by the loop but kept
-  // in the function signature for future filtering (e.g. skipping certain
-  // types per-site).
-  void opportunityType;
-
   return {
     suggestions,
+    unclassifiedByContentCount,
     rawEntryCount: rawEntries.length,
     unparseableSample:
       suggestions.length === 0 && rawEntries.length > 0

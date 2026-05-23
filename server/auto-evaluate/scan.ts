@@ -85,8 +85,12 @@ export interface SiteDiscoveryReport {
   siteId?: string;
   rawOpportunities: number;
   classifiedOpportunities: number;
+  inspectedOpportunities: number;
+  skippedOpportunities: number;
   totalRawSuggestions: number;
   totalParsedSuggestions: number;
+  /** Suggestions from `inspect` opportunities whose content did not match any off-site type. */
+  inspectedSuggestionsDropped: number;
   newlyClaimed: number;
   unclassifiedRawTypes?: string[];
   /**
@@ -187,8 +191,11 @@ async function discoverNewSuggestions(
       site,
       rawOpportunities: 0,
       classifiedOpportunities: 0,
+      inspectedOpportunities: 0,
+      skippedOpportunities: 0,
       totalRawSuggestions: 0,
       totalParsedSuggestions: 0,
+      inspectedSuggestionsDropped: 0,
       newlyClaimed: 0,
     };
     summary.discovery.push(siteReport);
@@ -225,17 +232,23 @@ async function discoverNewSuggestions(
     }
     siteReport.rawOpportunities = diagnostics.rawCount;
     siteReport.classifiedOpportunities = diagnostics.classifiedCount;
+    siteReport.inspectedOpportunities = diagnostics.inspectCount;
+    siteReport.skippedOpportunities = diagnostics.skippedCount;
     if (diagnostics.unclassifiedRawTypes.length > 0) {
       siteReport.unclassifiedRawTypes = diagnostics.unclassifiedRawTypes;
     }
 
     for (const opportunity of opportunities) {
+      const fallbackType =
+        opportunity.classification.mode === 'classified'
+          ? opportunity.classification.opportunityType
+          : undefined;
       let suggestionListing;
       try {
         suggestionListing = await listSuggestions(
           siteId,
           opportunity.opportunityId,
-          opportunity.opportunityType,
+          fallbackType,
           env,
         );
       } catch (error) {
@@ -249,6 +262,8 @@ async function discoverNewSuggestions(
       }
       siteReport.totalRawSuggestions += suggestionListing.rawEntryCount;
       siteReport.totalParsedSuggestions += suggestionListing.suggestions.length;
+      siteReport.inspectedSuggestionsDropped +=
+        suggestionListing.unclassifiedByContentCount;
       if (
         suggestionListing.unparseableSample &&
         !siteReport.sampleUnparseableSuggestion
@@ -257,9 +272,9 @@ async function discoverNewSuggestions(
           suggestionListing.unparseableSample;
       }
 
-      for (const suggestion of suggestionListing.suggestions) {
+      for (const classifiedSuggestion of suggestionListing.suggestions) {
         if (work.length >= maxPerRun) break;
-
+        const suggestion = classifiedSuggestion.suggestion;
         const seenKey = buildSeenKey(
           siteId,
           opportunity.opportunityId,
@@ -292,7 +307,7 @@ async function discoverNewSuggestions(
           siteId,
           siteUrl,
           opportunityId: opportunity.opportunityId,
-          opportunityType: opportunity.opportunityType,
+          opportunityType: classifiedSuggestion.opportunityType,
           suggestionId: suggestion.suggestionId,
           suggestionText: suggestion.suggestionText,
           suggestionUrl: suggestion.suggestionUrl,

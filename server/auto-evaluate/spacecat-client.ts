@@ -255,18 +255,67 @@ function truncateForDebug(value: unknown, maxChars = 1200): unknown {
     : serialized;
 }
 
-// SpaceCat's Reddit / YouTube / Cited URLs / Wikipedia suggestions all
-// arrive with the body in `data.suggestionValue` as a markdown blob
-// (Share of Voice tables, sentiment summaries, recommendations, etc.).
-// The dashboard parses this into per-recommendation sub-suggestions via
-// DOMParser-on-<details>; we cannot do that server-side without a Node
-// DOM polyfill. For the MVP we treat the whole markdown as a single
-// fact-checkable unit (one verdict per opportunity) — coarser than the
-// dashboard but still useful for "tell me which analyses are wrong".
+// SpaceCat returns suggestions in (at least) two different shapes,
+// depending on opportunity type:
+//
+// Shape A — markdown blob:
+//   data.suggestionValue = "# Key Insights\n| Metric | Value | ..."
+//   (Share of Voice, sentiment, recommendations rendered as markdown)
+//
+// Shape B — structured strategic recommendation:
+//   data.title       = "Strengthen High-Trust Coverage"
+//   data.priority    = "low" | "medium" | "high"
+//   data.rationale   = "4 favorable URLs with 282 citations..."
+//   data.actionItems = ["Reach out to www.healthline.com ...", ...]
+//
+// Both shapes need a single string `suggestionText` for the LLM
+// evaluator. The dashboard breaks Shape A into per-recommendation
+// sub-suggestions via DOMParser; we cannot do that server-side without
+// a Node DOM polyfill, so the cron MVP treats each shape as a single
+// fact-checkable unit (one verdict per opportunity).
+
+function joinNonEmpty(lines: ReadonlyArray<string>): string {
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function extractStructuredRecommendationText(
+  data: Record<string, unknown>,
+): string {
+  const titleRaw = typeof data.title === 'string' ? data.title.trim() : '';
+  const priorityRaw =
+    typeof data.priority === 'string' ? data.priority.trim() : '';
+  const rationaleRaw =
+    typeof data.rationale === 'string' ? data.rationale.trim() : '';
+  const actionItemsRaw = Array.isArray(data.actionItems)
+    ? (data.actionItems as unknown[])
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    : [];
+
+  if (!titleRaw && !rationaleRaw && actionItemsRaw.length === 0) {
+    return '';
+  }
+
+  const headline = priorityRaw
+    ? `[${priorityRaw.toUpperCase()}] ${titleRaw}`.trim()
+    : titleRaw;
+
+  const actionItemsBlock =
+    actionItemsRaw.length > 0
+      ? `Action items:\n${actionItemsRaw.map((item) => `- ${item}`).join('\n')}`
+      : '';
+
+  return joinNonEmpty([headline, rationaleRaw, actionItemsBlock]);
+}
+
 function extractSuggestionText(record: RawSuggestionRecord): string {
   const data = (record.data && typeof record.data === 'object'
     ? (record.data as Record<string, unknown>)
     : {}) as Record<string, unknown>;
+
   const candidates = [
     data.suggestionValue,
     data.suggestion,
@@ -281,7 +330,8 @@ function extractSuggestionText(record: RawSuggestionRecord): string {
       return candidate.trim();
     }
   }
-  return '';
+
+  return extractStructuredRecommendationText(data);
 }
 
 // Pull the first http(s) URL out of any string field, then out of the
@@ -323,9 +373,24 @@ function extractSuggestionUrl(record: RawSuggestionRecord): string | undefined {
     }
   }
 
+  const actionItemUrl = Array.isArray(data.actionItems)
+    ? (data.actionItems as unknown[])
+        .map((entry) => extractFirstUrl(entry))
+        .find(Boolean)
+    : undefined;
+
   return (
-    extractFirstUrl(data.suggestionValue) ?? extractFirstUrl(data.suggestion)
+    extractFirstUrl(data.suggestionValue) ??
+    extractFirstUrl(data.suggestion) ??
+    extractFirstUrl(data.rationale) ??
+    actionItemUrl
   );
+}
+
+function collectUrlsFromString(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  const matches = value.match(URL_REGEX) ?? [];
+  return matches.map((url) => url.replace(/[)\].,;:!?]+$/, ''));
 }
 
 function extractEvidenceItems(record: RawSuggestionRecord): string[] {
@@ -340,17 +405,22 @@ function extractEvidenceItems(record: RawSuggestionRecord): string[] {
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean);
 
-  const markdownUrls = (() => {
-    const value = data.suggestionValue;
-    if (typeof value !== 'string') return [] as string[];
-    const matches = value.match(URL_REGEX) ?? [];
-    return matches.map((url) => url.replace(/[)\].,;:!?]+$/, ''));
-  })();
+  const actionItemUrls = Array.isArray(data.actionItems)
+    ? (data.actionItems as unknown[]).flatMap((entry) =>
+        collectUrlsFromString(entry),
+      )
+    : [];
+
+  const candidateUrls = [
+    ...collectUrlsFromString(data.suggestionValue),
+    ...collectUrlsFromString(data.rationale),
+    ...actionItemUrls,
+  ];
 
   // Dedupe while preserving order.
   const seen = new Set<string>();
   const merged: string[] = [];
-  for (const item of [...explicitItems, ...markdownUrls]) {
+  for (const item of [...explicitItems, ...candidateUrls]) {
     if (!seen.has(item)) {
       seen.add(item);
       merged.push(item);

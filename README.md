@@ -97,8 +97,9 @@ get GitHub issues filed for `Incorrect` suggestions, enable the cron pipeline:
 3. **Add GitHub repo secrets** (Settings → Secrets and variables → Actions):
    - `AUTO_EVAL_ENDPOINT` — e.g. `https://off-site-dashboard.vercel.app/api/cron/scan-opportunities`
    - `AUTO_EVAL_TOKEN` — same value as `CRON_SECRET`
-4. The workflow at `.github/workflows/auto-evaluate.yml` runs every 30 minutes.
-   You can trigger it manually from the GitHub Actions tab while testing.
+4. The workflow at `.github/workflows/auto-evaluate.yml` runs once per day at
+   09:00 UTC. You can trigger it manually from the GitHub Actions tab while
+   testing, and adjust the cron expression to suit your cadence.
 
 The pipeline atomically claims each new suggestion in KV, so overlapping runs
 never double-evaluate. Tune the cadence by editing the cron expression in the

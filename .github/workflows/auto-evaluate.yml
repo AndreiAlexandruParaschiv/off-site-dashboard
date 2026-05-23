@@ -1,8 +1,14 @@
 name: Auto-evaluate off-site opportunities
 
-# Triggered every 30 minutes. We use GitHub Actions instead of Vercel Cron
-# because the Vercel Hobby plan only allows daily cron schedules; Actions
-# gives us minute-level scheduling for free without changing plans.
+# Triggered once per day (09:00 UTC). We use GitHub Actions instead of
+# Vercel Cron because the Vercel Hobby plan only allows daily cron
+# schedules anyway, and Actions keeps the cron config next to the
+# application code (and supports workflow_dispatch for ad-hoc runs).
+#
+# To change the cadence, edit the cron expression below. Examples:
+#   '0 9 * * *'    daily at 09:00 UTC (current)
+#   '0 */6 * * *'  every 6 hours
+#   '*/30 * * * *' every 30 minutes
 #
 # Required repository secrets:
 #   AUTO_EVAL_ENDPOINT  e.g. https://off-site-dashboard.vercel.app/api/cron/scan-opportunities
@@ -10,7 +16,7 @@ name: Auto-evaluate off-site opportunities
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 9 * * *'
   workflow_dispatch: {}
 
 permissions:

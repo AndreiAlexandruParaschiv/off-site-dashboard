@@ -127,9 +127,11 @@ an automated scan that:
 3. Runs `runOffsiteSuggestionEvaluation` on each new suggestion
 4. Persists the verdict to KV; if `Incorrect`, files a labeled GitHub issue
 
-The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`, every 30
-min) because the Vercel Hobby plan only allows daily cron schedules. The Actions
-job POSTs to `/api/cron/scan-opportunities` with `Authorization: Bearer ${CRON_SECRET}`.
+The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`, daily
+at 09:00 UTC). Actions is used instead of Vercel Cron so the schedule lives next
+to the application code and supports `workflow_dispatch` for ad-hoc runs. The
+Actions job POSTs to `/api/cron/scan-opportunities` with
+`Authorization: Bearer ${CRON_SECRET}`.
 
 ### State Management
 

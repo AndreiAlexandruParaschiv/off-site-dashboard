@@ -255,16 +255,26 @@ function truncateForDebug(value: unknown, maxChars = 1200): unknown {
     : serialized;
 }
 
+// SpaceCat's Reddit / YouTube / Cited URLs / Wikipedia suggestions all
+// arrive with the body in `data.suggestionValue` as a markdown blob
+// (Share of Voice tables, sentiment summaries, recommendations, etc.).
+// The dashboard parses this into per-recommendation sub-suggestions via
+// DOMParser-on-<details>; we cannot do that server-side without a Node
+// DOM polyfill. For the MVP we treat the whole markdown as a single
+// fact-checkable unit (one verdict per opportunity) — coarser than the
+// dashboard but still useful for "tell me which analyses are wrong".
 function extractSuggestionText(record: RawSuggestionRecord): string {
   const data = (record.data && typeof record.data === 'object'
     ? (record.data as Record<string, unknown>)
     : {}) as Record<string, unknown>;
   const candidates = [
+    data.suggestionValue,
     data.suggestion,
     data.text,
     data.recommendation,
     data.body,
     data.value,
+    data.content,
   ];
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate.trim()) {
@@ -274,30 +284,79 @@ function extractSuggestionText(record: RawSuggestionRecord): string {
   return '';
 }
 
+// Pull the first http(s) URL out of any string field, then out of the
+// markdown body. Used both as the "primary" suggestion URL (for issue
+// linkbacks) and as evidence for the LLM evaluator.
+const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/gi;
+
+function extractFirstUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = value.match(URL_REGEX);
+  return match?.[0]?.replace(/[)\].,;:!?]+$/, '');
+}
+
 function extractSuggestionUrl(record: RawSuggestionRecord): string | undefined {
   const data = (record.data && typeof record.data === 'object'
     ? (record.data as Record<string, unknown>)
     : {}) as Record<string, unknown>;
-  const candidates = [data.url, data.suggestionUrl, data.link, data.source];
-  for (const candidate of candidates) {
+  const directCandidates = [
+    data.url,
+    data.suggestionUrl,
+    data.link,
+    data.source,
+    data.pageUrl,
+  ];
+  for (const candidate of directCandidates) {
     if (typeof candidate === 'string' && candidate.trim()) {
       return candidate.trim();
     }
   }
-  return undefined;
+
+  const recommendations = Array.isArray(data.recommendations)
+    ? (data.recommendations as unknown[])
+    : [];
+  for (const rec of recommendations) {
+    if (!rec || typeof rec !== 'object') continue;
+    const candidate = (rec as Record<string, unknown>).pageUrl;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return (
+    extractFirstUrl(data.suggestionValue) ?? extractFirstUrl(data.suggestion)
+  );
 }
 
 function extractEvidenceItems(record: RawSuggestionRecord): string[] {
   const data = (record.data && typeof record.data === 'object'
     ? (record.data as Record<string, unknown>)
     : {}) as Record<string, unknown>;
-  const raw =
+  const explicit =
     (Array.isArray(data.evidence) && data.evidence) ||
     (Array.isArray(record.evidence) && record.evidence) ||
     [];
-  return (raw as unknown[])
+  const explicitItems = (explicit as unknown[])
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean);
+
+  const markdownUrls = (() => {
+    const value = data.suggestionValue;
+    if (typeof value !== 'string') return [] as string[];
+    const matches = value.match(URL_REGEX) ?? [];
+    return matches.map((url) => url.replace(/[)\].,;:!?]+$/, ''));
+  })();
+
+  // Dedupe while preserving order.
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const item of [...explicitItems, ...markdownUrls]) {
+    if (!seen.has(item)) {
+      seen.add(item);
+      merged.push(item);
+    }
+  }
+  return merged;
 }
 
 function unwrapList(payload: unknown): unknown[] {

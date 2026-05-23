@@ -101,31 +101,54 @@ function truncate(value: string, limit: number) {
   return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
 }
 
+// Suggestion bodies frequently start with markdown headers, bullets, or
+// link syntax (e.g. "# WK Kellogg - Wikipedia Improvement Suggestions
+// **Your Wikipedia Page:** [https://..."). Stripping the markup gives a
+// cleaner GitHub issue title.
+function stripMarkdownForTitle(value: string): string {
+  return value
+    .replace(/```[\s\S]*?```/g, ' ') // fenced code
+    .replace(/`([^`]+)`/g, '$1') // inline code
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ') // images
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links → label
+    .replace(/^[#>\s\-*]+/, ' ') // leading markdown punctuation
+    .replace(/\*+/g, '') // bold/italic markers
+    .replace(/_{2,}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function buildIssueTitle(payload: IncorrectFindingPayload): string {
-  return `[Auto-eval] Incorrect (${payload.opportunityType}): ${truncate(
-    payload.suggestionText,
-    80,
-  )} — ${payload.site}`;
+  const cleaned = stripMarkdownForTitle(payload.suggestionText);
+  const headline = cleaned ? truncate(cleaned, 90) : '(no suggestion text)';
+  return `[Auto-eval] Incorrect (${payload.opportunityType}): ${headline} — ${payload.site}`;
+}
+
+// GitHub Markdown supports <details>/<summary> collapse blocks. Indenting
+// a markdown body inside <details> requires a blank line before and after
+// the inner block, otherwise GitHub renders it as plain text.
+function collapsible(summary: string, body: string): string {
+  return [
+    '<details>',
+    `<summary>${summary}</summary>`,
+    '',
+    body,
+    '',
+    '</details>',
+  ].join('\n');
 }
 
 function buildIssueBody(payload: IncorrectFindingPayload): string {
   const lines: string[] = [];
 
-  lines.push('## Verdict: Incorrect', '');
-  lines.push(`- **Site:** ${payload.site}`);
-  lines.push(
-    `- **Opportunity type:** ${payload.opportunityType} (\`${payload.opportunityId}\`)`,
-  );
-  lines.push(`- **Suggestion ID:** \`${payload.suggestionId}\``);
-  if (payload.suggestionUrl) {
-    lines.push(`- **Source URL:** ${payload.suggestionUrl}`);
-  }
-  lines.push(`- **Evaluated at:** ${payload.evaluatedAt}`);
+  // TL;DR header — first thing the reviewer sees.
+  lines.push('## ❌ Verdict: Incorrect', '');
+  lines.push(`**Site:** ${payload.site} · **Type:** ${payload.opportunityType}`);
   lines.push('');
+  lines.push('---', '');
 
-  lines.push('### Suggestion', '', payload.suggestionText, '');
-
-  lines.push('### Why it was flagged', '', payload.rationale, '');
+  // Actionable content first — what's wrong, what it should be.
+  lines.push('### Why it was flagged', '', payload.rationale.trim() || '_(no rationale provided)_', '');
 
   if (payload.correctedSuggestion?.trim()) {
     lines.push(
@@ -137,8 +160,12 @@ function buildIssueBody(payload: IncorrectFindingPayload): string {
   }
 
   if (payload.evidenceSnippet.trim()) {
-    lines.push('### Evidence snippet', '', '> ' +
-      payload.evidenceSnippet.trim().replace(/\n/g, '\n> '), '');
+    lines.push(
+      '### Evidence',
+      '',
+      '> ' + payload.evidenceSnippet.trim().replace(/\n/g, '\n> '),
+      '',
+    );
   }
 
   if (payload.evidenceSourceUrls.length > 0) {
@@ -149,9 +176,28 @@ function buildIssueBody(payload: IncorrectFindingPayload): string {
     lines.push('');
   }
 
-  if (payload.dashboardUrl) {
-    lines.push(`[Open in dashboard →](${payload.dashboardUrl})`, '');
+  // Metadata + raw payload last, both collapsed so they don't crowd the
+  // page. The reviewer can expand them when they need them.
+  const metadataLines: string[] = [
+    `- **Opportunity ID:** \`${payload.opportunityId}\``,
+    `- **Suggestion ID:** \`${payload.suggestionId}\``,
+  ];
+  if (payload.suggestionUrl) {
+    metadataLines.push(`- **Source URL:** ${payload.suggestionUrl}`);
   }
+  metadataLines.push(`- **Evaluated at:** ${payload.evaluatedAt}`);
+  if (payload.dashboardUrl) {
+    metadataLines.push(`- **Open in dashboard:** ${payload.dashboardUrl}`);
+  }
+  lines.push(collapsible('Metadata', metadataLines.join('\n')), '');
+
+  lines.push(
+    collapsible(
+      'Original suggestion (raw)',
+      payload.suggestionText,
+    ),
+    '',
+  );
 
   lines.push(
     '---',

@@ -13,6 +13,7 @@ import {
   getConfidenceBand,
   getConfidenceLabel,
 } from './evaluation';
+import { BackOfficeView } from './BackOfficeView';
 import { SuggestionsPatcherView } from './SuggestionsPatcherView';
 import { ALL_OPPORTUNITIES_VALUE, useOffSiteDashboard } from './useOffSiteDashboard';
 import {
@@ -2480,7 +2481,8 @@ type WorkspaceMode =
   | 'opportunities'
   | 'evaluation'
   | 'wikipedia-check'
-  | 'suggestions-patcher';
+  | 'suggestions-patcher'
+  | 'back-office';
 
 type WikipediaCheckVerdict =
   | 'likely-correct'
@@ -3267,6 +3269,13 @@ export function OffSiteDashboard() {
                 description="Edit suggestion title, body, rationale, action items, priority, and persona — and save back."
                 label="Suggestions Patcher"
                 onClick={() => setActiveWorkspace('suggestions-patcher')}
+              />
+              <WorkspaceNavButton
+                active={activeWorkspace === 'back-office'}
+                count=""
+                description="Load an opportunity JSON dump, edit SOV / sentiment / suggestion fields with auto-rebalancing, then download the result."
+                label="Back Office"
+                onClick={() => setActiveWorkspace('back-office')}
               />
             </div>
 
@@ -4380,6 +4389,8 @@ export function OffSiteDashboard() {
                 siteCards={dashboard.siteCards}
               />
             )}
+
+            {activeWorkspace === 'back-office' && <BackOfficeView />}
           </div>
         </section>
       </main>

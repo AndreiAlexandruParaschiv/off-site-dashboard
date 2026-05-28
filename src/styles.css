@@ -2413,3 +2413,170 @@ a:hover {
     width: 100%;
   }
 }
+
+/* =========================================================================
+   Back Office — JSON loader, structured editor panels, raw fallback
+   ========================================================================= */
+
+.back-office-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 24px;
+  border: 2px dashed var(--paper-hairline-strong);
+  border-radius: 14px;
+  background: var(--paper-card-soft);
+  text-align: center;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.back-office-dropzone-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.back-office-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.back-office-toolbar-meta {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.back-office-panel-sum {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.back-office-panel-sum strong {
+  color: var(--ink-strong);
+}
+
+.back-office-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+
+.back-office-table th,
+.back-office-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--paper-hairline);
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.back-office-table th {
+  font-weight: 700;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: transparent;
+}
+
+.back-office-table-row .text-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.back-office-table-row-brand {
+  background: var(--accent-soft);
+}
+
+.back-office-table-compact th,
+.back-office-table-compact td {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.back-office-locked-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--paper-card);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.back-office-raw {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  margin-top: 8px;
+}
+
+.back-office .panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Collapsible cards inside Back Office Topics/Sources/Suggestions panels */
+
+.back-office-collapsible-card {
+  /* Tighter padding when collapsed reduces vertical noise so the user can
+     scan dozens of rows quickly. The non-collapsed look stays unchanged. */
+  transition: padding 120ms ease;
+}
+
+.back-office-collapsible-card.back-office-card-collapsed {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.back-office-card-header-toggle {
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.back-office-card-header-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-radius: 8px;
+}
+
+.back-office-card-header-toggle:hover .back-office-chevron {
+  color: var(--accent);
+}
+
+.back-office-chevron {
+  display: inline-block;
+  width: 14px;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.back-office-card-summary {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.back-office-card-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Source titles can be long URLs — clip them so the header stays one line. */
+.back-office-source-title {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

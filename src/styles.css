@@ -2580,3 +2580,8 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* "Add competitor" row under each SOV table */
+.back-office-table-actions {
+  margin-top: 10px;
+}

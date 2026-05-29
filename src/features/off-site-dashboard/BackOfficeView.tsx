@@ -575,6 +575,29 @@ export function BackOfficeView() {
     [],
   );
 
+  /**
+   * Append a new competitor row to a mentions block's `market.brands` array.
+   * The new entry starts at 0% so the existing pool stays balanced (the
+   * total is still 100% — the operator then types a real percentage, which
+   * triggers the normal proportional rebalance against the others).
+   *
+   * If the block has no `market` container yet (single brand-only pools,
+   * which is why the percentage was locked at 100%), we create one so the
+   * pool can grow beyond a single row.
+   */
+  const addMarketBrand = useCallback((mentionsPath: string) => {
+    setData((prev: unknown) => {
+      const node = getAtPath(prev, mentionsPath);
+      const base: Record<string, unknown> = isRecord(node) ? { ...node } : {};
+      const market = isRecord(base.market) ? { ...base.market } : {};
+      const brands = isArray(market.brands) ? [...market.brands] : [];
+      brands.push({ name: '', mentions: 0, mentionsPercent: 0 });
+      market.brands = brands;
+      base.market = market;
+      return setAtPath(prev, mentionsPath, base);
+    });
+  }, []);
+
   const editSentimentPercent = useCallback(
     (sentimentPath: string, poolIndex: number, newPercent: number) => {
       setData((prev: unknown) => {
@@ -817,6 +840,7 @@ export function BackOfficeView() {
               pool={overallMentionsPool}
               onEditPercent={editMentionsPercent}
               onRemoveMarketBrand={removeMarketBrand}
+              onAddMarketBrand={addMarketBrand}
               onEditField={update}
             />
           ) : null}
@@ -838,6 +862,7 @@ export function BackOfficeView() {
               onEditField={update}
               onEditMentionsPercent={editMentionsPercent}
               onRemoveMarketBrand={removeMarketBrand}
+              onAddMarketBrand={addMarketBrand}
               onRemoveTopic={remove}
             />
           ) : null}
@@ -849,6 +874,7 @@ export function BackOfficeView() {
               onEditField={update}
               onEditMentionsPercent={editMentionsPercent}
               onRemoveMarketBrand={removeMarketBrand}
+              onAddMarketBrand={addMarketBrand}
               onRemoveSource={remove}
             />
           ) : null}
@@ -1232,6 +1258,7 @@ interface MentionsPoolPanelProps {
     mentionsPath: string,
     marketBrandIndex: number,
   ) => void;
+  onAddMarketBrand: (mentionsPath: string) => void;
   onEditField: (path: string, value: unknown) => void;
 }
 
@@ -1359,6 +1386,16 @@ function MentionsPoolPanel(props: MentionsPoolPanelProps) {
           })}
         </tbody>
       </table>
+
+      <div className="back-office-table-actions">
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => props.onAddMarketBrand(props.path)}
+        >
+          + Add competitor
+        </button>
+      </div>
     </section>
   );
 }
@@ -1503,6 +1540,7 @@ interface TopicsPanelProps {
     mentionsPath: string,
     marketBrandIndex: number,
   ) => void;
+  onAddMarketBrand: (mentionsPath: string) => void;
   onRemoveTopic: (path: string) => void;
 }
 
@@ -1744,6 +1782,15 @@ function TopicsPanel(props: TopicsPanelProps) {
                       })}
                     </tbody>
                   </table>
+                  <div className="back-office-table-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => props.onAddMarketBrand(mentionsPath)}
+                    >
+                      + Add competitor
+                    </button>
+                  </div>
                 </fieldset>
               ) : null}
             </CollapsibleCard>
@@ -1767,6 +1814,7 @@ interface SourcesPanelProps {
     mentionsPath: string,
     marketBrandIndex: number,
   ) => void;
+  onAddMarketBrand: (mentionsPath: string) => void;
   onRemoveSource: (path: string) => void;
 }
 
@@ -2027,6 +2075,15 @@ function SourcesPanel(props: SourcesPanelProps) {
                       })}
                     </tbody>
                   </table>
+                  <div className="back-office-table-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => props.onAddMarketBrand(mentionsPath)}
+                    >
+                      + Add competitor
+                    </button>
+                  </div>
                 </fieldset>
               ) : null}
             </CollapsibleCard>

@@ -48,6 +48,13 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               {
                 SPACECAT_API_KEY: env.SPACECAT_API_KEY,
                 SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
+                IMS_ENDPOINT: env.IMS_ENDPOINT,
+                IMS_SP_CLIENT_ID: env.IMS_SP_CLIENT_ID,
+                IMS_SP_CLIENT_SECRET: env.IMS_SP_CLIENT_SECRET,
+                IMS_SP_ORG_ID: env.IMS_SP_ORG_ID,
+                IMS_SP_SCOPE: env.IMS_SP_SCOPE,
+                IMS_SP_RESOURCE: env.IMS_SP_RESOURCE,
+                SPACECAT_S2S_LOGIN_URL: env.SPACECAT_S2S_LOGIN_URL,
               },
             );
             res.statusCode = response.status;
@@ -68,6 +75,13 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               {
                 SPACECAT_API_KEY: env.SPACECAT_API_KEY,
                 SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
+                IMS_ENDPOINT: env.IMS_ENDPOINT,
+                IMS_SP_CLIENT_ID: env.IMS_SP_CLIENT_ID,
+                IMS_SP_CLIENT_SECRET: env.IMS_SP_CLIENT_SECRET,
+                IMS_SP_ORG_ID: env.IMS_SP_ORG_ID,
+                IMS_SP_SCOPE: env.IMS_SP_SCOPE,
+                IMS_SP_RESOURCE: env.IMS_SP_RESOURCE,
+                SPACECAT_S2S_LOGIN_URL: env.SPACECAT_S2S_LOGIN_URL,
               },
             );
             res.statusCode = response.status;

@@ -151,3 +151,38 @@ test('getSessionToken: throws with status on non-ok login', async () => {
     /SpaceCat session login failed: 403/,
   );
 });
+
+import { getSpacecatAuthHeaders, isS2SConfigured } from './spacecat-s2s.js';
+
+test('isS2SConfigured: true only with id and secret', () => {
+  assert.equal(isS2SConfigured({}), false);
+  assert.equal(isS2SConfigured({ IMS_SP_CLIENT_ID: 'cid' }), false);
+  assert.equal(isS2SConfigured(baseEnv), true);
+});
+
+test('getSpacecatAuthHeaders: returns bearer of session token', async () => {
+  resetS2SCache();
+  const { impl } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } },
+    { body: { sessionToken: 'sess-1' } },
+  ]);
+  const headers = await getSpacecatAuthHeaders(baseEnv, { fetch: impl, now: () => 0 });
+  assert.deepEqual(headers, { authorization: 'Bearer sess-1' });
+});
+
+test('resetS2SCache: forces a fresh mint', async () => {
+  resetS2SCache();
+  const { impl, calls } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } },
+    { body: { sessionToken: 'sess-1' } },
+    { body: { access_token: 'ims-2', expires_in: 86399 } },
+    { body: { sessionToken: 'sess-2' } },
+  ]);
+  const deps: Deps = { fetch: impl, now: () => 0 };
+  const a = await getSpacecatAuthHeaders(baseEnv, deps);
+  resetS2SCache();
+  const b = await getSpacecatAuthHeaders(baseEnv, deps);
+  assert.deepEqual(a, { authorization: 'Bearer sess-1' });
+  assert.deepEqual(b, { authorization: 'Bearer sess-2' });
+  assert.equal(calls.length, 4);
+});

@@ -107,6 +107,18 @@ function resolveLoginUrl(env: SpacecatS2SEnv): string {
   return `${base}/auth/s2s/login`;
 }
 
+/**
+ * Auth header for SpaceCat API calls. On a 401, the caller should
+ * `resetS2SCache()` and call this again once before propagating.
+ */
+export async function getSpacecatAuthHeaders(
+  env: SpacecatS2SEnv,
+  deps: Deps = defaultDeps,
+): Promise<Record<string, string>> {
+  const token = await getSessionToken(env, deps);
+  return { authorization: `Bearer ${token}` };
+}
+
 export async function getSessionToken(
   env: SpacecatS2SEnv,
   deps: Deps = defaultDeps,

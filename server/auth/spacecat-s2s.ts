@@ -98,3 +98,46 @@ export async function getImsAccessToken(
   imsExpiresAt = deps.now() + ttlMs;
   return imsToken;
 }
+
+function resolveLoginUrl(env: SpacecatS2SEnv): string {
+  if (env.SPACECAT_S2S_LOGIN_URL?.trim()) {
+    return env.SPACECAT_S2S_LOGIN_URL.trim();
+  }
+  const base = (env.SPACECAT_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+  return `${base}/auth/s2s/login`;
+}
+
+export async function getSessionToken(
+  env: SpacecatS2SEnv,
+  deps: Deps = defaultDeps,
+): Promise<string> {
+  const scopeKey = env.IMS_SP_ORG_ID?.trim() ?? '';
+  if (
+    sessionToken &&
+    sessionScopeKey === scopeKey &&
+    isTokenFresh(sessionExpiresAt, SESSION_REFRESH_BUFFER_MS, deps.now())
+  ) {
+    return sessionToken;
+  }
+
+  const ims = await getImsAccessToken(env, deps);
+  const response = await deps.fetch(resolveLoginUrl(env), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${ims}`,
+    },
+    body: JSON.stringify({ imsOrgId: scopeKey }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `SpaceCat session login failed: ${response.status} ${response.statusText} ${detail.slice(0, 200)}`,
+    );
+  }
+  const json = (await response.json()) as { sessionToken: string };
+  sessionToken = json.sessionToken;
+  sessionExpiresAt = deps.now() + SESSION_TTL_MS;
+  sessionScopeKey = scopeKey;
+  return sessionToken;
+}

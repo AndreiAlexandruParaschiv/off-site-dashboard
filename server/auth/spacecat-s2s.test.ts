@@ -90,3 +90,64 @@ test('getImsAccessToken: throws with status on non-ok', async () => {
     /IMS token request failed: 401/,
   );
 });
+
+import { getSessionToken } from './spacecat-s2s.js';
+
+test('getSessionToken: exchanges IMS token, posts imsOrgId, caches', async () => {
+  resetS2SCache();
+  const { impl, calls } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } }, // IMS
+    { body: { sessionToken: 'sess-1' } },                   // login
+  ]);
+  const deps: Deps = { fetch: impl, now: () => 0 };
+
+  const first = await getSessionToken(baseEnv, deps);
+  const second = await getSessionToken(baseEnv, deps);
+
+  assert.equal(first, 'sess-1');
+  assert.equal(second, 'sess-1');
+  assert.equal(calls.length, 2, 'second call should reuse both caches');
+  // login call assertions
+  assert.equal(calls[1].url, 'https://llmo.experiencecloud.live/api/v1/auth/s2s/login');
+  const headers = calls[1].init?.headers as Record<string, string>;
+  assert.equal(headers.authorization, 'Bearer ims-1');
+  assert.deepEqual(JSON.parse(String(calls[1].init?.body)), { imsOrgId: 'ORG@AdobeOrg' });
+});
+
+test('getSessionToken: honors SPACECAT_S2S_LOGIN_URL override', async () => {
+  resetS2SCache();
+  const { impl, calls } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } },
+    { body: { sessionToken: 'sess-1' } },
+  ]);
+  await getSessionToken(
+    { ...baseEnv, SPACECAT_S2S_LOGIN_URL: 'https://override.test/login' },
+    { fetch: impl, now: () => 0 },
+  );
+  assert.equal(calls[1].url, 'https://override.test/login');
+});
+
+test('getSessionToken: derives login URL from SPACECAT_API_BASE_URL', async () => {
+  resetS2SCache();
+  const { impl, calls } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } },
+    { body: { sessionToken: 'sess-1' } },
+  ]);
+  await getSessionToken(
+    { ...baseEnv, SPACECAT_API_BASE_URL: 'https://llmo.experiencecloud.page/api/ci' },
+    { fetch: impl, now: () => 0 },
+  );
+  assert.equal(calls[1].url, 'https://llmo.experiencecloud.page/api/ci/auth/s2s/login');
+});
+
+test('getSessionToken: throws with status on non-ok login', async () => {
+  resetS2SCache();
+  const { impl } = fakeFetch([
+    { body: { access_token: 'ims-1', expires_in: 86399 } },
+    { status: 403, body: { error: 'no entitlement' } },
+  ]);
+  await assert.rejects(
+    () => getSessionToken(baseEnv, { fetch: impl, now: () => 0 }),
+    /SpaceCat session login failed: 403/,
+  );
+});

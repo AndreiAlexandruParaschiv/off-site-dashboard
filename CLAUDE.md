@@ -101,12 +101,26 @@ BRIGHTDATA_REDDIT_COMMENT_DATASET_ID=...
 VITE_SERVER_API_BASE_URL=https://your-vercel.vercel.app  # frontend only
 APP_ALLOWED_ORIGINS=https://your-amplify-url.com         # backend CORS
 
+# SpaceCat auth — S2S (Adobe IMS Server-to-Service), preferred:
+IMS_ENDPOINT=https://ims-na1.adobelogin.com
+IMS_SP_CLIENT_ID=aem-sites-mystique
+IMS_SP_CLIENT_SECRET=...            # secret — Vercel/local env only, never commit
+IMS_SP_ORG_ID=...@AdobeOrg
+IMS_SP_SCOPE=aem.adobe.service,openid,AdobeID,...   # full provisioned scope
+IMS_SP_RESOURCE=                    # optional; only if the IMS token needs a `resource` param
+SPACECAT_S2S_LOGIN_URL=             # optional; defaults to <base>/auth/s2s/login
+SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (dev: .../page/api/ci)
+
+# Legacy API key — fallback only, removed after 2026-04-15:
+SPACECAT_API_KEY=...
+
+# Token minting is server-side only; the browser never receives S2S credentials and routes through `/api/spacecat`.
+
 # Auto-evaluation cron (optional — only required if running the
 # /api/cron/scan-opportunities endpoint):
 CRON_SECRET=...                                  # bearer token; matches GH Actions secret
 KV_REST_API_URL=https://<id>.upstash.io          # auto-set by Vercel KV integration
 KV_REST_API_TOKEN=...                            # auto-set by Vercel KV integration
-SPACECAT_API_KEY=...                             # also used by /api/spacecat proxy
 GITHUB_NOTIFY_TOKEN=ghp_...                      # PAT with `repo` scope for issue creation
 GITHUB_NOTIFY_REPO=AndreiAlexandruParaschiv/off-site-dashboard
 GITHUB_NOTIFY_LABELS=auto-eval,incorrect         # optional, defaults shown

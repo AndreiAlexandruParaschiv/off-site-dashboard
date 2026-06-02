@@ -48,6 +48,7 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               {
                 SPACECAT_API_KEY: env.SPACECAT_API_KEY,
                 SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
+                SPACECAT_SESSION_TOKEN: env.SPACECAT_SESSION_TOKEN,
                 IMS_ENDPOINT: env.IMS_ENDPOINT,
                 IMS_SP_CLIENT_ID: env.IMS_SP_CLIENT_ID,
                 IMS_SP_CLIENT_SECRET: env.IMS_SP_CLIENT_SECRET,
@@ -75,6 +76,7 @@ function evaluationDevMiddleware(env: Record<string, string>) {
               {
                 SPACECAT_API_KEY: env.SPACECAT_API_KEY,
                 SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
+                SPACECAT_SESSION_TOKEN: env.SPACECAT_SESSION_TOKEN,
                 IMS_ENDPOINT: env.IMS_ENDPOINT,
                 IMS_SP_CLIENT_ID: env.IMS_SP_CLIENT_ID,
                 IMS_SP_CLIENT_SECRET: env.IMS_SP_CLIENT_SECRET,

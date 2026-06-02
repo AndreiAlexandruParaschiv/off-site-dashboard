@@ -110,11 +110,21 @@ IMS_SP_SCOPE=aem.adobe.service,openid,AdobeID,...   # full provisioned scope
 IMS_SP_RESOURCE=                    # optional; only if the IMS token needs a `resource` param
 SPACECAT_S2S_LOGIN_URL=             # optional; defaults to <base>/auth/s2s/login
 SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (dev: .../page/api/ci)
+# Note: IMS_SP_ORG_ID is also sent on the IMS token request itself (org_id),
+# required for ownerless service principals. S2S only works if the SP is
+# entitled in SpaceCat's consumer registry for the target site's org.
+
+# Pre-obtained session token — takes precedence over S2S minting when set.
+# Used directly as the bearer (S2S skipped). Stopgap for when the SP is not yet
+# entitled; tokens are short-lived (~24h), so prefer entitled S2S for prod.
+# Its issuer/audience must match SPACECAT_API_BASE_URL's host.
+SPACECAT_SESSION_TOKEN=
 
 # Legacy API key — fallback only, removed after 2026-04-15:
 SPACECAT_API_KEY=...
 
-# Token minting is server-side only; the browser never receives S2S credentials and routes through `/api/spacecat`.
+# Auth precedence: SPACECAT_SESSION_TOKEN > S2S (IMS_SP_*) > SPACECAT_API_KEY.
+# Token minting is server-side only; the browser never receives credentials and routes through `/api/spacecat`.
 
 # Auto-evaluation cron (optional — only required if running the
 # /api/cron/scan-opportunities endpoint):

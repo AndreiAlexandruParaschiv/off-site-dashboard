@@ -1,25 +1,35 @@
-// One-shot live check: IMS token -> session token -> GET /sites.
+// One-shot live check of SpaceCat auth, mirroring what the proxy does.
+// - If SPACECAT_SESSION_TOKEN is set, it is used directly (S2S minting skipped).
+// - Otherwise the full S2S flow runs: IMS token -> session token.
+// Then it calls GET /sites with the resolved auth header.
 // Run: npm run verify:s2s   (reads .env via --env-file)
 import {
   getImsAccessToken,
   getSessionToken,
   getSpacecatAuthHeaders,
-  isS2SConfigured,
+  hasManagedAuth,
 } from '../server/auth/spacecat-s2s.js';
 
 const env = process.env;
 
 async function main() {
-  if (!isS2SConfigured(env)) {
-    throw new Error('S2S not configured: set IMS_SP_CLIENT_ID and IMS_SP_CLIENT_SECRET in .env');
+  if (!hasManagedAuth(env)) {
+    throw new Error(
+      'No managed auth configured: set SPACECAT_SESSION_TOKEN, or IMS_SP_CLIENT_ID + IMS_SP_CLIENT_SECRET, in .env',
+    );
   }
-  const base = (env.SPACECAT_API_BASE_URL?.trim() || 'https://llmo.experiencecloud.live/api/v1').replace(/\/+$/, '');
+  const base = (
+    env.SPACECAT_API_BASE_URL?.trim() || 'https://llmo.experiencecloud.live/api/v1'
+  ).replace(/\/+$/, '');
 
-  const ims = await getImsAccessToken(env);
-  console.log('IMS token OK:', `${ims.slice(0, 12)}...`);
-
-  const session = await getSessionToken(env);
-  console.log('Session token OK:', `${session.slice(0, 12)}...`);
+  if (env.SPACECAT_SESSION_TOKEN?.trim()) {
+    console.log('Using provided SPACECAT_SESSION_TOKEN (S2S minting skipped).');
+  } else {
+    const ims = await getImsAccessToken(env);
+    console.log('IMS token OK:', `${ims.slice(0, 12)}...`);
+    const session = await getSessionToken(env);
+    console.log('Session token OK:', `${session.slice(0, 12)}...`);
+  }
 
   const headers = await getSpacecatAuthHeaders(env);
   const res = await fetch(`${base}/sites`, { headers: { accept: 'application/json', ...headers } });

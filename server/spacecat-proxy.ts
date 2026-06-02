@@ -1,5 +1,6 @@
 import {
   getSpacecatAuthHeaders,
+  hasManagedAuth,
   isS2SConfigured,
   resetS2SCache,
   type SpacecatS2SEnv,
@@ -35,7 +36,7 @@ export function getSpacecatProxyConfig(env: SpacecatProxyEnv = {}) {
   const hasLegacyKey = Boolean(env.SPACECAT_API_KEY?.trim());
 
   return {
-    configured: isS2SConfigured(env) || hasLegacyKey,
+    configured: hasManagedAuth(env) || hasLegacyKey,
     apiBaseUrl,
   };
 }
@@ -79,7 +80,7 @@ async function buildUpstreamHeaders(
 ): Promise<Record<string, string>> {
   const base: Record<string, string> = { accept: 'application/json' };
   if (hasBody) base['content-type'] = 'application/json';
-  if (isS2SConfigured(env)) {
+  if (hasManagedAuth(env)) {
     return { ...base, ...(await getSpacecatAuthHeaders(env)) };
   }
   const key = env.SPACECAT_API_KEY?.trim() ?? '';

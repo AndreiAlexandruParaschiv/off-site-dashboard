@@ -13,6 +13,11 @@ export type SpacecatS2SEnv = {
   IMS_SP_RESOURCE?: string;
   SPACECAT_S2S_LOGIN_URL?: string;
   SPACECAT_API_BASE_URL?: string;
+  // Pre-obtained SpaceCat session token. When set, it is used directly as the
+  // bearer and S2S minting is skipped. Useful when the caller already holds a
+  // valid session token (e.g. a user/admin token) or the S2S service principal
+  // is not entitled for the target org.
+  SPACECAT_SESSION_TOKEN?: string;
 };
 
 /** True when `now` is before the token's expiry minus the safety buffer. */
@@ -63,6 +68,14 @@ export function isS2SConfigured(env: SpacecatS2SEnv): boolean {
   return Boolean(env.IMS_SP_CLIENT_ID?.trim() && env.IMS_SP_CLIENT_SECRET?.trim());
 }
 
+/**
+ * True when this module can supply auth headers without the legacy key:
+ * either a pre-obtained session token or full S2S credentials.
+ */
+export function hasManagedAuth(env: SpacecatS2SEnv): boolean {
+  return Boolean(env.SPACECAT_SESSION_TOKEN?.trim()) || isS2SConfigured(env);
+}
+
 export async function getImsAccessToken(
   env: SpacecatS2SEnv,
   deps: Deps = defaultDeps,
@@ -77,6 +90,11 @@ export async function getImsAccessToken(
     client_secret: env.IMS_SP_CLIENT_SECRET?.trim() ?? '',
     scope: env.IMS_SP_SCOPE?.trim() ?? '',
   });
+  // Service-principal clients ("client without an owner") must pass the org id
+  // on the IMS token request itself, not just the later session exchange.
+  if (env.IMS_SP_ORG_ID?.trim()) {
+    body.set('org_id', env.IMS_SP_ORG_ID.trim());
+  }
   if (env.IMS_SP_RESOURCE?.trim()) {
     body.set('resource', env.IMS_SP_RESOURCE.trim());
   }
@@ -115,7 +133,9 @@ export async function getSpacecatAuthHeaders(
   env: SpacecatS2SEnv,
   deps: Deps = defaultDeps,
 ): Promise<Record<string, string>> {
-  const token = await getSessionToken(env, deps);
+  // A pre-obtained session token short-circuits S2S minting entirely.
+  const provided = env.SPACECAT_SESSION_TOKEN?.trim();
+  const token = provided || (await getSessionToken(env, deps));
   return { authorization: `Bearer ${token}` };
 }
 

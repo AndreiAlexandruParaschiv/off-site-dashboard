@@ -152,12 +152,29 @@ test('getSessionToken: throws with status on non-ok login', async () => {
   );
 });
 
-import { getSpacecatAuthHeaders, isS2SConfigured } from './spacecat-s2s.js';
+import { getSpacecatAuthHeaders, hasManagedAuth, isS2SConfigured } from './spacecat-s2s.js';
 
 test('isS2SConfigured: true only with id and secret', () => {
   assert.equal(isS2SConfigured({}), false);
   assert.equal(isS2SConfigured({ IMS_SP_CLIENT_ID: 'cid' }), false);
   assert.equal(isS2SConfigured(baseEnv), true);
+});
+
+test('hasManagedAuth: true for a provided session token or full S2S creds', () => {
+  assert.equal(hasManagedAuth({}), false);
+  assert.equal(hasManagedAuth({ SPACECAT_SESSION_TOKEN: 'tok' }), true);
+  assert.equal(hasManagedAuth(baseEnv), true);
+});
+
+test('getSpacecatAuthHeaders: provided session token short-circuits S2S minting', async () => {
+  resetS2SCache();
+  const { impl, calls } = fakeFetch([]); // no responses queued: must not fetch
+  const headers = await getSpacecatAuthHeaders(
+    { ...baseEnv, SPACECAT_SESSION_TOKEN: 'provided-tok' },
+    { fetch: impl, now: () => 0 },
+  );
+  assert.deepEqual(headers, { authorization: 'Bearer provided-tok' });
+  assert.equal(calls.length, 0, 'no IMS/login calls when a session token is provided');
 });
 
 test('getSpacecatAuthHeaders: returns bearer of session token', async () => {

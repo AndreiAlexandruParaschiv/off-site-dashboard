@@ -7,6 +7,7 @@
 
 import {
   getSpacecatAuthHeaders,
+  hasManagedAuth,
   isS2SConfigured,
   resetS2SCache,
   type SpacecatS2SEnv,
@@ -61,13 +62,13 @@ function getBaseUrl(env: SpacecatClientEnv): string {
 async function buildHeaders(
   env: SpacecatClientEnv,
 ): Promise<Record<string, string>> {
-  if (isS2SConfigured(env)) {
+  if (hasManagedAuth(env)) {
     return { accept: 'application/json', ...(await getSpacecatAuthHeaders(env)) };
   }
   const apiKey = env.SPACECAT_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      'No SpaceCat auth configured. Set IMS_SP_* (S2S) or SPACECAT_API_KEY.',
+      'No SpaceCat auth configured. Set SPACECAT_SESSION_TOKEN, IMS_SP_* (S2S), or SPACECAT_API_KEY.',
     );
   }
   return { accept: 'application/json', authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey };

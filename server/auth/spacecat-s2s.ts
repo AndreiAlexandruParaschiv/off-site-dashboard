@@ -23,3 +23,78 @@ export function isTokenFresh(
 ): boolean {
   return expiresAt !== null && now < expiresAt - bufferMs;
 }
+
+const DEFAULT_IMS_ENDPOINT = 'https://ims-na1.adobelogin.com';
+const DEFAULT_API_BASE_URL = 'https://llmo.experiencecloud.live/api/v1';
+
+const IMS_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000; // used only if expires_in absent
+const IMS_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const SESSION_TTL_MS = 15 * 60 * 1000;
+const SESSION_REFRESH_BUFFER_MS = 2 * 60 * 1000;
+
+export type Deps = {
+  fetch: typeof fetch;
+  now: () => number;
+};
+
+const defaultDeps: Deps = {
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
+  now: () => Date.now(),
+};
+
+// Module-level caches (warm-Lambda lifetime). See spec: serverless note.
+let imsToken: string | null = null;
+let imsExpiresAt: number | null = null;
+let sessionToken: string | null = null;
+let sessionExpiresAt: number | null = null;
+let sessionScopeKey: string | null = null;
+
+/** Clear all cached tokens. Call after a 401 before re-minting. */
+export function resetS2SCache(): void {
+  imsToken = null;
+  imsExpiresAt = null;
+  sessionToken = null;
+  sessionExpiresAt = null;
+  sessionScopeKey = null;
+}
+
+/** True when S2S credentials are present (drives legacy fallback). */
+export function isS2SConfigured(env: SpacecatS2SEnv): boolean {
+  return Boolean(env.IMS_SP_CLIENT_ID?.trim() && env.IMS_SP_CLIENT_SECRET?.trim());
+}
+
+export async function getImsAccessToken(
+  env: SpacecatS2SEnv,
+  deps: Deps = defaultDeps,
+): Promise<string> {
+  if (imsToken && isTokenFresh(imsExpiresAt, IMS_REFRESH_BUFFER_MS, deps.now())) {
+    return imsToken;
+  }
+  const endpoint = (env.IMS_ENDPOINT?.trim() || DEFAULT_IMS_ENDPOINT).replace(/\/+$/, '');
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: env.IMS_SP_CLIENT_ID?.trim() ?? '',
+    client_secret: env.IMS_SP_CLIENT_SECRET?.trim() ?? '',
+    scope: env.IMS_SP_SCOPE?.trim() ?? '',
+  });
+  if (env.IMS_SP_RESOURCE?.trim()) {
+    body.set('resource', env.IMS_SP_RESOURCE.trim());
+  }
+
+  const response = await deps.fetch(`${endpoint}/ims/token/v3`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `IMS token request failed: ${response.status} ${response.statusText} ${detail.slice(0, 200)}`,
+    );
+  }
+  const json = (await response.json()) as { access_token: string; expires_in?: number };
+  imsToken = json.access_token;
+  const ttlMs = json.expires_in ? json.expires_in * 1000 : IMS_FALLBACK_TTL_MS;
+  imsExpiresAt = deps.now() + ttlMs;
+  return imsToken;
+}

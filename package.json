@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:s2s": "node --import tsx --test server/auth/spacecat-s2s.test.ts",
+    "verify:s2s": "node --env-file=.env --import tsx scripts/verify-s2s.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -17,6 +19,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.22.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   }

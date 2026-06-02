@@ -8,7 +8,7 @@ export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
 ];
 
 export const DEFAULT_API_BASE_URL =
-  'https://spacecat.experiencecloud.live/api/v1';
+  'https://llmo.experiencecloud.live/api/v1';
 export const SPACECAT_PROXY_CONFIG_API_PATH = '/api/spacecat-config';
 export const SPACECAT_PROXY_API_PATH = '/api/spacecat';
 

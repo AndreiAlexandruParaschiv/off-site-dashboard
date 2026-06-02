@@ -3360,6 +3360,12 @@ export function OffSiteDashboard() {
                               Token entry is manual and is not persisted in
                               localStorage.
                             </small>
+                            <small className="field-note">
+                              Optional. When the server is configured for S2S
+                              (Mysticat), authentication is handled server-side
+                              and this field can be left blank. The legacy API
+                              key is supported as a fallback until 2026-04-15.
+                            </small>
                           </label>
                         </>
                       ) : null}

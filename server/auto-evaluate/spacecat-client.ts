@@ -5,12 +5,19 @@
 // pure Node serverless environment without pulling in any browser-only
 // dependencies (Vite import.meta.env, window.btoa, window.setTimeout).
 
+import {
+  getSpacecatAuthHeaders,
+  isS2SConfigured,
+  resetS2SCache,
+  type SpacecatS2SEnv,
+} from '../auth/spacecat-s2s.js';
+
 const DEFAULT_SPACECAT_API_BASE_URL =
-  'https://spacecat.experiencecloud.live/api/v1';
+  'https://llmo.experiencecloud.live/api/v1';
 
 const UPSTREAM_REQUEST_TIMEOUT_MS = 15000;
 
-export type SpacecatClientEnv = {
+export type SpacecatClientEnv = SpacecatS2SEnv & {
   SPACECAT_API_KEY?: string;
   SPACECAT_API_BASE_URL?: string;
 };
@@ -47,46 +54,56 @@ function normalizeApiBaseUrl(value?: string) {
   return (value?.trim() || DEFAULT_SPACECAT_API_BASE_URL).replace(/\/+$/, '');
 }
 
-function getCredentials(env: SpacecatClientEnv) {
+function getBaseUrl(env: SpacecatClientEnv): string {
+  return normalizeApiBaseUrl(env.SPACECAT_API_BASE_URL);
+}
+
+async function buildHeaders(
+  env: SpacecatClientEnv,
+): Promise<Record<string, string>> {
+  if (isS2SConfigured(env)) {
+    return { accept: 'application/json', ...(await getSpacecatAuthHeaders(env)) };
+  }
   const apiKey = env.SPACECAT_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      'SPACECAT_API_KEY is not configured. Auto-evaluation requires the managed SpaceCat credentials.',
+      'No SpaceCat auth configured. Set IMS_SP_* (S2S) or SPACECAT_API_KEY.',
     );
   }
-  return { apiKey, baseUrl: normalizeApiBaseUrl(env.SPACECAT_API_BASE_URL) };
+  return { accept: 'application/json', authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey };
 }
 
 async function spacecatRequest<T>(
   url: string,
-  apiKey: string,
+  env: SpacecatClientEnv,
 ): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    UPSTREAM_REQUEST_TIMEOUT_MS,
-  );
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${apiKey}`,
-        'x-api-key': apiKey,
-      },
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new Error(
-        `SpaceCat ${response.status} ${response.statusText} for ${url}: ${detail.slice(0, 200)}`,
-      );
+  const doFetch = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: await buildHeaders(env),
+      });
+    } finally {
+      clearTimeout(timer);
     }
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timer);
+  };
+
+  let response = await doFetch();
+  if (response.status === 401 && isS2SConfigured(env)) {
+    resetS2SCache();
+    response = await doFetch();
   }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `SpaceCat ${response.status} ${response.statusText} for ${url}: ${detail.slice(0, 200)}`,
+    );
+  }
+  return (await response.json()) as T;
 }
 
 // Build the lookup candidates the upstream `sites/by-base-url/{b64}` accepts.
@@ -143,7 +160,7 @@ export async function resolveSiteId(
   siteInput: string,
   env: SpacecatClientEnv,
 ): Promise<{ siteId: string; siteUrl: string }> {
-  const { apiKey, baseUrl } = getCredentials(env);
+  const baseUrl = getBaseUrl(env);
 
   for (const candidate of buildLookupCandidates(siteInput)) {
     const lookupUrl = `${baseUrl}/sites/by-base-url/${encodeURIComponent(
@@ -152,7 +169,7 @@ export async function resolveSiteId(
     try {
       const payload = await spacecatRequest<RawSiteRecord | RawSiteRecord[]>(
         lookupUrl,
-        apiKey,
+        env,
       );
       const record = Array.isArray(payload) ? payload[0] : payload;
       if (!record) {
@@ -559,9 +576,9 @@ export async function listOpportunities(
   siteId: string,
   env: SpacecatClientEnv,
 ): Promise<ListOpportunitiesResult> {
-  const { apiKey, baseUrl } = getCredentials(env);
+  const baseUrl = getBaseUrl(env);
   const url = `${baseUrl}/sites/${encodeURIComponent(siteId)}/opportunities`;
-  const payload = await spacecatRequest<unknown>(url, apiKey);
+  const payload = await spacecatRequest<unknown>(url, env);
 
   const opportunities: RawSpacecatOpportunity[] = [];
   const unclassifiedRawTypes = new Set<string>();
@@ -661,11 +678,11 @@ export async function listSuggestions(
   fallbackType: AutoEvalOpportunityType | undefined,
   env: SpacecatClientEnv,
 ): Promise<ListSuggestionsResult> {
-  const { apiKey, baseUrl } = getCredentials(env);
+  const baseUrl = getBaseUrl(env);
   const url = `${baseUrl}/sites/${encodeURIComponent(
     siteId,
   )}/opportunities/${encodeURIComponent(opportunityId)}/suggestions`;
-  const payload = await spacecatRequest<unknown>(url, apiKey);
+  const payload = await spacecatRequest<unknown>(url, env);
 
   const suggestions: ClassifiedSuggestion[] = [];
   let unclassifiedByContentCount = 0;

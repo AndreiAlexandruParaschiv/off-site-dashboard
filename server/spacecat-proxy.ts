@@ -105,7 +105,11 @@ export async function handleSpacecatProxyRequest(
   // A client-provided token (from the UI token field) allows any colleague
   // to authenticate without touching server env vars. When present it bypasses
   // the server-configured auth entirely for that request.
-  const clientToken = request.headers.get('x-client-token')?.trim() || undefined;
+  // Defensive: strip a leading "Bearer " in case the user pasted the whole
+  // Authorization header value rather than just the token.
+  const clientToken =
+    request.headers.get('x-client-token')?.trim().replace(/^Bearer\s+/i, '') ||
+    undefined;
 
   const proxyConfig = getSpacecatProxyConfig(env);
 

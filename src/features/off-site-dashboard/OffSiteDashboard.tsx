@@ -4412,6 +4412,7 @@ export function OffSiteDashboard() {
                 apiKey={dashboard.config.apiKey}
                 proxyConfig={dashboard.spacecatProxyConfig}
                 siteCards={dashboard.siteCards}
+                userToken={dashboard.userToken}
               />
             )}
 

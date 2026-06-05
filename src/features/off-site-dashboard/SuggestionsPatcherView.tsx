@@ -207,6 +207,8 @@ interface SuggestionsPatcherViewProps {
   apiKey: string;
   proxyConfig: SpacecatProxyConfig;
   siteCards: SiteDashboardResult[];
+  /** User-pasted SpaceCat session token, forwarded to the proxy. */
+  userToken?: string;
 }
 
 export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
@@ -252,7 +254,10 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   const [statusFilter, setStatusFilter] =
     useState<OpportunityStatusFilter>('active');
 
-  const isReady = props.proxyConfig.configured || props.apiKey.trim().length > 0;
+  const isReady =
+    props.proxyConfig.configured ||
+    props.apiKey.trim().length > 0 ||
+    Boolean(props.userToken?.trim());
 
   // The dropdown only shows the four off-site opportunity types (Reddit,
   // YouTube, Cited URLs, Wikipedia). Each row carries its canonical label
@@ -346,6 +351,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       apiKey: props.apiKey,
       siteId: selectedSiteId,
       proxyConfig: props.proxyConfig,
+      userToken: props.userToken,
     })
       .then((items) => {
         if (cancelled) return;
@@ -364,7 +370,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedSiteId, isReady, props.apiBaseUrl, props.apiKey, props.proxyConfig]);
+  }, [selectedSiteId, isReady, props.apiBaseUrl, props.apiKey, props.proxyConfig, props.userToken]);
 
   // Load suggestions for the selected opportunity.
   useEffect(() => {
@@ -378,6 +384,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       siteId: selectedSiteId,
       opportunityId: selectedOpportunityId,
       proxyConfig: props.proxyConfig,
+      userToken: props.userToken,
     })
       .then((items) => {
         if (cancelled) return;
@@ -421,6 +428,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     props.apiBaseUrl,
     props.apiKey,
     props.proxyConfig,
+    props.userToken,
   ]);
 
   const updateField = useCallback(
@@ -634,6 +642,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           suggestionId,
           partialData: payload,
           proxyConfig: props.proxyConfig,
+          userToken: props.userToken,
         });
         // Treat the server's response as the new canonical original.
         const refreshed = buildDraftFromSuggestion(updated);
@@ -676,6 +685,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       props.apiBaseUrl,
       props.apiKey,
       props.proxyConfig,
+      props.userToken,
     ],
   );
 

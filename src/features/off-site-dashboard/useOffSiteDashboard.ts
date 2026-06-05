@@ -456,7 +456,9 @@ export function useOffSiteDashboard() {
         });
       }
     },
-    [config.apiBaseUrl, config.apiKey, spacecatProxyConfig],
+    // userToken MUST be here — without it the memoized callback closes over
+    // a stale (empty) token and never sends x-client-token after a paste.
+    [config.apiBaseUrl, config.apiKey, spacecatProxyConfig, userToken],
   );
 
   const refreshAll = useCallback(async () => {

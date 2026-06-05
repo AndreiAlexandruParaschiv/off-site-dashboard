@@ -2976,7 +2976,7 @@ export function OffSiteDashboard() {
     Boolean(effectiveApiBaseUrl.trim()) &&
     (isManagedConnection || Boolean(dashboard.config.apiKey.trim()));
   const currentModeLabel = dashboard.spacecatProxyConfig.configured
-    ? 'Managed relay'
+    ? 'Server proxy'
     : 'Manual connection';
   const activeFilterLabel = `${dashboard.selectedTypes.length} oppty selected · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
   const activeWorkspaceLabel =

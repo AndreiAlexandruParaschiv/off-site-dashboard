@@ -3314,11 +3314,12 @@ export function OffSiteDashboard() {
                     {isManagedConnection ? (
                       <div className="managed-connection-note">
                         <span className="managed-connection-pill">
-                          Managed connection active
+                          Server proxy active
                         </span>
                         <p>
-                          Authentication and endpoint routing are handled server-side
-                          for this deployment.
+                          Requests are routed through the server proxy. Paste your
+                          SpaceCat session token below — it is used for your session
+                          and overrides any server-side credentials.
                         </p>
                       </div>
                     ) : null}

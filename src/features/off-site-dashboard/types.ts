@@ -317,6 +317,10 @@ export interface FetchSiteParams {
   apiKey: string;
   siteInput: string;
   proxyConfig?: SpacecatProxyConfig;
+  /** User-provided SpaceCat session token pasted in the UI. When set it is
+   *  sent to the Vercel proxy as `x-client-token` and takes precedence over
+   *  whatever server-side credentials are configured. */
+  userToken?: string;
 }
 
 export interface FetchSiteSuccessResult extends SiteDashboardResult {

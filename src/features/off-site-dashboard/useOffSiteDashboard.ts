@@ -315,6 +315,9 @@ export function useOffSiteDashboard() {
       configured: false,
       apiBaseUrl: DEFAULT_API_BASE_URL,
     });
+  // Session-only token pasted by the user in the UI. Never persisted to
+  // localStorage — colleagues paste it once per browser session.
+  const [userToken, setUserToken] = useState<string>('');
 
   useEffect(() => {
     let isCancelled = false;
@@ -414,6 +417,7 @@ export function useOffSiteDashboard() {
           apiKey: config.apiKey,
           proxyConfig: spacecatProxyConfig,
           siteInput: normalizedSite,
+          userToken,
         });
 
         setSiteResults((previousResults) => ({
@@ -775,7 +779,7 @@ export function useOffSiteDashboard() {
   );
   const canRefresh =
     Boolean(effectiveApiBaseUrl.trim()) &&
-    (Boolean(config.apiKey.trim()) || Boolean(spacecatProxyConfig.configured)) &&
+    (Boolean(config.apiKey.trim()) || Boolean(spacecatProxyConfig.configured) || Boolean(userToken.trim())) &&
     configuredSites.length > 0;
 
   const exportableRows = allOpportunityRows;
@@ -1075,6 +1079,8 @@ export function useOffSiteDashboard() {
         ...previousConfig,
         apiKey: value,
       })),
+    userToken,
+    setUserToken,
     setSiteInputText: (value: string) =>
       setConfig((previousConfig) => ({
         ...previousConfig,

@@ -3323,6 +3323,25 @@ export function OffSiteDashboard() {
                       </div>
                     ) : null}
 
+                    {isManagedConnection ? (
+                      <label className="field">
+                        <span>SpaceCat session token <em className="field-note-inline">(optional — paste yours if the server token has expired)</em></span>
+                        <input
+                          className="text-input"
+                          type="password"
+                          value={dashboard.userToken}
+                          onChange={(event) =>
+                            dashboard.setUserToken(event.target.value)
+                          }
+                          placeholder="eyJhbGci… paste your SpaceCat session token"
+                          autoComplete="off"
+                        />
+                        <small className="field-note">
+                          Copied from the network tab of the SpaceCat backoffice (Authorization header value, without "Bearer "). Not persisted — paste once per browser session.
+                        </small>
+                      </label>
+                    ) : null}
+
                     <div
                       className={`settings-grid ${
                         isManagedConnection ? 'settings-grid-managed' : ''

@@ -98,10 +98,12 @@ async function requestJson<T>(
   apiKey: string,
   proxyConfig?: SpacecatProxyConfig,
   attempt = 0,
+  userToken?: string,
 ): Promise<T> {
   try {
     const trimmedApiKey = apiKey.trim();
-    const useProxy = proxyConfig?.configured === true;
+    const useProxy = proxyConfig?.configured === true || Boolean(userToken?.trim());
+    const trimmedUserToken = userToken?.trim();
     const response = await fetch(
       useProxy
         ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
@@ -112,6 +114,7 @@ async function requestJson<T>(
         headers: useProxy
           ? {
               ...API_HEADERS,
+              ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
             }
           : {
               ...API_HEADERS,
@@ -130,7 +133,7 @@ async function requestJson<T>(
 
       if (attempt < 1) {
         await sleep(waitSeconds * 1000);
-        return requestJson<T>(url, apiKey, proxyConfig, attempt + 1);
+        return requestJson<T>(url, apiKey, proxyConfig, attempt + 1, userToken);
       }
 
       throw new SpacecatApiError(
@@ -358,6 +361,7 @@ async function resolveSiteByDirectLookup(
   apiKey: string,
   lookupCandidates: string[],
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   for (const candidate of lookupCandidates) {
     const encodedCandidate = encodeBase64PathValue(candidate);
@@ -371,6 +375,8 @@ async function resolveSiteByDirectLookup(
         lookupUrl,
         apiKey,
         proxyConfig,
+        0,
+        userToken,
       );
       const resolvedSite = extractSiteId(lookupResponse, candidate);
 
@@ -394,12 +400,15 @@ async function resolveSiteByEnumeratingAllSites(
   apiKey: string,
   lookupCandidates: string[],
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   try {
     const lookupResponse = await requestJson<unknown>(
       buildApiUrl(normalizedApiBaseUrl, 'sites'),
       apiKey,
       proxyConfig,
+      0,
+      userToken,
     );
 
     for (const candidate of lookupCandidates) {
@@ -428,6 +437,7 @@ async function fetchSuggestionsForOpportunity(
   siteId: string,
   opportunity: OpportunityRecord,
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   const shouldFetchSuggestionEndpoint =
     opportunity.opportunityType === 'Wikipedia' ||
@@ -448,6 +458,8 @@ async function fetchSuggestionsForOpportunity(
       suggestionsUrl,
       apiKey,
       proxyConfig,
+      0,
+      userToken,
     );
     const normalizedSuggestions = normalizeSuggestionCollection(
       suggestionsPayload,
@@ -473,6 +485,7 @@ export async function fetchSiteDashboardData({
   apiKey,
   siteInput,
   proxyConfig,
+  userToken,
 }: FetchSiteParams): Promise<FetchSiteSuccessResult> {
   const normalizedApiBaseUrl = normalizeApiBaseUrl(
     proxyConfig?.configured ? proxyConfig.apiBaseUrl : apiBaseUrl,
@@ -484,7 +497,7 @@ export async function fetchSiteDashboardData({
     throw new SpacecatApiError('API base URL is required.');
   }
 
-  if (!proxyConfig?.configured && !apiKey.trim()) {
+  if (!proxyConfig?.configured && !userToken?.trim() && !apiKey.trim()) {
     throw new SpacecatApiError('API key is required.');
   }
 
@@ -500,6 +513,7 @@ export async function fetchSiteDashboardData({
     apiKey,
     lookupCandidates,
     proxyConfig,
+    userToken,
   );
   const enumeratedLookupMatch =
     directLookupMatch ??
@@ -508,6 +522,7 @@ export async function fetchSiteDashboardData({
       apiKey,
       lookupCandidates,
       proxyConfig,
+      userToken,
     ));
 
   if (enumeratedLookupMatch) {
@@ -530,6 +545,8 @@ export async function fetchSiteDashboardData({
     opportunitiesUrl,
     apiKey,
     proxyConfig,
+    0,
+    userToken,
   );
   const opportunityPresence = summarizeOpportunityPresence(opportunitiesPayload);
   const normalizedOpportunities = normalizeOpportunityCollection(opportunitiesPayload);
@@ -541,6 +558,7 @@ export async function fetchSiteDashboardData({
         resolvedSiteId,
         opportunity,
         proxyConfig,
+        userToken,
       ),
     ),
   );
@@ -667,12 +685,13 @@ export async function fetchSiteOpportunitySummaries(args: {
   apiKey: string;
   siteId: string;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawOpportunitySummary[]> {
   const url = buildApiUrl(
     args.apiBaseUrl,
     `sites/${encodeURIComponent(args.siteId)}/opportunities`,
   );
-  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig, 0, args.userToken);
   const items = Array.isArray(payload) ? payload : [];
   return items
     .map((item): RawOpportunitySummary | null => {
@@ -706,6 +725,7 @@ export async function fetchOpportunitySuggestionsRaw(args: {
   siteId: string;
   opportunityId: string;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawSuggestion[]> {
   const url = buildApiUrl(
     args.apiBaseUrl,
@@ -713,7 +733,7 @@ export async function fetchOpportunitySuggestionsRaw(args: {
       args.opportunityId,
     )}/suggestions`,
   );
-  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig, 0, args.userToken);
   const items = Array.isArray(payload) ? payload : [];
   return items
     .map((item): RawSuggestion | null => {
@@ -750,6 +770,7 @@ export async function patchSuggestion(args: {
   suggestionId: string;
   partialData: Record<string, unknown>;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawSuggestion> {
   const url = buildApiUrl(
     args.apiBaseUrl,
@@ -757,7 +778,8 @@ export async function patchSuggestion(args: {
       args.opportunityId,
     )}/suggestions/${encodeURIComponent(args.suggestionId)}`,
   );
-  const useProxy = args.proxyConfig?.configured === true;
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
   const requestUrl = useProxy
     ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
     : url;
@@ -770,6 +792,7 @@ export async function patchSuggestion(args: {
       ? {
           ...API_HEADERS,
           'content-type': 'application/json',
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
         }
       : {
           ...API_HEADERS,

@@ -44,7 +44,7 @@ export function buildCorsHeaders(request: Request, env: ApiCorsEnv = {}) {
   headers.set('access-control-allow-methods', 'GET,POST,PATCH,OPTIONS');
   headers.set(
     'access-control-allow-headers',
-    'content-type, authorization, x-api-key',
+    'content-type, authorization, x-api-key, x-client-token',
   );
   headers.set('access-control-max-age', '86400');
 

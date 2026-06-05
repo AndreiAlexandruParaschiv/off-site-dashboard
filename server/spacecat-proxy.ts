@@ -77,9 +77,16 @@ const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH']);
 async function buildUpstreamHeaders(
   env: SpacecatProxyEnv,
   hasBody: boolean,
+  clientToken?: string,
 ): Promise<Record<string, string>> {
   const base: Record<string, string> = { accept: 'application/json' };
   if (hasBody) base['content-type'] = 'application/json';
+  // A user-provided token (from the UI token field) takes precedence over
+  // server-side managed auth. This lets colleagues on the Amplify deployment
+  // paste their own SpaceCat session token without touching server env vars.
+  if (clientToken) {
+    return { ...base, authorization: `Bearer ${clientToken}` };
+  }
   if (hasManagedAuth(env)) {
     return { ...base, ...(await getSpacecatAuthHeaders(env)) };
   }
@@ -95,18 +102,25 @@ export async function handleSpacecatProxyRequest(
     return buildJsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
+  // A client-provided token (from the UI token field) allows any colleague
+  // to authenticate without touching server env vars. When present it bypasses
+  // the server-configured auth entirely for that request.
+  const clientToken = request.headers.get('x-client-token')?.trim() || undefined;
+
   const proxyConfig = getSpacecatProxyConfig(env);
 
-  if (!proxyConfig.configured) {
+  if (!proxyConfig.configured && !clientToken) {
     return buildJsonResponse(
       {
         error:
-          'SpaceCat auth is not configured on the server. Set IMS_SP_* (S2S) or SPACECAT_API_KEY.',
+          'SpaceCat auth is not configured. Paste your SpaceCat session token in the dashboard, or set IMS_SP_* / SPACECAT_API_KEY on the server.',
       },
       503,
     );
   }
 
+  // When a client token is provided the target URL whitelist is still applied
+  // so the proxy can't be used as an open relay.
   const requestUrl = new URL(request.url);
   const targetUrl = requestUrl.searchParams.get('target')?.trim() || '';
 
@@ -114,7 +128,11 @@ export async function handleSpacecatProxyRequest(
     return buildJsonResponse({ error: 'Missing target query parameter.' }, 400);
   }
 
-  if (!isAllowedTargetUrl(targetUrl, proxyConfig.apiBaseUrl)) {
+  const allowedBase = clientToken
+    ? (env.SPACECAT_API_BASE_URL?.trim() || 'https://llmo.experiencecloud.live/api/v1')
+    : proxyConfig.apiBaseUrl;
+
+  if (!isAllowedTargetUrl(targetUrl, allowedBase)) {
     return buildJsonResponse(
       { error: 'Target URL is not allowed by the Spacecat proxy.' },
       403,
@@ -130,19 +148,18 @@ export async function handleSpacecatProxyRequest(
     let upstreamResponse = await fetch(targetUrl, {
       method: request.method,
       cache: 'no-store',
-      headers: await buildUpstreamHeaders(env, hasBody),
+      headers: await buildUpstreamHeaders(env, hasBody, clientToken),
       body,
     });
 
     // Minted session tokens are short-lived; on 401, re-mint once and retry.
-    // Applies to both S2S and the user-login path (a pasted
-    // SPACECAT_SESSION_TOKEN can't be re-minted, so it's excluded).
-    if (upstreamResponse.status === 401 && canRemintSession(env)) {
+    // Only applies when using server-side auth (client token can't be re-minted).
+    if (upstreamResponse.status === 401 && !clientToken && canRemintSession(env)) {
       resetS2SCache();
       upstreamResponse = await fetch(targetUrl, {
         method: request.method,
         cache: 'no-store',
-        headers: await buildUpstreamHeaders(env, hasBody),
+        headers: await buildUpstreamHeaders(env, hasBody, clientToken),
         body,
       });
     }

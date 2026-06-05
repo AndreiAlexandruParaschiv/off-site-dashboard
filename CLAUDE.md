@@ -120,11 +120,24 @@ SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (de
 # Its issuer/audience must match SPACECAT_API_BASE_URL's host.
 SPACECAT_SESSION_TOKEN=
 
+# User-login path — a raw IMS *user* access token (e.g. copied from the
+# Experience Cloud shell / exc_app). When set (and no SPACECAT_SESSION_TOKEN
+# or S2S creds), the server exchanges it for a SpaceCat session token via
+# POST <base>/auth/login {accessToken}, caching until the returned JWT's exp
+# (~24h). Removes the manual "run the /auth/login curl, copy the session JWT"
+# step — you set the IMS access token instead. The IMS token itself still
+# expires, so prefer entitled S2S (IMS_SP_*) for a fully hands-off setup.
+SPACECAT_IMS_ACCESS_TOKEN=
+SPACECAT_USER_LOGIN_URL=            # optional; defaults to <base>/auth/login
+
 # Legacy API key — fallback only, removed after 2026-04-15:
 SPACECAT_API_KEY=...
 
-# Auth precedence: SPACECAT_SESSION_TOKEN > S2S (IMS_SP_*) > SPACECAT_API_KEY.
+# Auth precedence: SPACECAT_SESSION_TOKEN > S2S (IMS_SP_*) >
+# user-login (SPACECAT_IMS_ACCESS_TOKEN) > SPACECAT_API_KEY.
 # Token minting is server-side only; the browser never receives credentials and routes through `/api/spacecat`.
+# On a 401, S2S and the user-login path re-mint once and retry (a pasted
+# SPACECAT_SESSION_TOKEN cannot be re-minted, so it is not retried).
 
 # Auto-evaluation cron (optional — only required if running the
 # /api/cron/scan-opportunities endpoint):

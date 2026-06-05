@@ -203,3 +203,106 @@ test('resetS2SCache: forces a fresh mint', async () => {
   assert.deepEqual(b, { authorization: 'Bearer sess-2' });
   assert.equal(calls.length, 4);
 });
+
+// --- User-login (IMS access token) path ---
+
+import {
+  canRemintSession,
+  getUserLoginSessionToken,
+  isUserLoginConfigured,
+  readJwtExpiryMs,
+} from './spacecat-s2s.js';
+
+// A JWT whose payload is {"exp": 9999} (no signature needed for exp parse).
+function jwtWithExp(expSeconds: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ exp: expSeconds })).toString('base64url');
+  return `${header}.${payload}.sig`;
+}
+
+test('readJwtExpiryMs: reads exp claim as ms; null on malformed', () => {
+  assert.equal(readJwtExpiryMs(jwtWithExp(1000)), 1000 * 1000);
+  assert.equal(readJwtExpiryMs('not-a-jwt'), null);
+  assert.equal(readJwtExpiryMs('a.b'), null);
+});
+
+test('isUserLoginConfigured / canRemintSession reflect the new path', () => {
+  assert.equal(isUserLoginConfigured({}), false);
+  assert.equal(isUserLoginConfigured({ SPACECAT_IMS_ACCESS_TOKEN: 'at' }), true);
+  // canRemintSession: true for S2S OR user-login, false for pasted token only.
+  assert.equal(canRemintSession({}), false);
+  assert.equal(canRemintSession({ SPACECAT_SESSION_TOKEN: 'tok' }), false);
+  assert.equal(canRemintSession(baseEnv), true);
+  assert.equal(canRemintSession({ SPACECAT_IMS_ACCESS_TOKEN: 'at' }), true);
+});
+
+test('hasManagedAuth: true for the user-login path too', () => {
+  assert.equal(hasManagedAuth({ SPACECAT_IMS_ACCESS_TOKEN: 'at' }), true);
+});
+
+test('getUserLoginSessionToken: exchanges IMS access token via /auth/login', async () => {
+  resetS2SCache();
+  const token = jwtWithExp(99_999);
+  const { impl, calls } = fakeFetch([{ body: { sessionToken: token } }]);
+  const env = {
+    SPACECAT_API_BASE_URL: 'https://llmo.test/api/v1',
+    SPACECAT_IMS_ACCESS_TOKEN: 'user-ims-token',
+  };
+  const out = await getUserLoginSessionToken(env, { fetch: impl, now: () => 0 });
+  assert.equal(out, token);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://llmo.test/api/v1/auth/login');
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { accessToken: 'user-ims-token' });
+});
+
+test('getUserLoginSessionToken: caches until JWT exp', async () => {
+  resetS2SCache();
+  // exp far in the future (well beyond the 2-min refresh buffer) → second
+  // call within the fresh window must hit the cache.
+  const token = jwtWithExp(99_999);
+  const { impl, calls } = fakeFetch([{ body: { sessionToken: token } }]);
+  const env = { SPACECAT_IMS_ACCESS_TOKEN: 'at' };
+  const deps: Deps = { fetch: impl, now: () => 0 };
+  const a = await getUserLoginSessionToken(env, deps);
+  const b = await getUserLoginSessionToken(env, deps);
+  assert.equal(a, token);
+  assert.equal(b, token);
+  assert.equal(calls.length, 1, 'second call hits cache (within JWT exp window)');
+});
+
+test('getUserLoginSessionToken: rotating the IMS token busts the cache', async () => {
+  resetS2SCache();
+  const t1 = jwtWithExp(99_999);
+  const t2 = jwtWithExp(99_999);
+  const { impl, calls } = fakeFetch([
+    { body: { sessionToken: t1 } },
+    { body: { sessionToken: t2 } },
+  ]);
+  const deps: Deps = { fetch: impl, now: () => 0 };
+  const a = await getUserLoginSessionToken({ SPACECAT_IMS_ACCESS_TOKEN: 'token-AAAAAAAAAAAAAAAAAAAAAAAA' }, deps);
+  const b = await getUserLoginSessionToken({ SPACECAT_IMS_ACCESS_TOKEN: 'token-BBBBBBBBBBBBBBBBBBBBBBBB' }, deps);
+  assert.equal(a, t1);
+  assert.equal(b, t2);
+  assert.equal(calls.length, 2, 'different IMS token fingerprint forces a re-fetch');
+});
+
+test('getSpacecatAuthHeaders: falls through to user-login when no S2S creds', async () => {
+  resetS2SCache();
+  const token = jwtWithExp(99_999);
+  const { impl, calls } = fakeFetch([{ body: { sessionToken: token } }]);
+  const headers = await getSpacecatAuthHeaders(
+    { SPACECAT_IMS_ACCESS_TOKEN: 'at' },
+    { fetch: impl, now: () => 0 },
+  );
+  assert.deepEqual(headers, { authorization: `Bearer ${token}` });
+  assert.equal(calls.length, 1, 'only the /auth/login exchange — no IMS client_credentials call');
+});
+
+test('getUserLoginSessionToken: surfaces upstream error detail', async () => {
+  resetS2SCache();
+  const { impl } = fakeFetch([{ status: 401, body: { message: 'Invalid access token' } }]);
+  await assert.rejects(
+    () => getUserLoginSessionToken({ SPACECAT_IMS_ACCESS_TOKEN: 'expired' }, { fetch: impl, now: () => 0 }),
+    /SpaceCat user login failed: 401.*Invalid access token/,
+  );
+});

@@ -1,7 +1,7 @@
 import {
+  canRemintSession,
   getSpacecatAuthHeaders,
   hasManagedAuth,
-  isS2SConfigured,
   resetS2SCache,
   type SpacecatS2SEnv,
 } from './auth/spacecat-s2s.js';
@@ -134,8 +134,10 @@ export async function handleSpacecatProxyRequest(
       body,
     });
 
-    // S2S session tokens are short-lived; on 401, re-mint once and retry.
-    if (upstreamResponse.status === 401 && isS2SConfigured(env)) {
+    // Minted session tokens are short-lived; on 401, re-mint once and retry.
+    // Applies to both S2S and the user-login path (a pasted
+    // SPACECAT_SESSION_TOKEN can't be re-minted, so it's excluded).
+    if (upstreamResponse.status === 401 && canRemintSession(env)) {
       resetS2SCache();
       upstreamResponse = await fetch(targetUrl, {
         method: request.method,

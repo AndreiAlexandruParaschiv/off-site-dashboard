@@ -6,9 +6,9 @@
 // dependencies (Vite import.meta.env, window.btoa, window.setTimeout).
 
 import {
+  canRemintSession,
   getSpacecatAuthHeaders,
   hasManagedAuth,
-  isS2SConfigured,
   resetS2SCache,
   type SpacecatS2SEnv,
 } from '../auth/spacecat-s2s.js';
@@ -68,7 +68,7 @@ async function buildHeaders(
   const apiKey = env.SPACECAT_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      'No SpaceCat auth configured. Set SPACECAT_SESSION_TOKEN, IMS_SP_* (S2S), or SPACECAT_API_KEY.',
+      'No SpaceCat auth configured. Set SPACECAT_SESSION_TOKEN, IMS_SP_* (S2S), SPACECAT_IMS_ACCESS_TOKEN (user login), or SPACECAT_API_KEY.',
     );
   }
   return { accept: 'application/json', authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey };
@@ -94,7 +94,7 @@ async function spacecatRequest<T>(
   };
 
   let response = await doFetch();
-  if (response.status === 401 && isS2SConfigured(env)) {
+  if (response.status === 401 && canRemintSession(env)) {
     resetS2SCache();
     response = await doFetch();
   }

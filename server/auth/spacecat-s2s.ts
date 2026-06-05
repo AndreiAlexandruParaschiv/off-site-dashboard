@@ -18,6 +18,18 @@ export type SpacecatS2SEnv = {
   // valid session token (e.g. a user/admin token) or the S2S service principal
   // is not entitled for the target org.
   SPACECAT_SESSION_TOKEN?: string;
+  // User-login path: a raw IMS *user* access token (e.g. from the Experience
+  // Cloud shell / exc_app). When set (and neither SPACECAT_SESSION_TOKEN nor
+  // S2S creds are configured), this module exchanges it for a SpaceCat session
+  // token via POST <base>/auth/login {accessToken}, caching the result until
+  // its JWT `exp`. This removes the manual "run curl, copy the session JWT"
+  // step — you set the longer-lived IMS access token instead. NOTE: the IMS
+  // access token itself still expires; prefer entitled S2S (IMS_SP_*) for a
+  // fully hands-off setup.
+  SPACECAT_IMS_ACCESS_TOKEN?: string;
+  // Optional override for the user-login endpoint. Defaults to
+  // <SPACECAT_API_BASE_URL>/auth/login.
+  SPACECAT_USER_LOGIN_URL?: string;
 };
 
 /** True when `now` is before the token's expiry minus the safety buffer. */
@@ -53,6 +65,10 @@ let imsExpiresAt: number | null = null;
 let sessionToken: string | null = null;
 let sessionExpiresAt: number | null = null;
 let sessionScopeKey: string | null = null;
+// User-login path cache (independent of the S2S session cache above).
+let userSessionToken: string | null = null;
+let userSessionExpiresAt: number | null = null;
+let userSessionKey: string | null = null;
 
 /** Clear all cached tokens. Call after a 401 before re-minting. */
 export function resetS2SCache(): void {
@@ -61,6 +77,9 @@ export function resetS2SCache(): void {
   sessionToken = null;
   sessionExpiresAt = null;
   sessionScopeKey = null;
+  userSessionToken = null;
+  userSessionExpiresAt = null;
+  userSessionKey = null;
 }
 
 /** True when S2S credentials are present (drives legacy fallback). */
@@ -68,12 +87,54 @@ export function isS2SConfigured(env: SpacecatS2SEnv): boolean {
   return Boolean(env.IMS_SP_CLIENT_ID?.trim() && env.IMS_SP_CLIENT_SECRET?.trim());
 }
 
+/** True when the user-login (IMS access token) path is configured. */
+export function isUserLoginConfigured(env: SpacecatS2SEnv): boolean {
+  return Boolean(env.SPACECAT_IMS_ACCESS_TOKEN?.trim());
+}
+
+/**
+ * True when a session token can be (re-)minted from server-held credentials —
+ * i.e. S2S creds or a user IMS access token. Used to gate the 401 re-mint
+ * retry: a pre-pasted SPACECAT_SESSION_TOKEN can't be re-minted, so retrying
+ * it is pointless.
+ */
+export function canRemintSession(env: SpacecatS2SEnv): boolean {
+  return isS2SConfigured(env) || isUserLoginConfigured(env);
+}
+
 /**
  * True when this module can supply auth headers without the legacy key:
- * either a pre-obtained session token or full S2S credentials.
+ * a pre-obtained session token, full S2S credentials, or a user IMS token.
  */
 export function hasManagedAuth(env: SpacecatS2SEnv): boolean {
-  return Boolean(env.SPACECAT_SESSION_TOKEN?.trim()) || isS2SConfigured(env);
+  return (
+    Boolean(env.SPACECAT_SESSION_TOKEN?.trim()) ||
+    isS2SConfigured(env) ||
+    isUserLoginConfigured(env)
+  );
+}
+
+/**
+ * Read the `exp` (seconds-since-epoch) claim from a JWT without verifying it.
+ * Returns the expiry in ms, or null if the token is malformed / has no exp.
+ * Used to cache user-login session tokens for their real lifetime (~24h)
+ * instead of a fixed short TTL.
+ */
+export function readJwtExpiryMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payloadB64.padEnd(Math.ceil(payloadB64.length / 4) * 4, '=');
+    const json = JSON.parse(
+      typeof atob === 'function'
+        ? atob(padded)
+        : Buffer.from(padded, 'base64').toString('utf-8'),
+    ) as { exp?: number };
+    return typeof json.exp === 'number' ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getImsAccessToken(
@@ -128,15 +189,106 @@ function resolveLoginUrl(env: SpacecatS2SEnv): string {
 /**
  * Auth header for SpaceCat API calls. On a 401, the caller should
  * `resetS2SCache()` and call this again once before propagating.
+ *
+ * Precedence: SPACECAT_SESSION_TOKEN (pasted) > S2S (IMS_SP_*) >
+ * user-login (SPACECAT_IMS_ACCESS_TOKEN).
  */
 export async function getSpacecatAuthHeaders(
   env: SpacecatS2SEnv,
   deps: Deps = defaultDeps,
 ): Promise<Record<string, string>> {
-  // A pre-obtained session token short-circuits S2S minting entirely.
+  // A pre-obtained session token short-circuits all minting entirely.
   const provided = env.SPACECAT_SESSION_TOKEN?.trim();
-  const token = provided || (await getSessionToken(env, deps));
-  return { authorization: `Bearer ${token}` };
+  if (provided) {
+    return { authorization: `Bearer ${provided}` };
+  }
+  // S2S (client_credentials) is the preferred unattended path.
+  if (isS2SConfigured(env)) {
+    return { authorization: `Bearer ${await getSessionToken(env, deps)}` };
+  }
+  // User-login: exchange a raw IMS user access token for a session token.
+  if (isUserLoginConfigured(env)) {
+    return { authorization: `Bearer ${await getUserLoginSessionToken(env, deps)}` };
+  }
+  throw new Error(
+    'No managed SpaceCat auth configured (SPACECAT_SESSION_TOKEN, IMS_SP_*, or SPACECAT_IMS_ACCESS_TOKEN).',
+  );
+}
+
+function resolveUserLoginUrl(env: SpacecatS2SEnv): string {
+  if (env.SPACECAT_USER_LOGIN_URL?.trim()) {
+    return env.SPACECAT_USER_LOGIN_URL.trim();
+  }
+  const base = (env.SPACECAT_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+  return `${base}/auth/login`;
+}
+
+/**
+ * Exchange a raw IMS *user* access token for a SpaceCat session token via
+ * POST <base>/auth/login {accessToken}. Caches the result until just before
+ * its JWT `exp` (falling back to SESSION_TTL_MS if the token has no exp).
+ *
+ * The cache is keyed by a fingerprint of the access token, so swapping in a
+ * fresh IMS token (e.g. after the old one expires) invalidates the cache
+ * without needing an explicit reset.
+ */
+export async function getUserLoginSessionToken(
+  env: SpacecatS2SEnv,
+  deps: Deps = defaultDeps,
+): Promise<string> {
+  const accessToken = env.SPACECAT_IMS_ACCESS_TOKEN?.trim() ?? '';
+  if (!accessToken) {
+    throw new Error('SPACECAT_IMS_ACCESS_TOKEN is not set.');
+  }
+  // Cheap fingerprint so a rotated IMS token busts the cache.
+  const key = accessToken.slice(-24);
+  if (
+    userSessionToken &&
+    userSessionKey === key &&
+    isTokenFresh(userSessionExpiresAt, SESSION_REFRESH_BUFFER_MS, deps.now())
+  ) {
+    return userSessionToken;
+  }
+
+  const response = await deps.fetch(resolveUserLoginUrl(env), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accessToken }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `SpaceCat user login failed: ${response.status} ${response.statusText} ${detail.slice(0, 200)}`,
+    );
+  }
+
+  // Tolerant parse: the endpoint returns the session token under one of a
+  // few common keys, or as a raw JWT string body.
+  const raw = await response.text();
+  let token = '';
+  try {
+    const json = JSON.parse(raw) as Record<string, unknown>;
+    token =
+      (typeof json.sessionToken === 'string' && json.sessionToken) ||
+      (typeof json.token === 'string' && json.token) ||
+      (typeof json.session_token === 'string' && json.session_token) ||
+      '';
+  } catch {
+    // Body wasn't JSON — treat it as the raw token if it looks like a JWT.
+    token = /^[\w-]+\.[\w-]+\.[\w-]+$/.test(raw.trim()) ? raw.trim() : '';
+  }
+  if (!token) {
+    throw new Error(
+      `SpaceCat user login returned no session token (body: ${raw.slice(0, 160)}).`,
+    );
+  }
+
+  userSessionToken = token;
+  // Prefer the JWT's real expiry; fall back to the short S2S TTL.
+  const jwtExpiry = readJwtExpiryMs(token);
+  userSessionExpiresAt = jwtExpiry ?? deps.now() + SESSION_TTL_MS;
+  userSessionKey = key;
+  return token;
 }
 
 export async function getSessionToken(

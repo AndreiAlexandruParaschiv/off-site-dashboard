@@ -102,17 +102,48 @@ VITE_SERVER_API_BASE_URL=https://your-vercel.vercel.app  # frontend only
 APP_ALLOWED_ORIGINS=https://your-amplify-url.com         # backend CORS
 
 # SpaceCat auth — S2S (Adobe IMS Server-to-Service), preferred:
-IMS_ENDPOINT=https://ims-na1.adobelogin.com
-IMS_SP_CLIENT_ID=aem-sites-mystique
+# Provisioned via JIRA in the SITES project (label `mysticat-s2s-request`,
+# notify @mysticat-s2s-admin). The SpaceCat Security Team creates the OAuth
+# Server-to-Server credential and registers the consumer. See the official
+# guide: github.com/adobe/spacecat-api-service/tree/main/docs/s2s
+IMS_ENDPOINT=https://ims-na1.adobelogin.com    # prod; dev/stage = https://ims-na1-stg1.adobelogin.com
+IMS_SP_CLIENT_ID=...                # from the provisioned OAuth S2S credential
 IMS_SP_CLIENT_SECRET=...            # secret — Vercel/local env only, never commit
-IMS_SP_ORG_ID=...@AdobeOrg
-IMS_SP_SCOPE=aem.adobe.service,openid,AdobeID,...   # full provisioned scope
+IMS_SP_ORG_ID=...@AdobeOrg          # the SP's own org (immutable; extracted from the token at registration)
+IMS_SP_SCOPE=openid,AdobeID,user_management_sdk   # canonical S2S scope per the official guide
 IMS_SP_RESOURCE=                    # optional; only if the IMS token needs a `resource` param
 SPACECAT_S2S_LOGIN_URL=             # optional; defaults to <base>/auth/s2s/login
-SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (dev: .../page/api/ci)
+SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (dev: https://llmo.experiencecloud.page/api/ci)
+#
+# HOST-DRIVEN PRODUCT CONTEXT (critical): the Fastly edge sets `x-product`
+# from the request Host and overwrites any client value. This evaluator is an
+# LLMO consumer, so the session token MUST be minted via the LLMO host
+# (llmo.experiencecloud.*). Minting via spacecat.experiencecloud.live yields
+# an ASO-context JWT that fails LLMO per-product entitlement checks. Keep
+# SPACECAT_API_BASE_URL on the LLMO host above — do NOT point it at the
+# spacecat.* host (that host is only used for the standalone /sites scan
+# scripts, never for S2S).
+#
 # Note: IMS_SP_ORG_ID is also sent on the IMS token request itself (org_id),
-# required for ownerless service principals. S2S only works if the SP is
-# entitled in SpaceCat's consumer registry for the target site's org.
+# required for ownerless service principals.
+#
+# CAPABILITIES TO REQUEST IN THE JIRA TICKET (least-privilege for this app):
+#   - site:readAll       — GET /sites enumeration (cross-tenant LIST)
+#   - opportunity:read   — GET /sites/{siteId}/opportunities (tenant-scoped)
+#   - suggestion:read    — GET .../suggestions (tenant-scoped)
+#   - suggestion:write   — PATCH .../suggestions (only if the Suggestions
+#                          Patcher tab is used; write caps need justification)
+#
+# MULTI-TENANT SCOPING (the gotcha): `*:readAll` only opens the LIST
+# endpoints. Per-site reads (opportunities, suggestions) are tenant-scoped and
+# require a session minted with the *resource's owning org*. A single session
+# scoped to IMS_SP_ORG_ID can only read sites OWNED by that org. To read other
+# customers' sites (lovesac, wkkellogg, ...), either (a) the SP must be granted
+# cross-tenant trust by the S2S admins, or (b) mint a per-site session via the
+# `{baseURL}` body option on /auth/s2s/login (alternative to {imsOrgId}). The
+# current code mints one {imsOrgId}-scoped session; per-site {baseURL} scoping
+# is not yet wired. The pasted-admin-token / user-login paths sidestep this
+# because human-admin tokens bypass tenant isolation.
 
 # Pre-obtained session token — takes precedence over S2S minting when set.
 # Used directly as the bearer (S2S skipped). Stopgap for when the SP is not yet

@@ -11,7 +11,6 @@ export const DEFAULT_API_BASE_URL =
   'https://llmo.experiencecloud.live/api/v1';
 export const SPACECAT_PROXY_CONFIG_API_PATH = '/api/spacecat-config';
 export const SPACECAT_PROXY_API_PATH = '/api/spacecat';
-export const SPACECAT_LOGIN_API_PATH = '/api/spacecat-login';
 
 export const DEFAULT_CONFIG: DashboardConfig = {
   apiBaseUrl: DEFAULT_API_BASE_URL,

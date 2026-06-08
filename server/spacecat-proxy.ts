@@ -80,6 +80,11 @@ const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH', 'DELETE']);
 // body with a content-type header, which some upstreams reject.
 const BODYLESS_METHODS = new Set(['GET', 'DELETE']);
 
+// HTTP statuses that must have a null body. The Response constructor throws
+// ("Invalid response status code 204") if given any body — even "" — with one
+// of these, so the proxy forwards a null body when echoing them back.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
 async function buildUpstreamHeaders(
   env: SpacecatProxyEnv,
   hasBody: boolean,
@@ -189,7 +194,12 @@ export async function handleSpacecatProxyRequest(
       responseHeaders.set('retry-after', retryAfter);
     }
 
-    return new Response(responseBody, {
+    // 204/205/304 are "null body" statuses — the Response constructor throws
+    // if handed any body (even an empty string) with one of them. A DELETE
+    // that succeeds typically comes back as 204, so forward a null body for
+    // these to avoid crashing the proxy on an otherwise-successful response.
+    const isNullBodyStatus = NULL_BODY_STATUSES.has(upstreamResponse.status);
+    return new Response(isNullBodyStatus ? null : responseBody, {
       status: upstreamResponse.status,
       headers: responseHeaders,
     });

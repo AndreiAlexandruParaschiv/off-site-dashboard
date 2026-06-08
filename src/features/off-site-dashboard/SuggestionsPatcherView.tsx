@@ -796,14 +796,6 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     [undoSnapshots, sendPatch],
   );
 
-  // The status a flip would move the selected opportunity TO. Ignored → "NEW"
-  // (restore); anything active → "IGNORED". Null when nothing is selected.
-  const nextToggleStatus = selectedOpportunityEntry
-    ? selectedOpportunityEntry.ignored
-      ? 'NEW'
-      : 'IGNORED'
-    : null;
-
   // Step 1 of the status flip: open the inline confirm. Mirrors requestSave so
   // the user gets the same "are you sure?" beat before a write.
   const requestStatusToggle = useCallback(() => {
@@ -959,34 +951,63 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
         </div>
 
         {selectedOpportunityEntry ? (
-          <div className="patcher-status-toggle">
-            <div className="patcher-status-toggle-meta">
-              <span className="filter-label">Opportunity status</span>
-              <span
-                className={
-                  selectedOpportunityEntry.ignored
-                    ? 'patcher-card-status patcher-card-status-ignored'
-                    : 'patcher-card-status'
-                }
-              >
-                {selectedOpportunityEntry.opportunity.status ?? 'NEW'}
+          <div
+            className={`visibility-control ${
+              selectedOpportunityEntry.ignored ? 'is-ignored' : 'is-visible'
+            }`}
+          >
+            <div className="visibility-control-state">
+              <span className="visibility-dot" aria-hidden="true">
+                {selectedOpportunityEntry.ignored ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19" />
+                    <path d="M6.61 6.61A18.5 18.5 0 0 0 2 12s3 8 10 8a9.1 9.1 0 0 0 5.39-1.61" />
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                    <path d="m2 2 20 20" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
               </span>
-              <span className="patcher-card-type">
-                {selectedOpportunityEntry.canonical}
+              <span className="visibility-control-text">
+                <span className="visibility-control-label">
+                  {selectedOpportunityEntry.ignored ? 'Ignored' : 'Visible in UI'}
+                </span>
+                <span className="visibility-control-sub">
+                  {selectedOpportunityEntry.ignored
+                    ? 'Hidden from the active LLMO views'
+                    : 'Shown in the active LLMO views'}{' '}
+                  · {selectedOpportunityEntry.canonical}
+                </span>
               </span>
+              {!statusConfirmPending ? (
+                <button
+                  type="button"
+                  className={`visibility-action ${
+                    selectedOpportunityEntry.ignored ? 'is-show' : 'is-hide'
+                  }`}
+                  onClick={requestStatusToggle}
+                  disabled={statusToggleState.kind === 'saving'}
+                >
+                  {selectedOpportunityEntry.ignored ? 'Set visible in UI' : 'Hide from UI'}
+                </button>
+              ) : null}
             </div>
 
             {statusConfirmPending ? (
               <div className="patcher-confirm-panel">
                 <strong>
                   {selectedOpportunityEntry.ignored
-                    ? 'Restore this opportunity to NEW?'
-                    : 'Mark this opportunity as IGNORED?'}
+                    ? 'Make this opportunity visible in the UI?'
+                    : 'Hide this opportunity from the UI?'}
                 </strong>
                 <p className="metric-copy">
                   {selectedOpportunityEntry.ignored
-                    ? 'It will reappear in the active LLMO views.'
-                    : 'It will be hidden from the active LLMO views until restored.'}
+                    ? 'It will reappear in the active LLMO views (status set to NEW).'
+                    : 'It will be hidden from the active LLMO views (status set to IGNORED) until you make it visible again.'}
                 </p>
                 <div className="patcher-confirm-actions">
                   <button
@@ -997,7 +1018,9 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                   >
                     {statusToggleState.kind === 'saving'
                       ? 'Updating…'
-                      : `Confirm — set ${nextToggleStatus}`}
+                      : selectedOpportunityEntry.ignored
+                        ? 'Confirm — make visible'
+                        : 'Confirm — hide'}
                   </button>
                   <button
                     type="button"
@@ -1009,16 +1032,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
                   </button>
                 </div>
               </div>
-            ) : (
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={requestStatusToggle}
-                disabled={statusToggleState.kind === 'saving'}
-              >
-                {selectedOpportunityEntry.ignored ? 'Restore to New' : 'Mark as Ignored'}
-              </button>
-            )}
+            ) : null}
 
             {statusToggleState.kind === 'error' ? (
               <p className="status-pill status-pill-error">
@@ -1027,7 +1041,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
             ) : null}
             {statusToggleState.kind === 'saved' ? (
               <p className="status-pill status-pill-success">
-                Status updated at{' '}
+                Visibility updated at{' '}
                 {new Date(statusToggleState.at).toLocaleTimeString()}
               </p>
             ) : null}

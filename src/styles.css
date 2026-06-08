@@ -2146,28 +2146,142 @@ a:hover {
   gap: 6px;
 }
 
-.patcher-status-toggle {
+/* Opportunity visibility control — eye/eye-off toggle that flips an off-site
+   opportunity between "Visible in UI" (status NEW) and "Ignored". The left
+   rule and icon chip recolor with state: moss when visible, muted ink when
+   ignored. */
+.visibility-control {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   margin-top: 16px;
   padding: 14px 16px;
-  border: 1px solid var(--border-soft, #e5e7eb);
+  border: 1px solid var(--paper-hairline);
+  border-left: 3px solid var(--ink-faint);
   border-radius: 10px;
-  background: var(--surface-soft, #f9fafb);
+  background: var(--paper-card-soft);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
 }
 
-.patcher-status-toggle-meta {
+.visibility-control.is-visible {
+  border-left-color: var(--moss);
+}
+
+.visibility-control.is-ignored {
+  border-left-color: var(--ink-faint);
+  background: var(--paper-deep);
+}
+
+.visibility-control-state {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.patcher-card-status-ignored {
-  background: #fee2e2;
-  color: #991b1b;
+.visibility-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+}
+
+.visibility-control.is-visible .visibility-dot {
+  background: var(--moss-soft);
+  color: var(--moss);
+}
+
+.visibility-control.is-ignored .visibility-dot {
+  background: rgba(19, 26, 31, 0.06);
+  color: var(--ink-faint);
+}
+
+.visibility-dot svg {
+  width: 19px;
+  height: 19px;
+}
+
+.visibility-control-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.visibility-control-label {
   font-weight: 600;
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.visibility-control.is-ignored .visibility-control-label {
+  color: var(--ink-soft);
+}
+
+.visibility-control-sub {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.visibility-action {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 15px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.visibility-action.is-show {
+  background: var(--moss);
+  border-color: var(--moss);
+  color: var(--paper-card);
+}
+
+.visibility-action.is-show:hover:not(:disabled) {
+  background: #34502f;
+  border-color: #34502f;
+}
+
+.visibility-action.is-hide {
+  background: transparent;
+  border-color: var(--paper-hairline-strong);
+  color: var(--ink-soft);
+}
+
+.visibility-action.is-hide:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.visibility-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .visibility-control-state {
+    flex-wrap: wrap;
+  }
+
+  .visibility-action {
+    margin-left: 0;
+  }
 }
 
 .patcher-card-grid {

@@ -136,73 +136,70 @@ a:hover {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   Breathing room — expand inner and outer spacing (Phase 1.1)
+   Density pass — tighten the spatial rhythm into an instrument-panel
+   feel. (Supersedes the earlier "breathing room" expansion.)
    ───────────────────────────────────────────────────────────────── */
 
 .dashboard-shell {
-  max-width: 1720px;
+  max-width: 1640px;
   margin: 0 auto;
-  padding: 36px 28px 64px;
-}
-
-.dashboard-shell {
-  padding: 40px 40px 72px;
+  padding: 22px 26px 44px;
 }
 
 .dashboard-hero {
-  gap: 28px !important;
-  margin-bottom: 36px !important;
+  gap: 16px !important;
+  margin-bottom: 18px !important;
 }
 
 .hero-copy {
-  padding: 40px 44px !important;
-  gap: 24px !important;
+  padding: 26px 30px !important;
+  gap: 14px !important;
 }
 
 .hero-copy h1 {
-  max-width: 16ch !important;
-  font-size: clamp(2.4rem, 4vw, 4.2rem) !important;
+  max-width: 18ch !important;
+  font-size: clamp(1.9rem, 3vw, 3rem) !important;
   letter-spacing: -0.035em !important;
   line-height: 0.98 !important;
 }
 
 .hero-copy p {
-  font-size: 1rem !important;
-  line-height: 1.6 !important;
-  max-width: 62ch !important;
+  font-size: 0.92rem !important;
+  line-height: 1.5 !important;
+  max-width: 60ch !important;
 }
 
 .hero-signal-row {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .hero-signal {
-  min-width: 176px !important;
-  padding: 16px 18px !important;
+  min-width: 150px !important;
+  padding: 11px 13px !important;
 }
 
 .hero-command {
-  padding: 32px 30px !important;
-  gap: 22px !important;
-}
-
-.hero-stats {
+  padding: 20px 22px !important;
   gap: 14px !important;
 }
 
+.hero-stats {
+  gap: 10px !important;
+}
+
 .stats-card {
-  padding: 18px 0 !important;
-  gap: 18px !important;
+  padding: 12px 0 !important;
+  gap: 12px !important;
 }
 
 .stats-value {
-  font-size: 2.2rem !important;
+  font-size: 1.85rem !important;
 }
 
 /* Workspace summary KPIs: stack label → value → detail tightly per card */
 .workspace-summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  column-gap: 28px !important;
+  column-gap: 20px !important;
   row-gap: 0 !important;
   align-items: stretch !important;
 }
@@ -234,7 +231,7 @@ a:hover {
 
 .workspace-summary-grid .stats-value {
   order: 2;
-  font-size: 2.4rem !important;
+  font-size: 2rem !important;
   margin-top: 2px;
 }
 
@@ -244,116 +241,116 @@ a:hover {
 }
 
 .hero-command-notes {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .hero-note {
-  padding-top: 14px !important;
+  padding-top: 12px !important;
 }
 
 .dashboard-layout {
-  gap: 32px !important;
+  gap: 22px !important;
 }
 
 .workspace-shell {
-  gap: 28px !important;
+  gap: 22px !important;
 }
 
 .workspace-sidebar {
-  gap: 20px !important;
+  gap: 14px !important;
 }
 
 .workspace-nav {
-  gap: 12px !important;
+  gap: 6px !important;
 }
 
 .workspace-nav-button {
-  padding: 18px 20px !important;
-  gap: 10px !important;
+  padding: 12px 15px !important;
+  gap: 9px !important;
 }
 
 .workspace-content,
 .workspace-mode-stack {
-  gap: 28px !important;
+  gap: 18px !important;
 }
 
 .panel {
-  padding: 28px 30px !important;
-  gap: 22px !important;
+  padding: 18px 20px !important;
+  gap: 14px !important;
 }
 
 .dashboard-secondary-grid,
 .dashboard-data-stack {
-  gap: 28px !important;
+  gap: 18px !important;
 }
 
 .dashboard-overview-grid {
-  gap: 20px !important;
-}
-
-.dashboard-overview-grid > .panel {
-  padding: 18px 22px !important;
   gap: 14px !important;
 }
 
+.dashboard-overview-grid > .panel {
+  padding: 14px 16px !important;
+  gap: 10px !important;
+}
+
 .dashboard-overview-grid > .panel .panel-header {
-  gap: 6px !important;
+  gap: 5px !important;
 }
 
 .dashboard-overview-grid > .panel .panel-header h2 {
-  font-size: 1rem !important;
+  font-size: 0.96rem !important;
 }
 
 .dashboard-overview-grid > .panel .panel-header p {
-  font-size: 0.82rem !important;
-  line-height: 1.5 !important;
+  font-size: 0.8rem !important;
+  line-height: 1.45 !important;
 }
 
 .panel-header {
-  gap: 16px !important;
+  gap: 10px !important;
 }
 
 .panel-header h2 {
-  line-height: 1.2 !important;
+  line-height: 1.18 !important;
 }
 
 .panel-header p {
-  line-height: 1.6 !important;
+  line-height: 1.5 !important;
 }
 
-/* Give table cells a little more room so rows don't feel cramped */
+/* Compact table rows for a dense, scannable grid */
 .dashboard-table thead th {
-  padding: 14px 16px !important;
+  padding: 9px 14px !important;
 }
 
 .dashboard-table tbody td {
-  padding: 14px 16px !important;
-  line-height: 1.5 !important;
+  padding: 9px 14px !important;
+  line-height: 1.45 !important;
 }
 
 /* Wikipedia check + site cards */
 .wikipedia-check-layout {
-  gap: 24px !important;
-}
-
-.wikipedia-check-card {
-  padding: 24px 26px !important;
-}
-
-.site-card {
-  padding: 20px 22px !important;
-  gap: 12px !important;
-}
-
-.site-grid {
   gap: 16px !important;
 }
 
-/* Inputs: a touch more vertical room */
+.wikipedia-check-card {
+  padding: 16px 18px !important;
+}
+
+.site-card {
+  padding: 14px 16px !important;
+  gap: 8px !important;
+}
+
+.site-grid {
+  gap: 12px !important;
+}
+
+/* Inputs: compact, crisp control height */
 .text-input,
 .textarea-input,
 .select-input {
-  padding: 12px 14px !important;
+  padding: 9px 12px !important;
 }
 
 .opportunity-select {
@@ -364,37 +361,37 @@ a:hover {
 
 /* Filters + chips + pagination footers */
 .filter-group {
-  gap: 12px !important;
-  padding: 14px 0 !important;
+  gap: 10px !important;
+  padding: 10px 0 !important;
 }
 
 .button-row,
 .table-controls,
 .pagination-controls {
-  gap: 14px !important;
-  padding-top: 14px !important;
+  gap: 10px !important;
+  padding-top: 10px !important;
 }
 
 /* Managed connection block and action rows */
 .managed-connection-note {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .settings-grid,
 .settings-grid-managed {
-  gap: 18px !important;
+  gap: 14px !important;
 }
 
 .settings-actions {
-  gap: 12px !important;
-  padding-top: 8px !important;
+  gap: 10px !important;
+  padding-top: 6px !important;
 }
 
 .dashboard-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.82fr);
-  gap: 22px;
-  margin-bottom: 28px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.82fr);
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
 .hero-copy,
@@ -2807,4 +2804,70 @@ a:hover {
 /* "Add competitor" row under each SOV table */
 .back-office-table-actions {
   margin-top: 10px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Polish pass — one orchestrated load reveal + instrument numerals
+   ───────────────────────────────────────────────────────────────── */
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Stagger the top-level panels up on load so the dashboard assembles
+   itself rather than appearing flat. Only the first handful are delayed —
+   anything further down has scrolled past the fold anyway. */
+.workspace-mode-stack > .panel,
+.dashboard-overview-grid > .panel,
+.dashboard-hero > * {
+  animation: panel-rise 460ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.dashboard-hero > *:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.workspace-mode-stack > .panel:nth-child(1) {
+  animation-delay: 60ms;
+}
+.workspace-mode-stack > .panel:nth-child(2) {
+  animation-delay: 120ms;
+}
+.workspace-mode-stack > .panel:nth-child(3) {
+  animation-delay: 180ms;
+}
+.workspace-mode-stack > .panel:nth-child(4) {
+  animation-delay: 240ms;
+}
+
+.dashboard-overview-grid > .panel:nth-child(2) {
+  animation-delay: 80ms;
+}
+.dashboard-overview-grid > .panel:nth-child(3) {
+  animation-delay: 160ms;
+}
+
+/* Numbers read like gauges: even-width digits stop KPI values from
+   jittering as they change. */
+.stats-value,
+.metric-value,
+.back-office-metric-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* A reader who prefers reduced motion gets the layout instantly, no rise. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-mode-stack > .panel,
+  .dashboard-overview-grid > .panel,
+  .dashboard-hero > * {
+    animation: none;
+  }
 }

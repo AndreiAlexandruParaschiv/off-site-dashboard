@@ -71,8 +71,14 @@ export async function handleSpacecatProxyConfigRequest(
 
 // HTTP methods the proxy will forward upstream. GET for normal reads;
 // PATCH for the Suggestions Patcher feature, which writes partial
-// `data` updates to opportunity suggestions.
-const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH']);
+// `data` updates to opportunity suggestions; DELETE for removing an
+// opportunity outright from the patcher.
+const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH', 'DELETE']);
+
+// Methods that never carry a request body. We must NOT call request.text()
+// for these — DELETE in particular would otherwise forward an empty-string
+// body with a content-type header, which some upstreams reject.
+const BODYLESS_METHODS = new Set(['GET', 'DELETE']);
 
 async function buildUpstreamHeaders(
   env: SpacecatProxyEnv,
@@ -143,9 +149,10 @@ export async function handleSpacecatProxyRequest(
     );
   }
 
-  // For mutating methods, forward the JSON request body upstream so the
-  // backend can apply the partial update.
-  const body = request.method === 'GET' ? undefined : await request.text();
+  // For mutating methods with a body (PATCH), forward the JSON request body
+  // upstream so the backend can apply the partial update. Bodyless methods
+  // (GET, DELETE) send nothing.
+  const body = BODYLESS_METHODS.has(request.method) ? undefined : await request.text();
   const hasBody = body !== undefined;
 
   try {

@@ -893,6 +893,59 @@ export async function patchOpportunityStatus(args: {
   };
 }
 
+/**
+ * DELETE an opportunity outright (along with its suggestions, server-side).
+ *
+ * This is irreversible — there is no body and nothing to undo. Routing mirrors
+ * the patch helpers (proxy + x-client-token, or direct Authorization/x-api-key).
+ * Resolves on any 2xx (including 204 No Content); throws SpacecatApiError
+ * otherwise.
+ */
+export async function deleteOpportunity(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
+}): Promise<void> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}`,
+  );
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
+  const requestUrl = useProxy
+    ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
+    : url;
+  const trimmedApiKey = args.apiKey.trim();
+
+  const response = await fetch(requestUrl, {
+    method: 'DELETE',
+    cache: 'no-store',
+    headers: useProxy
+      ? {
+          ...API_HEADERS,
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
+        }
+      : {
+          ...API_HEADERS,
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'x-api-key': trimmedApiKey,
+        },
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Failed to delete opportunity (HTTP ${response.status}).`,
+      { status: response.status },
+    );
+  }
+}
+
 export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {
   try {
     const response = await fetch(buildInternalApiUrl(SPACECAT_PROXY_CONFIG_API_PATH), {

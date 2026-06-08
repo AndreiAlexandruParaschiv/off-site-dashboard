@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchOpportunitySuggestionsRaw,
   fetchSiteOpportunitySummaries,
+  patchOpportunityStatus,
   patchSuggestion,
   type RawOpportunitySummary,
   type RawSuggestion,
@@ -254,6 +255,13 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   const [statusFilter, setStatusFilter] =
     useState<OpportunityStatusFilter>('active');
 
+  // Opportunity status toggle (IGNORED ↔ NEW) for the *selected* opportunity.
+  // A single slot is enough since only one opportunity is selected at a time.
+  // The confirm flag gates the PATCH behind an inline "are you sure?" step,
+  // mirroring the per-card save flow.
+  const [statusToggleState, setStatusToggleState] = useState<SaveState>({ kind: 'idle' });
+  const [statusConfirmPending, setStatusConfirmPending] = useState(false);
+
   const isReady =
     props.proxyConfig.configured ||
     props.apiKey.trim().length > 0 ||
@@ -309,6 +317,26 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     }
     return allOffSiteOpportunities.filter((entry) => !entry.ignored);
   }, [allOffSiteOpportunities, statusFilter]);
+
+  // The full entry (opportunity + canonical type + ignored flag) for the
+  // currently-selected opportunity. Drawn from the unfiltered list so the
+  // status toggle still has its target even right after a flip moves it out
+  // of the active filter. Null until a selection is made.
+  const selectedOpportunityEntry = useMemo(
+    () =>
+      allOffSiteOpportunities.find(
+        (entry) => entry.opportunity.id === selectedOpportunityId,
+      ) ?? null,
+    [allOffSiteOpportunities, selectedOpportunityId],
+  );
+
+  // Reset the status-toggle UI whenever the selected opportunity changes (or
+  // is cleared, e.g. on a site switch) so a stale confirm panel or save pill
+  // never carries over to a different opportunity.
+  useEffect(() => {
+    setStatusToggleState({ kind: 'idle' });
+    setStatusConfirmPending(false);
+  }, [selectedOpportunityId]);
 
   // If the currently-selected opportunity disappears from the filtered list
   // (e.g. site changed, opportunity reload trimmed it out, or filter set
@@ -768,6 +796,78 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     [undoSnapshots, sendPatch],
   );
 
+  // The status a flip would move the selected opportunity TO. Ignored → "NEW"
+  // (restore); anything active → "IGNORED". Null when nothing is selected.
+  const nextToggleStatus = selectedOpportunityEntry
+    ? selectedOpportunityEntry.ignored
+      ? 'NEW'
+      : 'IGNORED'
+    : null;
+
+  // Step 1 of the status flip: open the inline confirm. Mirrors requestSave so
+  // the user gets the same "are you sure?" beat before a write.
+  const requestStatusToggle = useCallback(() => {
+    if (!selectedOpportunityEntry) return;
+    setStatusToggleState({ kind: 'idle' });
+    setStatusConfirmPending(true);
+  }, [selectedOpportunityEntry]);
+
+  const cancelStatusToggle = useCallback(() => {
+    setStatusConfirmPending(false);
+  }, []);
+
+  // Step 2: PATCH the new status, then update the cached opportunity in place
+  // so the dropdown label, [IGNORED] tag, and Active/Ignored counts all refresh
+  // without a refetch.
+  const confirmStatusToggle = useCallback(async () => {
+    const entry = selectedOpportunityEntry;
+    if (!entry || !selectedSiteId) return;
+    const nextStatus = entry.ignored ? 'NEW' : 'IGNORED';
+    setStatusConfirmPending(false);
+    setStatusToggleState({ kind: 'saving' });
+    try {
+      const updated = await patchOpportunityStatus({
+        apiBaseUrl: props.apiBaseUrl,
+        apiKey: props.apiKey,
+        siteId: selectedSiteId,
+        opportunityId: entry.opportunity.id,
+        status: nextStatus,
+        proxyConfig: props.proxyConfig,
+        userToken: props.userToken,
+      });
+      // Widen the filter FIRST if the flip would push this opportunity out of
+      // the current Active/Ignored view — otherwise the selection-clear effect
+      // would drop the selection out from under the user.
+      const nowIgnored = isIgnoredOpportunityStatus(updated.status);
+      setStatusFilter((current) => {
+        if (current === 'active' && nowIgnored) return 'all';
+        if (current === 'ignored' && !nowIgnored) return 'all';
+        return current;
+      });
+      setOpportunities((prev) =>
+        prev
+          ? prev.map((opportunity) =>
+              opportunity.id === updated.id
+                ? { ...opportunity, ...updated }
+                : opportunity,
+            )
+          : prev,
+      );
+      setStatusToggleState({ kind: 'saved', at: new Date().toISOString() });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update status.';
+      setStatusToggleState({ kind: 'error', message });
+    }
+  }, [
+    selectedOpportunityEntry,
+    selectedSiteId,
+    props.apiBaseUrl,
+    props.apiKey,
+    props.proxyConfig,
+    props.userToken,
+  ]);
+
   return (
     <div className="workspace-mode-stack">
       <section className="panel panel-tone-warm panel-mode-intro">
@@ -857,6 +957,82 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
             </select>
           </label>
         </div>
+
+        {selectedOpportunityEntry ? (
+          <div className="patcher-status-toggle">
+            <div className="patcher-status-toggle-meta">
+              <span className="filter-label">Opportunity status</span>
+              <span
+                className={
+                  selectedOpportunityEntry.ignored
+                    ? 'patcher-card-status patcher-card-status-ignored'
+                    : 'patcher-card-status'
+                }
+              >
+                {selectedOpportunityEntry.opportunity.status ?? 'NEW'}
+              </span>
+              <span className="patcher-card-type">
+                {selectedOpportunityEntry.canonical}
+              </span>
+            </div>
+
+            {statusConfirmPending ? (
+              <div className="patcher-confirm-panel">
+                <strong>
+                  {selectedOpportunityEntry.ignored
+                    ? 'Restore this opportunity to NEW?'
+                    : 'Mark this opportunity as IGNORED?'}
+                </strong>
+                <p className="metric-copy">
+                  {selectedOpportunityEntry.ignored
+                    ? 'It will reappear in the active LLMO views.'
+                    : 'It will be hidden from the active LLMO views until restored.'}
+                </p>
+                <div className="patcher-confirm-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void confirmStatusToggle()}
+                    disabled={statusToggleState.kind === 'saving'}
+                  >
+                    {statusToggleState.kind === 'saving'
+                      ? 'Updating…'
+                      : `Confirm — set ${nextToggleStatus}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={cancelStatusToggle}
+                    disabled={statusToggleState.kind === 'saving'}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={requestStatusToggle}
+                disabled={statusToggleState.kind === 'saving'}
+              >
+                {selectedOpportunityEntry.ignored ? 'Restore to New' : 'Mark as Ignored'}
+              </button>
+            )}
+
+            {statusToggleState.kind === 'error' ? (
+              <p className="status-pill status-pill-error">
+                Status update failed: {statusToggleState.message}
+              </p>
+            ) : null}
+            {statusToggleState.kind === 'saved' ? (
+              <p className="status-pill status-pill-success">
+                Status updated at{' '}
+                {new Date(statusToggleState.at).toLocaleTimeString()}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {opportunitiesError ? (
           <p className="status-pill status-pill-error">{opportunitiesError}</p>

@@ -815,6 +815,84 @@ export async function patchSuggestion(args: {
   return result;
 }
 
+/**
+ * PATCH a single opportunity's `status` (e.g. "NEW" ↔ "IGNORED").
+ *
+ * Unlike {@link patchSuggestion}, the body is NOT wrapped in a `data` object:
+ * SpaceCat's opportunity PATCH merges the top-level fields you send, so we
+ * pass `{ status }` alone and leave every other field untouched. (The
+ * suggestion patch must send the whole `data` object because that endpoint
+ * REPLACES `data` wholesale — opportunities don't.)
+ *
+ * Returns the updated opportunity, re-running the same two-step canonical-type
+ * classifier {@link fetchSiteOpportunitySummaries} uses so the caller can
+ * update its cached list in place without a refetch.
+ */
+export async function patchOpportunityStatus(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  status: string;
+  proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
+}): Promise<RawOpportunitySummary> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}`,
+  );
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
+  const requestUrl = useProxy
+    ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
+    : url;
+  const trimmedApiKey = args.apiKey.trim();
+
+  const response = await fetch(requestUrl, {
+    method: 'PATCH',
+    cache: 'no-store',
+    headers: useProxy
+      ? {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
+        }
+      : {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'x-api-key': trimmedApiKey,
+        },
+    body: JSON.stringify({ status: args.status }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Failed to patch opportunity status (HTTP ${response.status}).`,
+      { status: response.status },
+    );
+  }
+
+  const record = asRecord(await response.json());
+  const id = asString(record.id) ?? args.opportunityId;
+  const type = asString(record.type) ?? '';
+  const canonicalType =
+    ((normalizeOpportunityType(type) ?? inferOpportunityType(record)) as
+      | CanonicalOpportunityType
+      | null) ?? undefined;
+  return {
+    id,
+    type,
+    title: asString(record.title),
+    status: asString(record.status),
+    updatedAt: asString(record.updatedAt),
+    canonicalType,
+  };
+}
+
 export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {
   try {
     const response = await fetch(buildInternalApiUrl(SPACECAT_PROXY_CONFIG_API_PATH), {

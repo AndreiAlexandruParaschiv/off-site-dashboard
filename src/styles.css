@@ -2146,6 +2146,30 @@ a:hover {
   gap: 6px;
 }
 
+.patcher-status-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-soft, #f9fafb);
+}
+
+.patcher-status-toggle-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.patcher-card-status-ignored {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+}
+
 .patcher-card-grid {
   display: grid;
   grid-template-columns: 1fr;

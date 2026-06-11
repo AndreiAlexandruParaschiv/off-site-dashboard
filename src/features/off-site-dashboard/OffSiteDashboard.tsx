@@ -3338,9 +3338,24 @@ export function OffSiteDashboard() {
                           autoComplete="off"
                         />
                         <small className="field-note">
-                          Copied from the network tab of the SpaceCat backoffice (Authorization header value, without "Bearer "). Not persisted — paste once per browser session.
+                          Copied from the network tab of the SpaceCat backoffice (Authorization header value, without "Bearer "). Stored in this browser and shared across all tabs until it expires (~24h) — use Log out to clear it.
                         </small>
                       </label>
+                    ) : null}
+
+                    {isManagedConnection && dashboard.userToken.trim() ? (
+                      <div className="ims-login-actions">
+                        <span className="status-pill status-pill-success">
+                          Logged in · session active across all tabs
+                        </span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => dashboard.logout()}
+                        >
+                          Log out
+                        </button>
+                      </div>
                     ) : null}
 
                     {isManagedConnection ? (

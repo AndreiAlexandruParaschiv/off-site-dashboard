@@ -9,6 +9,7 @@ import {
   DEFAULT_API_BASE_URL,
   DEFAULT_PAGE_SIZE,
   SENTIMENT_EVALUATOR_VERSION,
+  SESSION_TOKEN_STORAGE_KEY,
   SUGGESTION_EVALUATOR_VERSION,
   TARGET_OPPORTUNITY_TYPES,
 } from './constants';
@@ -43,10 +44,14 @@ import {
   isSuggestionEvaluationType,
 } from './suggestionEvaluation';
 import {
+  buildPersistedSession,
+  clearPersistedSession,
   loadDashboardConfig,
+  loadPersistedSession,
   loadSentimentEvaluationStore,
   loadSuggestionEvaluationStore,
   saveDashboardConfig,
+  savePersistedSession,
   saveSentimentEvaluationStore,
   saveSuggestionEvaluationStore,
 } from './storage';
@@ -316,14 +321,36 @@ export function useOffSiteDashboard() {
       configured: false,
       apiBaseUrl: DEFAULT_API_BASE_URL,
     });
-  // Session-only token pasted by the user in the UI. Never persisted to
-  // localStorage — colleagues paste it once per browser session.
-  const [userToken, setUserToken] = useState<string>('');
+  // SpaceCat session token. Hydrated from localStorage on mount so it survives
+  // reloads and is shared across browser tabs (~24h, until the JWT expires).
+  // Persisting only the session token is a deliberate exception to the
+  // "tokens never persisted" rule — see the design doc.
+  const [userToken, setUserToken] = useState<string>(
+    () => loadPersistedSession()?.token ?? '',
+  );
+
+  // Apply a session token everywhere: update state and mirror it to
+  // localStorage so reloads/other tabs pick it up. Pass an empty string to log
+  // out (clears the persisted session). `expiresAt` (when known, e.g. from the
+  // IMS exchange) is preferred over decoding the JWT's own `exp`.
+  const applyUserToken = useCallback(
+    (token: string, expiresAt?: number) => {
+      const trimmed = token.trim();
+      setUserToken(trimmed);
+      if (trimmed) {
+        savePersistedSession(buildPersistedSession(trimmed, expiresAt));
+      } else {
+        clearPersistedSession();
+      }
+    },
+    [],
+  );
 
   // "Log in with IMS token" flow: the user pastes a raw IMS *user* access
   // token, we exchange it server-side for a SpaceCat session token, and store
-  // the result in `userToken`. Neither token is persisted. Kept in memory so a
-  // one-click re-exchange is possible when the session expires.
+  // the result in `userToken` (persisted). The IMS token itself is never
+  // persisted. Kept in memory so a one-click re-exchange is possible when the
+  // session expires.
   const [imsAccessToken, setImsAccessToken] = useState<string>('');
   const [imsLoginState, setImsLoginState] = useState<
     | { kind: 'idle' }
@@ -346,14 +373,36 @@ export function useOffSiteDashboard() {
       const { sessionToken, expiresAt } = await exchangeImsAccessToken({
         imsAccessToken: token,
       });
-      setUserToken(sessionToken);
+      applyUserToken(sessionToken, expiresAt);
       setImsLoginState({ kind: 'success', expiresAt });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'IMS token exchange failed.';
       setImsLoginState({ kind: 'error', message });
     }
-  }, [imsAccessToken]);
+  }, [imsAccessToken, applyUserToken]);
+
+  // Log out: drop the session everywhere (state + localStorage) and reset the
+  // IMS-login UI. The IMS token field is cleared too so nothing lingers.
+  const logout = useCallback(() => {
+    applyUserToken('');
+    setImsAccessToken('');
+    setImsLoginState({ kind: 'idle' });
+  }, [applyUserToken]);
+
+  // Cross-tab sync: when another browser tab logs in or out, the `storage`
+  // event fires here. Mirror the persisted session into our `userToken` so all
+  // tabs share one login without a manual reload.
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== SESSION_TOKEN_STORAGE_KEY) {
+        return;
+      }
+      setUserToken(loadPersistedSession()?.token ?? '');
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
@@ -1118,11 +1167,14 @@ export function useOffSiteDashboard() {
         apiKey: value,
       })),
     userToken,
-    setUserToken,
+    // Expose the persisting setter so a manually pasted session token survives
+    // reloads and syncs across tabs, identically to the IMS-login path.
+    setUserToken: applyUserToken,
     imsAccessToken,
     setImsAccessToken,
     imsLoginState,
     loginWithImsToken,
+    logout,
     setSiteInputText: (value: string) =>
       setConfig((previousConfig) => ({
         ...previousConfig,

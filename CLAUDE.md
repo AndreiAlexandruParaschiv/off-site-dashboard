@@ -215,3 +215,5 @@ and authentication still gates everything via `CRON_SECRET`.
 ### State Management
 
 No external state library — React hooks + versioned localStorage. `useOffSiteDashboard.ts` owns all async state. The API key is intentionally never persisted to localStorage.
+
+**Session-token persistence exception:** the SpaceCat *session* token (`userToken`) is the one deliberate departure — it is persisted to `localStorage` under `SESSION_TOKEN_STORAGE_KEY` (`storage.ts`: `loadPersistedSession`/`savePersistedSession`/`clearPersistedSession`) so a login survives reloads and is shared across browser tabs (synced via a `storage` event) until the JWT's `exp` (~24h). Only the session token is stored — never the IMS access token (the "Log in with IMS token" flow exchanges it server-side per-request) and never the legacy API key. `logout()` clears it. Rationale and the XSS tradeoff: `docs/superpowers/specs/2026-06-11-ims-token-login-persistence-design.md`.

@@ -312,6 +312,14 @@ export interface OpportunityFilterOption {
   sentimentItemCount: number;
 }
 
+/** A SpaceCat session token persisted to localStorage with its absolute
+ *  expiry (epoch ms). Only the session token is ever stored — never the IMS
+ *  access token or the legacy API key. */
+export interface PersistedSession {
+  token: string;
+  expiresAt: number;
+}
+
 export interface FetchSiteParams {
   apiBaseUrl: string;
   apiKey: string;

@@ -57,6 +57,11 @@ When adding a new evaluation endpoint, add both a `server/` implementation and a
 | `server/offsite-evaluate-suggestion.ts` | Suggestion fact-checking (multi-source evidence gathering + LLM verdict) |
 | `server/offsite-evaluate-wikipedia-url.ts` | Wikipedia URL validation (title/content matching) |
 | `server/spacecat-proxy.ts` | Optional CORS proxy for SpaceCat API requests |
+| `server/auto-evaluate/scan.ts` | Auto-evaluation orchestrator (claim → evaluate → persist → notify) |
+| `server/auto-evaluate/kv.ts` | Upstash REST wrapper for Vercel KV |
+| `server/auto-evaluate/spacecat-client.ts` | Server-only SpaceCat client (no browser deps) |
+| `server/auto-evaluate/github-notify.ts` | GitHub Issues client for `Incorrect` verdicts |
+| `api/cron/scan-opportunities.ts` | HTTP entry; bearer auth via `CRON_SECRET` |
 
 ### Evaluation Caching
 
@@ -95,8 +100,120 @@ BRIGHTDATA_REDDIT_COMMENT_DATASET_ID=...
 # Amplify + Vercel split deployment:
 VITE_SERVER_API_BASE_URL=https://your-vercel.vercel.app  # frontend only
 APP_ALLOWED_ORIGINS=https://your-amplify-url.com         # backend CORS
+
+# SpaceCat auth — S2S (Adobe IMS Server-to-Service), preferred:
+# Provisioned via JIRA in the SITES project (label `mysticat-s2s-request`,
+# notify @mysticat-s2s-admin). The SpaceCat Security Team creates the OAuth
+# Server-to-Server credential and registers the consumer. See the official
+# guide: github.com/adobe/spacecat-api-service/tree/main/docs/s2s
+IMS_ENDPOINT=https://ims-na1.adobelogin.com    # prod; dev/stage = https://ims-na1-stg1.adobelogin.com
+IMS_SP_CLIENT_ID=...                # from the provisioned OAuth S2S credential
+IMS_SP_CLIENT_SECRET=...            # secret — Vercel/local env only, never commit
+IMS_SP_ORG_ID=...@AdobeOrg          # the SP's own org (immutable; extracted from the token at registration)
+IMS_SP_SCOPE=openid,AdobeID,user_management_sdk   # canonical S2S scope per the official guide
+IMS_SP_RESOURCE=                    # optional; only if the IMS token needs a `resource` param
+SPACECAT_S2S_LOGIN_URL=             # optional; defaults to <base>/auth/s2s/login
+SPACECAT_API_BASE_URL=https://llmo.experiencecloud.live/api/v1   # LLMO host (dev: https://llmo.experiencecloud.page/api/ci)
+#
+# HOST-DRIVEN PRODUCT CONTEXT (critical): the Fastly edge sets `x-product`
+# from the request Host and overwrites any client value. This evaluator is an
+# LLMO consumer, so the session token MUST be minted via the LLMO host
+# (llmo.experiencecloud.*). Minting via spacecat.experiencecloud.live yields
+# an ASO-context JWT that fails LLMO per-product entitlement checks. Keep
+# SPACECAT_API_BASE_URL on the LLMO host above — do NOT point it at the
+# spacecat.* host (that host is only used for the standalone /sites scan
+# scripts, never for S2S).
+#
+# Note: IMS_SP_ORG_ID is also sent on the IMS token request itself (org_id),
+# required for ownerless service principals.
+#
+# CAPABILITIES TO REQUEST IN THE JIRA TICKET (least-privilege for this app):
+#   - site:readAll       — GET /sites enumeration (cross-tenant LIST)
+#   - opportunity:read   — GET /sites/{siteId}/opportunities (tenant-scoped)
+#   - suggestion:read    — GET .../suggestions (tenant-scoped)
+#   - suggestion:write   — PATCH .../suggestions (only if the Suggestions
+#                          Patcher tab is used; write caps need justification)
+#
+# MULTI-TENANT SCOPING (the gotcha): `*:readAll` only opens the LIST
+# endpoints. Per-site reads (opportunities, suggestions) are tenant-scoped and
+# require a session minted with the *resource's owning org*. A single session
+# scoped to IMS_SP_ORG_ID can only read sites OWNED by that org. To read other
+# customers' sites (lovesac, wkkellogg, ...), either (a) the SP must be granted
+# cross-tenant trust by the S2S admins, or (b) mint a per-site session via the
+# `{baseURL}` body option on /auth/s2s/login (alternative to {imsOrgId}). The
+# current code mints one {imsOrgId}-scoped session; per-site {baseURL} scoping
+# is not yet wired. The pasted-admin-token / user-login paths sidestep this
+# because human-admin tokens bypass tenant isolation.
+
+# Pre-obtained session token — takes precedence over S2S minting when set.
+# Used directly as the bearer (S2S skipped). Stopgap for when the SP is not yet
+# entitled; tokens are short-lived (~24h), so prefer entitled S2S for prod.
+# Its issuer/audience must match SPACECAT_API_BASE_URL's host.
+SPACECAT_SESSION_TOKEN=
+
+# User-login path — a raw IMS *user* access token (e.g. copied from the
+# Experience Cloud shell / exc_app). When set (and no SPACECAT_SESSION_TOKEN
+# or S2S creds), the server exchanges it for a SpaceCat session token via
+# POST <base>/auth/login {accessToken}, caching until the returned JWT's exp
+# (~24h). Removes the manual "run the /auth/login curl, copy the session JWT"
+# step — you set the IMS access token instead. The IMS token itself still
+# expires, so prefer entitled S2S (IMS_SP_*) for a fully hands-off setup.
+SPACECAT_IMS_ACCESS_TOKEN=
+SPACECAT_USER_LOGIN_URL=            # optional; defaults to <base>/auth/login
+
+# Legacy API key — fallback only, removed after 2026-04-15:
+SPACECAT_API_KEY=...
+
+# Auth precedence: SPACECAT_SESSION_TOKEN > S2S (IMS_SP_*) >
+# user-login (SPACECAT_IMS_ACCESS_TOKEN) > SPACECAT_API_KEY.
+# Token minting is server-side only; the browser never receives credentials and routes through `/api/spacecat`.
+# On a 401, S2S and the user-login path re-mint once and retry (a pasted
+# SPACECAT_SESSION_TOKEN cannot be re-minted, so it is not retried).
+
+# Auto-evaluation cron (optional — only required if running the
+# /api/cron/scan-opportunities endpoint):
+CRON_SECRET=...                                  # bearer token; matches GH Actions secret
+KV_REST_API_URL=https://<id>.upstash.io          # auto-set by Vercel KV integration
+KV_REST_API_TOKEN=...                            # auto-set by Vercel KV integration
+GITHUB_NOTIFY_TOKEN=ghp_...                      # PAT with `repo` scope for issue creation
+GITHUB_NOTIFY_REPO=AndreiAlexandruParaschiv/off-site-dashboard
+GITHUB_NOTIFY_LABELS=auto-eval,incorrect         # optional, defaults shown
+AUTO_EVAL_TRACKED_SITES=gmc.com,lovesac.com      # comma-separated, no spaces required
+AUTO_EVAL_MAX_PER_RUN=2                          # optional; cap evaluations per cron tick
+AUTO_EVAL_TYPES=Wikipedia                        # optional; defaults to "Wikipedia" (POC mode)
+                                                 # widen with e.g. Wikipedia,Reddit,YouTube,Cited URLs
+AUTO_EVAL_DASHBOARD_URL=https://off-site-evaluator.<id>.amplifyapp.com  # optional deep-link
 ```
+
+### Auto-evaluation pipeline
+
+Files under `server/auto-evaluate/` and `api/cron/scan-opportunities.ts` implement
+an automated scan that:
+
+1. Walks each site in `AUTO_EVAL_TRACKED_SITES` via the SpaceCat API
+2. Atomically claims new suggestions in Vercel KV (so overlapping runs never double-evaluate)
+3. Runs `runOffsiteSuggestionEvaluation` on each new suggestion
+4. Persists the verdict to KV; if `Incorrect`, files a labeled GitHub issue
+
+The trigger is **GitHub Actions** (`.github/workflows/auto-evaluate.yml`),
+currently manual-only via `workflow_dispatch` (the scheduled trigger is
+commented out — uncomment the `schedule:` block to re-enable). The Actions
+job POSTs to `/api/cron/scan-opportunities` with
+`Authorization: Bearer ${CRON_SECRET}` and an optional JSON body of per-run
+overrides:
+
+```json
+{ "sites": "gmc.com,lovesac.com", "types": "Wikipedia,Reddit", "maxPerRun": "3" }
+```
+
+Each override key is optional. When present, it overlays the corresponding
+Vercel env var (`AUTO_EVAL_TRACKED_SITES`, `AUTO_EVAL_TYPES`,
+`AUTO_EVAL_MAX_PER_RUN`) for that single invocation only. The endpoint
+caps body size and override-string length to keep the surface area small,
+and authentication still gates everything via `CRON_SECRET`.
 
 ### State Management
 
 No external state library — React hooks + versioned localStorage. `useOffSiteDashboard.ts` owns all async state. The API key is intentionally never persisted to localStorage.
+
+**Session-token persistence exception:** the SpaceCat *session* token (`userToken`) is the one deliberate departure — it is persisted to `localStorage` under `SESSION_TOKEN_STORAGE_KEY` (`storage.ts`: `loadPersistedSession`/`savePersistedSession`/`clearPersistedSession`) so a login survives reloads and is shared across browser tabs (synced via a `storage` event) until the JWT's `exp` (~24h). Only the session token is stored — never the IMS access token (the "Log in with IMS token" flow exchanges it server-side per-request) and never the legacy API key. `logout()` clears it. Rationale and the XSS tradeoff: `docs/superpowers/specs/2026-06-11-ims-token-login-persistence-design.md`.

@@ -1,6 +1,9 @@
 import {
   DEFAULT_CONFIG,
   SENTIMENT_EVALUATION_STORAGE_KEY,
+  SESSION_EXPIRY_BUFFER_MS,
+  SESSION_FALLBACK_TTL_MS,
+  SESSION_TOKEN_STORAGE_KEY,
   SUGGESTION_EVALUATION_STORAGE_KEY,
   STORAGE_KEY,
 } from './constants';
@@ -8,6 +11,7 @@ import { normalizeSentimentEvaluationStore } from './evaluation';
 import { normalizeSuggestionEvaluationStore } from './suggestionEvaluation';
 import type {
   DashboardConfig,
+  PersistedSession,
   SentimentEvaluationStore,
   SuggestionEvaluationStore,
 } from './types';
@@ -59,6 +63,93 @@ export function saveDashboardConfig(config: DashboardConfig) {
       apiKey: '',
     }),
   );
+}
+
+/**
+ * Decode a JWT's `exp` (seconds since epoch) into epoch ms, client-side,
+ * without verifying the signature — we only need the expiry to decide when to
+ * stop reusing a persisted session. Mirrors the server's readJwtExpiryMs.
+ * Returns null if the token isn't a JWT or has no numeric `exp`.
+ */
+export function readJwtExpiryMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    return null;
+  }
+  try {
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(payload)) as { exp?: unknown };
+    return typeof json.exp === 'number' ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a PersistedSession from a freshly minted session token. Prefers the
+ * server-supplied `expiresAt`; otherwise decodes the JWT's own `exp`; otherwise
+ * falls back to a short TTL so a no-exp token still persists, but briefly.
+ */
+export function buildPersistedSession(
+  token: string,
+  serverExpiresAt?: number,
+): PersistedSession {
+  const expiresAt =
+    (typeof serverExpiresAt === 'number' ? serverExpiresAt : null) ??
+    readJwtExpiryMs(token) ??
+    Date.now() + SESSION_FALLBACK_TTL_MS;
+  return { token, expiresAt };
+}
+
+/**
+ * Read the persisted SpaceCat session token. Returns null if absent,
+ * malformed, or already within SESSION_EXPIRY_BUFFER_MS of its expiry — so
+ * callers never receive a token that is about to die mid-request.
+ */
+export function loadPersistedSession(): PersistedSession | null {
+  if (!hasWindow()) {
+    return null;
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+    if (!rawValue) {
+      return null;
+    }
+    const parsed = JSON.parse(rawValue) as Partial<PersistedSession>;
+    if (
+      typeof parsed.token !== 'string' ||
+      !parsed.token ||
+      typeof parsed.expiresAt !== 'number'
+    ) {
+      return null;
+    }
+    if (parsed.expiresAt - SESSION_EXPIRY_BUFFER_MS <= Date.now()) {
+      // Expired (or about to) — drop it so we don't keep a dead token around.
+      window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+      return null;
+    }
+    return { token: parsed.token, expiresAt: parsed.expiresAt };
+  } catch (error) {
+    console.warn('Failed to read persisted session.', error);
+    return null;
+  }
+}
+
+export function savePersistedSession(session: PersistedSession) {
+  if (!hasWindow()) {
+    return;
+  }
+  window.localStorage.setItem(
+    SESSION_TOKEN_STORAGE_KEY,
+    JSON.stringify(session),
+  );
+}
+
+export function clearPersistedSession() {
+  if (!hasWindow()) {
+    return;
+  }
+  window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
 }
 
 export function loadSentimentEvaluationStore(): SentimentEvaluationStore {

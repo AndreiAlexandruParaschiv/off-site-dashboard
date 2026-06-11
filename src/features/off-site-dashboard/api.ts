@@ -14,6 +14,7 @@ import {
   DEFAULT_API_BASE_URL,
   EVALUATOR_API_PATH,
   EVALUATOR_CACHE_CLEAR_API_PATH,
+  SPACECAT_LOGIN_API_PATH,
   SPACECAT_PROXY_API_PATH,
   SPACECAT_PROXY_CONFIG_API_PATH,
   SUGGESTION_EVALUATOR_API_PATH,
@@ -98,10 +99,12 @@ async function requestJson<T>(
   apiKey: string,
   proxyConfig?: SpacecatProxyConfig,
   attempt = 0,
+  userToken?: string,
 ): Promise<T> {
   try {
     const trimmedApiKey = apiKey.trim();
-    const useProxy = proxyConfig?.configured === true;
+    const useProxy = proxyConfig?.configured === true || Boolean(userToken?.trim());
+    const trimmedUserToken = userToken?.trim();
     const response = await fetch(
       useProxy
         ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
@@ -112,6 +115,7 @@ async function requestJson<T>(
         headers: useProxy
           ? {
               ...API_HEADERS,
+              ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
             }
           : {
               ...API_HEADERS,
@@ -130,7 +134,7 @@ async function requestJson<T>(
 
       if (attempt < 1) {
         await sleep(waitSeconds * 1000);
-        return requestJson<T>(url, apiKey, proxyConfig, attempt + 1);
+        return requestJson<T>(url, apiKey, proxyConfig, attempt + 1, userToken);
       }
 
       throw new SpacecatApiError(
@@ -358,6 +362,7 @@ async function resolveSiteByDirectLookup(
   apiKey: string,
   lookupCandidates: string[],
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   for (const candidate of lookupCandidates) {
     const encodedCandidate = encodeBase64PathValue(candidate);
@@ -371,6 +376,8 @@ async function resolveSiteByDirectLookup(
         lookupUrl,
         apiKey,
         proxyConfig,
+        0,
+        userToken,
       );
       const resolvedSite = extractSiteId(lookupResponse, candidate);
 
@@ -394,12 +401,15 @@ async function resolveSiteByEnumeratingAllSites(
   apiKey: string,
   lookupCandidates: string[],
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   try {
     const lookupResponse = await requestJson<unknown>(
       buildApiUrl(normalizedApiBaseUrl, 'sites'),
       apiKey,
       proxyConfig,
+      0,
+      userToken,
     );
 
     for (const candidate of lookupCandidates) {
@@ -428,6 +438,7 @@ async function fetchSuggestionsForOpportunity(
   siteId: string,
   opportunity: OpportunityRecord,
   proxyConfig?: SpacecatProxyConfig,
+  userToken?: string,
 ) {
   const shouldFetchSuggestionEndpoint =
     opportunity.opportunityType === 'Wikipedia' ||
@@ -448,6 +459,8 @@ async function fetchSuggestionsForOpportunity(
       suggestionsUrl,
       apiKey,
       proxyConfig,
+      0,
+      userToken,
     );
     const normalizedSuggestions = normalizeSuggestionCollection(
       suggestionsPayload,
@@ -473,6 +486,7 @@ export async function fetchSiteDashboardData({
   apiKey,
   siteInput,
   proxyConfig,
+  userToken,
 }: FetchSiteParams): Promise<FetchSiteSuccessResult> {
   const normalizedApiBaseUrl = normalizeApiBaseUrl(
     proxyConfig?.configured ? proxyConfig.apiBaseUrl : apiBaseUrl,
@@ -484,7 +498,7 @@ export async function fetchSiteDashboardData({
     throw new SpacecatApiError('API base URL is required.');
   }
 
-  if (!proxyConfig?.configured && !apiKey.trim()) {
+  if (!proxyConfig?.configured && !userToken?.trim() && !apiKey.trim()) {
     throw new SpacecatApiError('API key is required.');
   }
 
@@ -500,6 +514,7 @@ export async function fetchSiteDashboardData({
     apiKey,
     lookupCandidates,
     proxyConfig,
+    userToken,
   );
   const enumeratedLookupMatch =
     directLookupMatch ??
@@ -508,6 +523,7 @@ export async function fetchSiteDashboardData({
       apiKey,
       lookupCandidates,
       proxyConfig,
+      userToken,
     ));
 
   if (enumeratedLookupMatch) {
@@ -530,6 +546,8 @@ export async function fetchSiteDashboardData({
     opportunitiesUrl,
     apiKey,
     proxyConfig,
+    0,
+    userToken,
   );
   const opportunityPresence = summarizeOpportunityPresence(opportunitiesPayload);
   const normalizedOpportunities = normalizeOpportunityCollection(opportunitiesPayload);
@@ -541,6 +559,7 @@ export async function fetchSiteDashboardData({
         resolvedSiteId,
         opportunity,
         proxyConfig,
+        userToken,
       ),
     ),
   );
@@ -612,6 +631,48 @@ export async function clearEvaluatorCache(): Promise<{
   };
 }
 
+/**
+ * Exchange a raw IMS *user* access token (e.g. copied from the Experience
+ * Cloud shell) for a SpaceCat session token, server-side, via the
+ * /api/spacecat-login endpoint. Lets the dashboard mint a session token
+ * without the manual "run the /auth/login curl, copy the JWT" step — the
+ * returned token is then used as the pasted session token (x-client-token).
+ *
+ * The IMS token is sent to our own backend only; it is never persisted.
+ */
+export async function exchangeImsAccessToken(args: {
+  imsAccessToken: string;
+}): Promise<{ sessionToken: string; expiresAt?: number }> {
+  const response = await fetch(buildInternalApiUrl(SPACECAT_LOGIN_API_PATH), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accessToken: args.imsAccessToken }),
+  });
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `IMS token exchange failed with ${response.status}.`,
+      { status: response.status },
+    );
+  }
+  const payload = (await response.json()) as {
+    sessionToken?: unknown;
+    expiresAt?: unknown;
+  };
+  const sessionToken =
+    typeof payload.sessionToken === 'string' ? payload.sessionToken : '';
+  if (!sessionToken) {
+    throw new SpacecatApiError('IMS token exchange returned no session token.', {
+      status: response.status,
+    });
+  }
+  return {
+    sessionToken,
+    expiresAt:
+      typeof payload.expiresAt === 'number' ? payload.expiresAt : undefined,
+  };
+}
+
 // === Suggestions Patcher API ===
 //
 // The patcher works against the raw SpaceCat suggestion shape (NOT the
@@ -667,12 +728,13 @@ export async function fetchSiteOpportunitySummaries(args: {
   apiKey: string;
   siteId: string;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawOpportunitySummary[]> {
   const url = buildApiUrl(
     args.apiBaseUrl,
     `sites/${encodeURIComponent(args.siteId)}/opportunities`,
   );
-  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig, 0, args.userToken);
   const items = Array.isArray(payload) ? payload : [];
   return items
     .map((item): RawOpportunitySummary | null => {
@@ -706,6 +768,7 @@ export async function fetchOpportunitySuggestionsRaw(args: {
   siteId: string;
   opportunityId: string;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawSuggestion[]> {
   const url = buildApiUrl(
     args.apiBaseUrl,
@@ -713,7 +776,7 @@ export async function fetchOpportunitySuggestionsRaw(args: {
       args.opportunityId,
     )}/suggestions`,
   );
-  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig);
+  const payload = await requestJson<unknown>(url, args.apiKey, args.proxyConfig, 0, args.userToken);
   const items = Array.isArray(payload) ? payload : [];
   return items
     .map((item): RawSuggestion | null => {
@@ -750,6 +813,7 @@ export async function patchSuggestion(args: {
   suggestionId: string;
   partialData: Record<string, unknown>;
   proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
 }): Promise<RawSuggestion> {
   const url = buildApiUrl(
     args.apiBaseUrl,
@@ -757,7 +821,8 @@ export async function patchSuggestion(args: {
       args.opportunityId,
     )}/suggestions/${encodeURIComponent(args.suggestionId)}`,
   );
-  const useProxy = args.proxyConfig?.configured === true;
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
   const requestUrl = useProxy
     ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
     : url;
@@ -770,6 +835,7 @@ export async function patchSuggestion(args: {
       ? {
           ...API_HEADERS,
           'content-type': 'application/json',
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
         }
       : {
           ...API_HEADERS,
@@ -790,6 +856,137 @@ export async function patchSuggestion(args: {
 
   const result = (await response.json()) as RawSuggestion;
   return result;
+}
+
+/**
+ * PATCH a single opportunity's `status` (e.g. "NEW" ↔ "IGNORED").
+ *
+ * Unlike {@link patchSuggestion}, the body is NOT wrapped in a `data` object:
+ * SpaceCat's opportunity PATCH merges the top-level fields you send, so we
+ * pass `{ status }` alone and leave every other field untouched. (The
+ * suggestion patch must send the whole `data` object because that endpoint
+ * REPLACES `data` wholesale — opportunities don't.)
+ *
+ * Returns the updated opportunity, re-running the same two-step canonical-type
+ * classifier {@link fetchSiteOpportunitySummaries} uses so the caller can
+ * update its cached list in place without a refetch.
+ */
+export async function patchOpportunityStatus(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  status: string;
+  proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
+}): Promise<RawOpportunitySummary> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}`,
+  );
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
+  const requestUrl = useProxy
+    ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
+    : url;
+  const trimmedApiKey = args.apiKey.trim();
+
+  const response = await fetch(requestUrl, {
+    method: 'PATCH',
+    cache: 'no-store',
+    headers: useProxy
+      ? {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
+        }
+      : {
+          ...API_HEADERS,
+          'content-type': 'application/json',
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'x-api-key': trimmedApiKey,
+        },
+    body: JSON.stringify({ status: args.status }),
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Failed to patch opportunity status (HTTP ${response.status}).`,
+      { status: response.status },
+    );
+  }
+
+  const record = asRecord(await response.json());
+  const id = asString(record.id) ?? args.opportunityId;
+  const type = asString(record.type) ?? '';
+  const canonicalType =
+    ((normalizeOpportunityType(type) ?? inferOpportunityType(record)) as
+      | CanonicalOpportunityType
+      | null) ?? undefined;
+  return {
+    id,
+    type,
+    title: asString(record.title),
+    status: asString(record.status),
+    updatedAt: asString(record.updatedAt),
+    canonicalType,
+  };
+}
+
+/**
+ * DELETE an opportunity outright (along with its suggestions, server-side).
+ *
+ * This is irreversible — there is no body and nothing to undo. Routing mirrors
+ * the patch helpers (proxy + x-client-token, or direct Authorization/x-api-key).
+ * Resolves on any 2xx (including 204 No Content); throws SpacecatApiError
+ * otherwise.
+ */
+export async function deleteOpportunity(args: {
+  apiBaseUrl: string;
+  apiKey: string;
+  siteId: string;
+  opportunityId: string;
+  proxyConfig?: SpacecatProxyConfig;
+  userToken?: string;
+}): Promise<void> {
+  const url = buildApiUrl(
+    args.apiBaseUrl,
+    `sites/${encodeURIComponent(args.siteId)}/opportunities/${encodeURIComponent(
+      args.opportunityId,
+    )}`,
+  );
+  const trimmedUserToken = args.userToken?.trim();
+  const useProxy = args.proxyConfig?.configured === true || Boolean(trimmedUserToken);
+  const requestUrl = useProxy
+    ? `${buildInternalApiUrl(SPACECAT_PROXY_API_PATH)}?target=${encodeURIComponent(url)}`
+    : url;
+  const trimmedApiKey = args.apiKey.trim();
+
+  const response = await fetch(requestUrl, {
+    method: 'DELETE',
+    cache: 'no-store',
+    headers: useProxy
+      ? {
+          ...API_HEADERS,
+          ...(trimmedUserToken ? { 'x-client-token': trimmedUserToken } : {}),
+        }
+      : {
+          ...API_HEADERS,
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'x-api-key': trimmedApiKey,
+        },
+  });
+
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `Failed to delete opportunity (HTTP ${response.status}).`,
+      { status: response.status },
+    );
+  }
 }
 
 export async function fetchSpacecatProxyConfig(): Promise<SpacecatProxyConfig> {

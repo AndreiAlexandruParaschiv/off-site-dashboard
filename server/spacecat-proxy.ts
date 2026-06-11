@@ -1,7 +1,15 @@
-const DEFAULT_SPACECAT_API_BASE_URL =
-  'https://spacecat.experiencecloud.live/api/v1';
+import {
+  canRemintSession,
+  getSpacecatAuthHeaders,
+  hasManagedAuth,
+  resetS2SCache,
+  type SpacecatS2SEnv,
+} from './auth/spacecat-s2s.js';
 
-export type SpacecatProxyEnv = {
+const DEFAULT_SPACECAT_API_BASE_URL =
+  'https://llmo.experiencecloud.live/api/v1';
+
+export type SpacecatProxyEnv = SpacecatS2SEnv & {
   SPACECAT_API_KEY?: string;
   SPACECAT_API_BASE_URL?: string;
   APP_ALLOWED_ORIGINS?: string;
@@ -25,10 +33,10 @@ function buildJsonResponse(payload: unknown, status = 200) {
 
 export function getSpacecatProxyConfig(env: SpacecatProxyEnv = {}) {
   const apiBaseUrl = normalizeApiBaseUrl(env.SPACECAT_API_BASE_URL);
-  const apiKey = env.SPACECAT_API_KEY?.trim() || '';
+  const hasLegacyKey = Boolean(env.SPACECAT_API_KEY?.trim());
 
   return {
-    configured: Boolean(apiKey),
+    configured: hasManagedAuth(env) || hasLegacyKey,
     apiBaseUrl,
   };
 }
@@ -63,8 +71,39 @@ export async function handleSpacecatProxyConfigRequest(
 
 // HTTP methods the proxy will forward upstream. GET for normal reads;
 // PATCH for the Suggestions Patcher feature, which writes partial
-// `data` updates to opportunity suggestions.
-const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH']);
+// `data` updates to opportunity suggestions; DELETE for removing an
+// opportunity outright from the patcher.
+const PROXY_ALLOWED_METHODS = new Set(['GET', 'PATCH', 'DELETE']);
+
+// Methods that never carry a request body. We must NOT call request.text()
+// for these — DELETE in particular would otherwise forward an empty-string
+// body with a content-type header, which some upstreams reject.
+const BODYLESS_METHODS = new Set(['GET', 'DELETE']);
+
+// HTTP statuses that must have a null body. The Response constructor throws
+// ("Invalid response status code 204") if given any body — even "" — with one
+// of these, so the proxy forwards a null body when echoing them back.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+async function buildUpstreamHeaders(
+  env: SpacecatProxyEnv,
+  hasBody: boolean,
+  clientToken?: string,
+): Promise<Record<string, string>> {
+  const base: Record<string, string> = { accept: 'application/json' };
+  if (hasBody) base['content-type'] = 'application/json';
+  // A user-provided token (from the UI token field) takes precedence over
+  // server-side managed auth. This lets colleagues on the Amplify deployment
+  // paste their own SpaceCat session token without touching server env vars.
+  if (clientToken) {
+    return { ...base, authorization: `Bearer ${clientToken}` };
+  }
+  if (hasManagedAuth(env)) {
+    return { ...base, ...(await getSpacecatAuthHeaders(env)) };
+  }
+  const key = env.SPACECAT_API_KEY?.trim() ?? '';
+  return { ...base, authorization: `Bearer ${key}`, 'x-api-key': key };
+}
 
 export async function handleSpacecatProxyRequest(
   request: Request,
@@ -74,15 +113,29 @@ export async function handleSpacecatProxyRequest(
     return buildJsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
+  // A client-provided token (from the UI token field) allows any colleague
+  // to authenticate without touching server env vars. When present it bypasses
+  // the server-configured auth entirely for that request.
+  // Defensive: strip a leading "Bearer " in case the user pasted the whole
+  // Authorization header value rather than just the token.
+  const clientToken =
+    request.headers.get('x-client-token')?.trim().replace(/^Bearer\s+/i, '') ||
+    undefined;
+
   const proxyConfig = getSpacecatProxyConfig(env);
 
-  if (!proxyConfig.configured) {
+  if (!proxyConfig.configured && !clientToken) {
     return buildJsonResponse(
-      { error: 'SPACECAT_API_KEY is not configured on the server.' },
+      {
+        error:
+          'SpaceCat auth is not configured. Paste your SpaceCat session token in the dashboard, or set IMS_SP_* / SPACECAT_API_KEY on the server.',
+      },
       503,
     );
   }
 
+  // When a client token is provided the target URL whitelist is still applied
+  // so the proxy can't be used as an open relay.
   const requestUrl = new URL(request.url);
   const targetUrl = requestUrl.searchParams.get('target')?.trim() || '';
 
@@ -90,29 +143,43 @@ export async function handleSpacecatProxyRequest(
     return buildJsonResponse({ error: 'Missing target query parameter.' }, 400);
   }
 
-  if (!isAllowedTargetUrl(targetUrl, proxyConfig.apiBaseUrl)) {
+  const allowedBase = clientToken
+    ? (env.SPACECAT_API_BASE_URL?.trim() || 'https://llmo.experiencecloud.live/api/v1')
+    : proxyConfig.apiBaseUrl;
+
+  if (!isAllowedTargetUrl(targetUrl, allowedBase)) {
     return buildJsonResponse(
       { error: 'Target URL is not allowed by the Spacecat proxy.' },
       403,
     );
   }
 
-  // For mutating methods, forward the JSON request body upstream so the
-  // backend can apply the partial update.
-  const body = request.method === 'GET' ? undefined : await request.text();
+  // For mutating methods with a body (PATCH), forward the JSON request body
+  // upstream so the backend can apply the partial update. Bodyless methods
+  // (GET, DELETE) send nothing.
+  const body = BODYLESS_METHODS.has(request.method) ? undefined : await request.text();
+  const hasBody = body !== undefined;
 
   try {
-    const upstreamResponse = await fetch(targetUrl, {
+    let upstreamResponse = await fetch(targetUrl, {
       method: request.method,
       cache: 'no-store',
-      headers: {
-        accept: 'application/json',
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-        authorization: `Bearer ${env.SPACECAT_API_KEY?.trim()}`,
-        'x-api-key': env.SPACECAT_API_KEY?.trim() || '',
-      },
+      headers: await buildUpstreamHeaders(env, hasBody, clientToken),
       body,
     });
+
+    // Minted session tokens are short-lived; on 401, re-mint once and retry.
+    // Only applies when using server-side auth (client token can't be re-minted).
+    if (upstreamResponse.status === 401 && !clientToken && canRemintSession(env)) {
+      resetS2SCache();
+      upstreamResponse = await fetch(targetUrl, {
+        method: request.method,
+        cache: 'no-store',
+        headers: await buildUpstreamHeaders(env, hasBody, clientToken),
+        body,
+      });
+    }
+
     const responseBody = await upstreamResponse.text();
     const responseHeaders = new Headers();
     responseHeaders.set(
@@ -127,7 +194,12 @@ export async function handleSpacecatProxyRequest(
       responseHeaders.set('retry-after', retryAfter);
     }
 
-    return new Response(responseBody, {
+    // 204/205/304 are "null body" statuses — the Response constructor throws
+    // if handed any body (even an empty string) with one of them. A DELETE
+    // that succeeds typically comes back as 204, so forward a null body for
+    // these to avoid crashing the proxy on an otherwise-successful response.
+    const isNullBodyStatus = NULL_BODY_STATUSES.has(upstreamResponse.status);
+    return new Response(isNullBodyStatus ? null : responseBody, {
       status: upstreamResponse.status,
       headers: responseHeaders,
     });

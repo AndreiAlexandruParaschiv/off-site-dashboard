@@ -8,9 +8,10 @@ export const TARGET_OPPORTUNITY_TYPES: CanonicalOpportunityType[] = [
 ];
 
 export const DEFAULT_API_BASE_URL =
-  'https://spacecat.experiencecloud.live/api/v1';
+  'https://llmo.experiencecloud.live/api/v1';
 export const SPACECAT_PROXY_CONFIG_API_PATH = '/api/spacecat-config';
 export const SPACECAT_PROXY_API_PATH = '/api/spacecat';
+export const SPACECAT_LOGIN_API_PATH = '/api/spacecat-login';
 
 export const DEFAULT_CONFIG: DashboardConfig = {
   apiBaseUrl: DEFAULT_API_BASE_URL,
@@ -19,6 +20,16 @@ export const DEFAULT_CONFIG: DashboardConfig = {
 };
 
 export const STORAGE_KEY = 'off-site-dashboard.config.v1';
+// Persisted SpaceCat *session* token (never the IMS access token or API key).
+// Deliberate exception to the "tokens are never persisted" rule — see
+// docs/superpowers/specs/2026-06-11-ims-token-login-persistence-design.md.
+export const SESSION_TOKEN_STORAGE_KEY = 'off-site-dashboard.session.v1';
+// Treat a persisted session as expired this many ms before its real exp, so we
+// never hand out a token that dies mid-request.
+export const SESSION_EXPIRY_BUFFER_MS = 60_000;
+// Fallback lifetime when a session JWT has no decodable `exp` (mirrors the
+// server's SESSION_TTL_MS so a no-exp token still persists, but briefly).
+export const SESSION_FALLBACK_TTL_MS = 15 * 60_000;
 export const SENTIMENT_EVALUATION_STORAGE_KEY =
   'off-site-dashboard.sentiment-evaluations.v1';
 export const SUGGESTION_EVALUATION_STORAGE_KEY =

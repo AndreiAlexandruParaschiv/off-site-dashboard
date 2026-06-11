@@ -13,6 +13,7 @@ import {
   getConfidenceBand,
   getConfidenceLabel,
 } from './evaluation';
+import { BackOfficeView } from './BackOfficeView';
 import { SuggestionsPatcherView } from './SuggestionsPatcherView';
 import { ALL_OPPORTUNITIES_VALUE, useOffSiteDashboard } from './useOffSiteDashboard';
 import {
@@ -2480,7 +2481,8 @@ type WorkspaceMode =
   | 'opportunities'
   | 'evaluation'
   | 'wikipedia-check'
-  | 'suggestions-patcher';
+  | 'suggestions-patcher'
+  | 'back-office';
 
 type WikipediaCheckVerdict =
   | 'likely-correct'
@@ -2974,7 +2976,7 @@ export function OffSiteDashboard() {
     Boolean(effectiveApiBaseUrl.trim()) &&
     (isManagedConnection || Boolean(dashboard.config.apiKey.trim()));
   const currentModeLabel = dashboard.spacecatProxyConfig.configured
-    ? 'Managed relay'
+    ? 'Server proxy'
     : 'Manual connection';
   const activeFilterLabel = `${dashboard.selectedTypes.length} oppty selected · ${dashboard.selectedSites.length} site${dashboard.selectedSites.length === 1 ? '' : 's'}`;
   const activeWorkspaceLabel =
@@ -3023,6 +3025,11 @@ export function OffSiteDashboard() {
       apiKey: dashboard.config.apiKey,
       proxyConfig: dashboard.spacecatProxyConfig,
       siteInput: normalizedSite,
+      // Forward the pasted/IMS-minted session token, same as the main
+      // dashboard's refreshSite. Without it the proxy falls back to the
+      // server's managed auth (a possibly stale, wrong-host session token) and
+      // 401s — which is what broke the Wikipedia checker after the LLMO host fix.
+      userToken: dashboard.userToken,
     });
     const wikipediaOpportunities = siteResult.opportunities.filter(
       (opportunity) => opportunity.opportunityType === 'Wikipedia',
@@ -3268,6 +3275,13 @@ export function OffSiteDashboard() {
                 label="Suggestions Patcher"
                 onClick={() => setActiveWorkspace('suggestions-patcher')}
               />
+              <WorkspaceNavButton
+                active={activeWorkspace === 'back-office'}
+                count=""
+                description="Load an opportunity JSON dump, edit SOV / sentiment / suggestion fields with auto-rebalancing, then download the result."
+                label="Back Office"
+                onClick={() => setActiveWorkspace('back-office')}
+              />
             </div>
 
             <div className="workspace-sidebar-metrics">
@@ -3305,12 +3319,106 @@ export function OffSiteDashboard() {
                     {isManagedConnection ? (
                       <div className="managed-connection-note">
                         <span className="managed-connection-pill">
-                          Managed connection active
+                          Server proxy active
                         </span>
                         <p>
-                          Authentication and endpoint routing are handled server-side
-                          for this deployment.
+                          Requests are routed through the server proxy. Paste your
+                          SpaceCat session token below — it is used for your session
+                          and overrides any server-side credentials.
                         </p>
+                      </div>
+                    ) : null}
+
+                    {isManagedConnection ? (
+                      <label className="field">
+                        <span>SpaceCat session token <em className="field-note-inline">(optional — paste yours if the server token has expired)</em></span>
+                        <input
+                          className="text-input"
+                          type="password"
+                          value={dashboard.userToken}
+                          onChange={(event) =>
+                            dashboard.setUserToken(event.target.value)
+                          }
+                          placeholder="eyJhbGci… paste your SpaceCat session token"
+                          autoComplete="off"
+                        />
+                        <small className="field-note">
+                          Copied from the network tab of the SpaceCat backoffice (Authorization header value, without "Bearer "). Stored in this browser and shared across all tabs until it expires (~24h) — use Log out to clear it.
+                        </small>
+                      </label>
+                    ) : null}
+
+                    {isManagedConnection && dashboard.userToken.trim() ? (
+                      <div className="ims-login-actions">
+                        <span className="status-pill status-pill-success">
+                          Logged in · session active across all tabs
+                        </span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => dashboard.logout()}
+                        >
+                          Log out
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {isManagedConnection ? (
+                      <div className="ims-login">
+                        <label className="field">
+                          <span>
+                            Or log in with an IMS access token{' '}
+                            <em className="field-note-inline">
+                              (mints the session token above for you)
+                            </em>
+                          </span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={dashboard.imsAccessToken}
+                            onChange={(event) =>
+                              dashboard.setImsAccessToken(event.target.value)
+                            }
+                            placeholder="eyJhbGci… paste your IMS user access token"
+                            autoComplete="off"
+                          />
+                          <small className="field-note">
+                            The IMS user access token from the Experience Cloud
+                            shell (exc_app). We exchange it server-side via
+                            /auth/login and never store it. The IMS token itself
+                            expires (~24h), so re-paste when it does.
+                          </small>
+                        </label>
+                        <div className="ims-login-actions">
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => void dashboard.loginWithImsToken()}
+                            disabled={
+                              dashboard.imsLoginState.kind === 'exchanging' ||
+                              !dashboard.imsAccessToken.trim()
+                            }
+                          >
+                            {dashboard.imsLoginState.kind === 'exchanging'
+                              ? 'Exchanging…'
+                              : 'Exchange for session token'}
+                          </button>
+                          {dashboard.imsLoginState.kind === 'success' ? (
+                            <span className="status-pill status-pill-success">
+                              Session token set
+                              {dashboard.imsLoginState.expiresAt
+                                ? ` · expires ${new Date(
+                                    dashboard.imsLoginState.expiresAt,
+                                  ).toLocaleTimeString()}`
+                                : ''}
+                            </span>
+                          ) : null}
+                          {dashboard.imsLoginState.kind === 'error' ? (
+                            <span className="status-pill status-pill-error">
+                              {dashboard.imsLoginState.message}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
 
@@ -3350,6 +3458,12 @@ export function OffSiteDashboard() {
                             <small className="field-note">
                               Token entry is manual and is not persisted in
                               localStorage.
+                            </small>
+                            <small className="field-note">
+                              Optional. When the server is configured for S2S
+                              (Mysticat), authentication is handled server-side
+                              and this field can be left blank. The legacy API
+                              key is supported as a fallback until 2026-04-15.
                             </small>
                           </label>
                         </>
@@ -4378,8 +4492,11 @@ export function OffSiteDashboard() {
                 apiKey={dashboard.config.apiKey}
                 proxyConfig={dashboard.spacecatProxyConfig}
                 siteCards={dashboard.siteCards}
+                userToken={dashboard.userToken}
               />
             )}
+
+            {activeWorkspace === 'back-office' && <BackOfficeView />}
           </div>
         </section>
       </main>

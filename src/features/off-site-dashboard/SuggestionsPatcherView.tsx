@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  deleteOpportunity,
   fetchOpportunitySuggestionsRaw,
   fetchSiteOpportunitySummaries,
+  patchOpportunityStatus,
   patchSuggestion,
   type RawOpportunitySummary,
   type RawSuggestion,
@@ -207,6 +209,8 @@ interface SuggestionsPatcherViewProps {
   apiKey: string;
   proxyConfig: SpacecatProxyConfig;
   siteCards: SiteDashboardResult[];
+  /** User-pasted SpaceCat session token, forwarded to the proxy. */
+  userToken?: string;
 }
 
 export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
@@ -252,7 +256,25 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
   const [statusFilter, setStatusFilter] =
     useState<OpportunityStatusFilter>('active');
 
-  const isReady = props.proxyConfig.configured || props.apiKey.trim().length > 0;
+  // Opportunity status toggle (IGNORED ↔ NEW) for the *selected* opportunity.
+  // A single slot is enough since only one opportunity is selected at a time.
+  // The confirm flag gates the PATCH behind an inline "are you sure?" step,
+  // mirroring the per-card save flow.
+  const [statusToggleState, setStatusToggleState] = useState<SaveState>({ kind: 'idle' });
+  const [statusConfirmPending, setStatusConfirmPending] = useState(false);
+
+  // Delete-opportunity flow for the selected opportunity. Separate from the
+  // visibility toggle because delete is irreversible. `deleteNotice` survives
+  // the selection-clear that a successful delete triggers, so the picker panel
+  // can confirm what was removed.
+  const [deleteState, setDeleteState] = useState<SaveState>({ kind: 'idle' });
+  const [deleteConfirmPending, setDeleteConfirmPending] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+
+  const isReady =
+    props.proxyConfig.configured ||
+    props.apiKey.trim().length > 0 ||
+    Boolean(props.userToken?.trim());
 
   // The dropdown only shows the four off-site opportunity types (Reddit,
   // YouTube, Cited URLs, Wikipedia). Each row carries its canonical label
@@ -305,6 +327,32 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     return allOffSiteOpportunities.filter((entry) => !entry.ignored);
   }, [allOffSiteOpportunities, statusFilter]);
 
+  // The full entry (opportunity + canonical type + ignored flag) for the
+  // currently-selected opportunity. Drawn from the unfiltered list so the
+  // status toggle still has its target even right after a flip moves it out
+  // of the active filter. Null until a selection is made.
+  const selectedOpportunityEntry = useMemo(
+    () =>
+      allOffSiteOpportunities.find(
+        (entry) => entry.opportunity.id === selectedOpportunityId,
+      ) ?? null,
+    [allOffSiteOpportunities, selectedOpportunityId],
+  );
+
+  // Reset the status-toggle UI whenever the selected opportunity changes (or
+  // is cleared, e.g. on a site switch) so a stale confirm panel or save pill
+  // never carries over to a different opportunity.
+  useEffect(() => {
+    setStatusToggleState({ kind: 'idle' });
+    setStatusConfirmPending(false);
+    setDeleteState({ kind: 'idle' });
+    setDeleteConfirmPending(false);
+    // Clear a prior "Deleted X" notice only when the user actively picks a new
+    // opportunity — not when a delete clears the selection (we want the notice
+    // to linger so they can see what was removed).
+    if (selectedOpportunityId) setDeleteNotice(null);
+  }, [selectedOpportunityId]);
+
   // If the currently-selected opportunity disappears from the filtered list
   // (e.g. site changed, opportunity reload trimmed it out, or filter set
   // tightened in a future change), clear the selection so the suggestions
@@ -333,6 +381,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     setValidationErrors({});
     setPendingConfirm({});
     setUndoSnapshots({});
+    setDeleteNotice(null);
   }, [selectedSiteId]);
 
   // Load opportunities for the selected site.
@@ -346,6 +395,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       apiKey: props.apiKey,
       siteId: selectedSiteId,
       proxyConfig: props.proxyConfig,
+      userToken: props.userToken,
     })
       .then((items) => {
         if (cancelled) return;
@@ -364,7 +414,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedSiteId, isReady, props.apiBaseUrl, props.apiKey, props.proxyConfig]);
+  }, [selectedSiteId, isReady, props.apiBaseUrl, props.apiKey, props.proxyConfig, props.userToken]);
 
   // Load suggestions for the selected opportunity.
   useEffect(() => {
@@ -378,6 +428,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       siteId: selectedSiteId,
       opportunityId: selectedOpportunityId,
       proxyConfig: props.proxyConfig,
+      userToken: props.userToken,
     })
       .then((items) => {
         if (cancelled) return;
@@ -421,6 +472,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     props.apiBaseUrl,
     props.apiKey,
     props.proxyConfig,
+    props.userToken,
   ]);
 
   const updateField = useCallback(
@@ -634,6 +686,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
           suggestionId,
           partialData: payload,
           proxyConfig: props.proxyConfig,
+          userToken: props.userToken,
         });
         // Treat the server's response as the new canonical original.
         const refreshed = buildDraftFromSuggestion(updated);
@@ -676,6 +729,7 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
       props.apiBaseUrl,
       props.apiKey,
       props.proxyConfig,
+      props.userToken,
     ],
   );
 
@@ -757,6 +811,123 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
     },
     [undoSnapshots, sendPatch],
   );
+
+  // Step 1 of the status flip: open the inline confirm. Mirrors requestSave so
+  // the user gets the same "are you sure?" beat before a write.
+  const requestStatusToggle = useCallback(() => {
+    if (!selectedOpportunityEntry) return;
+    setStatusToggleState({ kind: 'idle' });
+    setStatusConfirmPending(true);
+  }, [selectedOpportunityEntry]);
+
+  const cancelStatusToggle = useCallback(() => {
+    setStatusConfirmPending(false);
+  }, []);
+
+  // Step 2: PATCH the new status, then update the cached opportunity in place
+  // so the dropdown label, [IGNORED] tag, and Active/Ignored counts all refresh
+  // without a refetch.
+  const confirmStatusToggle = useCallback(async () => {
+    const entry = selectedOpportunityEntry;
+    if (!entry || !selectedSiteId) return;
+    const nextStatus = entry.ignored ? 'NEW' : 'IGNORED';
+    setStatusConfirmPending(false);
+    setStatusToggleState({ kind: 'saving' });
+    try {
+      const updated = await patchOpportunityStatus({
+        apiBaseUrl: props.apiBaseUrl,
+        apiKey: props.apiKey,
+        siteId: selectedSiteId,
+        opportunityId: entry.opportunity.id,
+        status: nextStatus,
+        proxyConfig: props.proxyConfig,
+        userToken: props.userToken,
+      });
+      // Widen the filter FIRST if the flip would push this opportunity out of
+      // the current Active/Ignored view — otherwise the selection-clear effect
+      // would drop the selection out from under the user.
+      const nowIgnored = isIgnoredOpportunityStatus(updated.status);
+      setStatusFilter((current) => {
+        if (current === 'active' && nowIgnored) return 'all';
+        if (current === 'ignored' && !nowIgnored) return 'all';
+        return current;
+      });
+      setOpportunities((prev) =>
+        prev
+          ? prev.map((opportunity) =>
+              opportunity.id === updated.id
+                ? { ...opportunity, ...updated }
+                : opportunity,
+            )
+          : prev,
+      );
+      setStatusToggleState({ kind: 'saved', at: new Date().toISOString() });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update status.';
+      setStatusToggleState({ kind: 'error', message });
+    }
+  }, [
+    selectedOpportunityEntry,
+    selectedSiteId,
+    props.apiBaseUrl,
+    props.apiKey,
+    props.proxyConfig,
+    props.userToken,
+  ]);
+
+  // Step 1 of delete: open the danger confirm. (Closing the status confirm if
+  // it happens to be open keeps only one confirm panel visible at a time.)
+  const requestDelete = useCallback(() => {
+    if (!selectedOpportunityEntry) return;
+    setStatusConfirmPending(false);
+    setDeleteState({ kind: 'idle' });
+    setDeleteConfirmPending(true);
+  }, [selectedOpportunityEntry]);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteConfirmPending(false);
+  }, []);
+
+  // Step 2: irreversibly delete the opportunity. On success, drop it from the
+  // cached list, clear the selection (which collapses the suggestions panel and
+  // visibility control via the reset effect), and leave a notice behind.
+  const confirmDelete = useCallback(async () => {
+    const entry = selectedOpportunityEntry;
+    if (!entry || !selectedSiteId) return;
+    const removedId = entry.opportunity.id;
+    const removedLabel = entry.opportunity.title?.trim() || entry.canonical;
+    setDeleteConfirmPending(false);
+    setDeleteState({ kind: 'saving' });
+    try {
+      await deleteOpportunity({
+        apiBaseUrl: props.apiBaseUrl,
+        apiKey: props.apiKey,
+        siteId: selectedSiteId,
+        opportunityId: removedId,
+        proxyConfig: props.proxyConfig,
+        userToken: props.userToken,
+      });
+      setOpportunities((prev) =>
+        prev ? prev.filter((opportunity) => opportunity.id !== removedId) : prev,
+      );
+      setDeleteNotice(`Deleted “${removedLabel}”.`);
+      // Clearing the selection fires the reset effect, which returns deleteState
+      // to idle — so no stale "Deleting…" lingers.
+      setSelectedOpportunityId('');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to delete opportunity.';
+      setDeleteState({ kind: 'error', message });
+    }
+  }, [
+    selectedOpportunityEntry,
+    selectedSiteId,
+    props.apiBaseUrl,
+    props.apiKey,
+    props.proxyConfig,
+    props.userToken,
+  ]);
 
   return (
     <div className="workspace-mode-stack">
@@ -847,6 +1018,163 @@ export function SuggestionsPatcherView(props: SuggestionsPatcherViewProps) {
             </select>
           </label>
         </div>
+
+        {selectedOpportunityEntry ? (
+          <div
+            className={`visibility-control ${
+              selectedOpportunityEntry.ignored ? 'is-ignored' : 'is-visible'
+            }`}
+          >
+            <div className="visibility-control-state">
+              <span className="visibility-dot" aria-hidden="true">
+                {selectedOpportunityEntry.ignored ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19" />
+                    <path d="M6.61 6.61A18.5 18.5 0 0 0 2 12s3 8 10 8a9.1 9.1 0 0 0 5.39-1.61" />
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                    <path d="m2 2 20 20" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </span>
+              <span className="visibility-control-text">
+                <span className="visibility-control-label">
+                  {selectedOpportunityEntry.ignored ? 'Ignored' : 'Visible in UI'}
+                </span>
+                <span className="visibility-control-sub">
+                  {selectedOpportunityEntry.ignored
+                    ? 'Hidden from the active LLMO views'
+                    : 'Shown in the active LLMO views'}{' '}
+                  · {selectedOpportunityEntry.canonical}
+                </span>
+              </span>
+              {!statusConfirmPending ? (
+                <button
+                  type="button"
+                  className={`visibility-action ${
+                    selectedOpportunityEntry.ignored ? 'is-show' : 'is-hide'
+                  }`}
+                  onClick={requestStatusToggle}
+                  disabled={statusToggleState.kind === 'saving'}
+                >
+                  {selectedOpportunityEntry.ignored ? 'Set visible in UI' : 'Hide from UI'}
+                </button>
+              ) : null}
+            </div>
+
+            {statusConfirmPending ? (
+              <div className="patcher-confirm-panel">
+                <strong>
+                  {selectedOpportunityEntry.ignored
+                    ? 'Make this opportunity visible in the UI?'
+                    : 'Hide this opportunity from the UI?'}
+                </strong>
+                <p className="metric-copy">
+                  {selectedOpportunityEntry.ignored
+                    ? 'It will reappear in the active LLMO views (status set to NEW).'
+                    : 'It will be hidden from the active LLMO views (status set to IGNORED) until you make it visible again.'}
+                </p>
+                <div className="patcher-confirm-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void confirmStatusToggle()}
+                    disabled={statusToggleState.kind === 'saving'}
+                  >
+                    {statusToggleState.kind === 'saving'
+                      ? 'Updating…'
+                      : selectedOpportunityEntry.ignored
+                        ? 'Confirm — make visible'
+                        : 'Confirm — hide'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={cancelStatusToggle}
+                    disabled={statusToggleState.kind === 'saving'}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {statusToggleState.kind === 'error' ? (
+              <p className="status-pill status-pill-error">
+                Status update failed: {statusToggleState.message}
+              </p>
+            ) : null}
+            {statusToggleState.kind === 'saved' ? (
+              <p className="status-pill status-pill-success">
+                Visibility updated at{' '}
+                {new Date(statusToggleState.at).toLocaleTimeString()}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {selectedOpportunityEntry ? (
+          <div className="opportunity-danger">
+            {deleteConfirmPending ? (
+              <div className="opportunity-danger-confirm">
+                <strong>Permanently delete this opportunity?</strong>
+                <p className="metric-copy">
+                  This removes the opportunity and all of its suggestions from
+                  SpaceCat for everyone. This cannot be undone — use “Hide from
+                  UI” above if you only want to ignore it.
+                </p>
+                <div className="patcher-confirm-actions">
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => void confirmDelete()}
+                    disabled={deleteState.kind === 'saving'}
+                  >
+                    {deleteState.kind === 'saving' ? 'Deleting…' : 'Confirm delete'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={cancelDelete}
+                    disabled={deleteState.kind === 'saving'}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="danger-link"
+                onClick={requestDelete}
+                disabled={deleteState.kind === 'saving'}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                </svg>
+                Delete this opportunity
+              </button>
+            )}
+
+            {deleteState.kind === 'error' ? (
+              <p className="status-pill status-pill-error">
+                Delete failed: {deleteState.message}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {deleteNotice ? (
+          <p className="status-pill status-pill-success">{deleteNotice}</p>
+        ) : null}
 
         {opportunitiesError ? (
           <p className="status-pill status-pill-error">{opportunitiesError}</p>

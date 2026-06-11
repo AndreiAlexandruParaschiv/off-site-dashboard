@@ -136,73 +136,70 @@ a:hover {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   Breathing room — expand inner and outer spacing (Phase 1.1)
+   Density pass — tighten the spatial rhythm into an instrument-panel
+   feel. (Supersedes the earlier "breathing room" expansion.)
    ───────────────────────────────────────────────────────────────── */
 
 .dashboard-shell {
-  max-width: 1720px;
+  max-width: 1640px;
   margin: 0 auto;
-  padding: 36px 28px 64px;
-}
-
-.dashboard-shell {
-  padding: 40px 40px 72px;
+  padding: 22px 26px 44px;
 }
 
 .dashboard-hero {
-  gap: 28px !important;
-  margin-bottom: 36px !important;
+  gap: 16px !important;
+  margin-bottom: 18px !important;
 }
 
 .hero-copy {
-  padding: 40px 44px !important;
-  gap: 24px !important;
+  padding: 26px 30px !important;
+  gap: 14px !important;
 }
 
 .hero-copy h1 {
-  max-width: 16ch !important;
-  font-size: clamp(2.4rem, 4vw, 4.2rem) !important;
+  max-width: 18ch !important;
+  font-size: clamp(1.9rem, 3vw, 3rem) !important;
   letter-spacing: -0.035em !important;
   line-height: 0.98 !important;
 }
 
 .hero-copy p {
-  font-size: 1rem !important;
-  line-height: 1.6 !important;
-  max-width: 62ch !important;
+  font-size: 0.92rem !important;
+  line-height: 1.5 !important;
+  max-width: 60ch !important;
 }
 
 .hero-signal-row {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .hero-signal {
-  min-width: 176px !important;
-  padding: 16px 18px !important;
+  min-width: 150px !important;
+  padding: 11px 13px !important;
 }
 
 .hero-command {
-  padding: 32px 30px !important;
-  gap: 22px !important;
-}
-
-.hero-stats {
+  padding: 20px 22px !important;
   gap: 14px !important;
 }
 
+.hero-stats {
+  gap: 10px !important;
+}
+
 .stats-card {
-  padding: 18px 0 !important;
-  gap: 18px !important;
+  padding: 12px 0 !important;
+  gap: 12px !important;
 }
 
 .stats-value {
-  font-size: 2.2rem !important;
+  font-size: 1.85rem !important;
 }
 
 /* Workspace summary KPIs: stack label → value → detail tightly per card */
 .workspace-summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-  column-gap: 28px !important;
+  column-gap: 20px !important;
   row-gap: 0 !important;
   align-items: stretch !important;
 }
@@ -234,7 +231,7 @@ a:hover {
 
 .workspace-summary-grid .stats-value {
   order: 2;
-  font-size: 2.4rem !important;
+  font-size: 2rem !important;
   margin-top: 2px;
 }
 
@@ -244,116 +241,116 @@ a:hover {
 }
 
 .hero-command-notes {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .hero-note {
-  padding-top: 14px !important;
+  padding-top: 12px !important;
 }
 
 .dashboard-layout {
-  gap: 32px !important;
+  gap: 22px !important;
 }
 
 .workspace-shell {
-  gap: 28px !important;
+  gap: 22px !important;
 }
 
 .workspace-sidebar {
-  gap: 20px !important;
+  gap: 14px !important;
 }
 
 .workspace-nav {
-  gap: 12px !important;
+  gap: 6px !important;
 }
 
 .workspace-nav-button {
-  padding: 18px 20px !important;
-  gap: 10px !important;
+  padding: 12px 15px !important;
+  gap: 9px !important;
 }
 
 .workspace-content,
 .workspace-mode-stack {
-  gap: 28px !important;
+  gap: 18px !important;
 }
 
 .panel {
-  padding: 28px 30px !important;
-  gap: 22px !important;
+  padding: 18px 20px !important;
+  gap: 14px !important;
 }
 
 .dashboard-secondary-grid,
 .dashboard-data-stack {
-  gap: 28px !important;
+  gap: 18px !important;
 }
 
 .dashboard-overview-grid {
-  gap: 20px !important;
-}
-
-.dashboard-overview-grid > .panel {
-  padding: 18px 22px !important;
   gap: 14px !important;
 }
 
+.dashboard-overview-grid > .panel {
+  padding: 14px 16px !important;
+  gap: 10px !important;
+}
+
 .dashboard-overview-grid > .panel .panel-header {
-  gap: 6px !important;
+  gap: 5px !important;
 }
 
 .dashboard-overview-grid > .panel .panel-header h2 {
-  font-size: 1rem !important;
+  font-size: 0.96rem !important;
 }
 
 .dashboard-overview-grid > .panel .panel-header p {
-  font-size: 0.82rem !important;
-  line-height: 1.5 !important;
+  font-size: 0.8rem !important;
+  line-height: 1.45 !important;
 }
 
 .panel-header {
-  gap: 16px !important;
+  gap: 10px !important;
 }
 
 .panel-header h2 {
-  line-height: 1.2 !important;
+  line-height: 1.18 !important;
 }
 
 .panel-header p {
-  line-height: 1.6 !important;
+  line-height: 1.5 !important;
 }
 
-/* Give table cells a little more room so rows don't feel cramped */
+/* Compact table rows for a dense, scannable grid */
 .dashboard-table thead th {
-  padding: 14px 16px !important;
+  padding: 9px 14px !important;
 }
 
 .dashboard-table tbody td {
-  padding: 14px 16px !important;
-  line-height: 1.5 !important;
+  padding: 9px 14px !important;
+  line-height: 1.45 !important;
 }
 
 /* Wikipedia check + site cards */
 .wikipedia-check-layout {
-  gap: 24px !important;
-}
-
-.wikipedia-check-card {
-  padding: 24px 26px !important;
-}
-
-.site-card {
-  padding: 20px 22px !important;
-  gap: 12px !important;
-}
-
-.site-grid {
   gap: 16px !important;
 }
 
-/* Inputs: a touch more vertical room */
+.wikipedia-check-card {
+  padding: 16px 18px !important;
+}
+
+.site-card {
+  padding: 14px 16px !important;
+  gap: 8px !important;
+}
+
+.site-grid {
+  gap: 12px !important;
+}
+
+/* Inputs: compact, crisp control height */
 .text-input,
 .textarea-input,
 .select-input {
-  padding: 12px 14px !important;
+  padding: 9px 12px !important;
 }
 
 .opportunity-select {
@@ -364,37 +361,37 @@ a:hover {
 
 /* Filters + chips + pagination footers */
 .filter-group {
-  gap: 12px !important;
-  padding: 14px 0 !important;
+  gap: 10px !important;
+  padding: 10px 0 !important;
 }
 
 .button-row,
 .table-controls,
 .pagination-controls {
-  gap: 14px !important;
-  padding-top: 14px !important;
+  gap: 10px !important;
+  padding-top: 10px !important;
 }
 
 /* Managed connection block and action rows */
 .managed-connection-note {
-  gap: 14px !important;
+  gap: 10px !important;
 }
 
 .settings-grid,
 .settings-grid-managed {
-  gap: 18px !important;
+  gap: 14px !important;
 }
 
 .settings-actions {
-  gap: 12px !important;
-  padding-top: 8px !important;
+  gap: 10px !important;
+  padding-top: 6px !important;
 }
 
 .dashboard-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.82fr);
-  gap: 22px;
-  margin-bottom: 28px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.82fr);
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
 .hero-copy,
@@ -2146,6 +2143,248 @@ a:hover {
   gap: 6px;
 }
 
+/* Opportunity visibility control — eye/eye-off toggle that flips an off-site
+   opportunity between "Visible in UI" (status NEW) and "Ignored". The left
+   rule and icon chip recolor with state: moss when visible, muted ink when
+   ignored. */
+.visibility-control {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--paper-hairline);
+  border-left: 3px solid var(--ink-faint);
+  border-radius: 10px;
+  background: var(--paper-card-soft);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.visibility-control.is-visible {
+  border-left-color: var(--moss);
+}
+
+.visibility-control.is-ignored {
+  border-left-color: var(--ink-faint);
+  background: var(--paper-deep);
+}
+
+.visibility-control-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.visibility-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+}
+
+.visibility-control.is-visible .visibility-dot {
+  background: var(--moss-soft);
+  color: var(--moss);
+}
+
+.visibility-control.is-ignored .visibility-dot {
+  background: rgba(19, 26, 31, 0.06);
+  color: var(--ink-faint);
+}
+
+.visibility-dot svg {
+  width: 19px;
+  height: 19px;
+}
+
+.visibility-control-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.visibility-control-label {
+  font-weight: 600;
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.visibility-control.is-ignored .visibility-control-label {
+  color: var(--ink-soft);
+}
+
+.visibility-control-sub {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.visibility-action {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 15px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.visibility-action.is-show {
+  background: var(--moss);
+  border-color: var(--moss);
+  color: var(--paper-card);
+}
+
+.visibility-action.is-show:hover:not(:disabled) {
+  background: #34502f;
+  border-color: #34502f;
+}
+
+.visibility-action.is-hide {
+  background: transparent;
+  border-color: var(--paper-hairline-strong);
+  color: var(--ink-soft);
+}
+
+.visibility-action.is-hide:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.visibility-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .visibility-control-state {
+    flex-wrap: wrap;
+  }
+
+  .visibility-action {
+    margin-left: 0;
+  }
+}
+
+/* Delete opportunity — the one irreversible action in the patcher, so it sits
+   apart from the safe visibility toggle and leans on the cadmium accent. The
+   resting state is a quiet text link; the confirm escalates to a boxed warning
+   with a solid red button. */
+.opportunity-danger {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.danger-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  transition: color 140ms ease;
+}
+
+.danger-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+.danger-link:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.danger-link:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.opportunity-danger-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.opportunity-danger-confirm strong {
+  color: var(--accent-strong);
+  letter-spacing: 0.01em;
+}
+
+.danger-button {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 8px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--paper-card);
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* "Log in with IMS token" block in Workspace Setup — exchanges a pasted IMS
+   access token for a SpaceCat session token so the user skips the manual
+   /auth/login curl. */
+.ims-login {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--paper-hairline);
+}
+
+.ims-login-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .patcher-card-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -2411,5 +2650,243 @@ a:hover {
   .secondary-button,
   .ghost-button {
     width: 100%;
+  }
+}
+
+/* =========================================================================
+   Back Office — JSON loader, structured editor panels, raw fallback
+   ========================================================================= */
+
+.back-office-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 24px;
+  border: 2px dashed var(--paper-hairline-strong);
+  border-radius: 14px;
+  background: var(--paper-card-soft);
+  text-align: center;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.back-office-dropzone-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.back-office-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.back-office-toolbar-meta {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.back-office-panel-sum {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.back-office-panel-sum strong {
+  color: var(--ink-strong);
+}
+
+.back-office-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+
+.back-office-table th,
+.back-office-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--paper-hairline);
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.back-office-table th {
+  font-weight: 700;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: transparent;
+}
+
+.back-office-table-row .text-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.back-office-table-row-brand {
+  background: var(--accent-soft);
+}
+
+.back-office-table-compact th,
+.back-office-table-compact td {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.back-office-locked-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--paper-card);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.back-office-raw {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  margin-top: 8px;
+}
+
+.back-office .panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Collapsible cards inside Back Office Topics/Sources/Suggestions panels */
+
+.back-office-collapsible-card {
+  /* Tighter padding when collapsed reduces vertical noise so the user can
+     scan dozens of rows quickly. The non-collapsed look stays unchanged. */
+  transition: padding 120ms ease;
+}
+
+.back-office-collapsible-card.back-office-card-collapsed {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.back-office-card-header-toggle {
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.back-office-card-header-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-radius: 8px;
+}
+
+.back-office-card-header-toggle:hover .back-office-chevron {
+  color: var(--accent);
+}
+
+.back-office-chevron {
+  display: inline-block;
+  width: 14px;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.back-office-card-summary {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.back-office-card-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Source titles can be long URLs — clip them so the header stays one line. */
+.back-office-source-title {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Add competitor" row under each SOV table */
+.back-office-table-actions {
+  margin-top: 10px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Polish pass — one orchestrated load reveal + instrument numerals
+   ───────────────────────────────────────────────────────────────── */
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Stagger the top-level panels up on load so the dashboard assembles
+   itself rather than appearing flat. Only the first handful are delayed —
+   anything further down has scrolled past the fold anyway. */
+.workspace-mode-stack > .panel,
+.dashboard-overview-grid > .panel,
+.dashboard-hero > * {
+  animation: panel-rise 460ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.dashboard-hero > *:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.workspace-mode-stack > .panel:nth-child(1) {
+  animation-delay: 60ms;
+}
+.workspace-mode-stack > .panel:nth-child(2) {
+  animation-delay: 120ms;
+}
+.workspace-mode-stack > .panel:nth-child(3) {
+  animation-delay: 180ms;
+}
+.workspace-mode-stack > .panel:nth-child(4) {
+  animation-delay: 240ms;
+}
+
+.dashboard-overview-grid > .panel:nth-child(2) {
+  animation-delay: 80ms;
+}
+.dashboard-overview-grid > .panel:nth-child(3) {
+  animation-delay: 160ms;
+}
+
+/* Numbers read like gauges: even-width digits stop KPI values from
+   jittering as they change. */
+.stats-value,
+.metric-value,
+.back-office-metric-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* A reader who prefers reduced motion gets the layout instantly, no rise. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-mode-stack > .panel,
+  .dashboard-overview-grid > .panel,
+  .dashboard-hero > * {
+    animation: none;
   }
 }

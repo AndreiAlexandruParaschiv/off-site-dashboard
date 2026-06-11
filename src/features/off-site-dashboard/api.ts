@@ -14,6 +14,7 @@ import {
   DEFAULT_API_BASE_URL,
   EVALUATOR_API_PATH,
   EVALUATOR_CACHE_CLEAR_API_PATH,
+  SPACECAT_LOGIN_API_PATH,
   SPACECAT_PROXY_API_PATH,
   SPACECAT_PROXY_CONFIG_API_PATH,
   SUGGESTION_EVALUATOR_API_PATH,
@@ -627,6 +628,48 @@ export async function clearEvaluatorCache(): Promise<{
     cleared: number;
     brandProfilesCleared: number;
     clearedAt: string;
+  };
+}
+
+/**
+ * Exchange a raw IMS *user* access token (e.g. copied from the Experience
+ * Cloud shell) for a SpaceCat session token, server-side, via the
+ * /api/spacecat-login endpoint. Lets the dashboard mint a session token
+ * without the manual "run the /auth/login curl, copy the JWT" step — the
+ * returned token is then used as the pasted session token (x-client-token).
+ *
+ * The IMS token is sent to our own backend only; it is never persisted.
+ */
+export async function exchangeImsAccessToken(args: {
+  imsAccessToken: string;
+}): Promise<{ sessionToken: string; expiresAt?: number }> {
+  const response = await fetch(buildInternalApiUrl(SPACECAT_LOGIN_API_PATH), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accessToken: args.imsAccessToken }),
+  });
+  if (!response.ok) {
+    const detail = await readErrorMessage(response);
+    throw new SpacecatApiError(
+      detail || `IMS token exchange failed with ${response.status}.`,
+      { status: response.status },
+    );
+  }
+  const payload = (await response.json()) as {
+    sessionToken?: unknown;
+    expiresAt?: unknown;
+  };
+  const sessionToken =
+    typeof payload.sessionToken === 'string' ? payload.sessionToken : '';
+  if (!sessionToken) {
+    throw new SpacecatApiError('IMS token exchange returned no session token.', {
+      status: response.status,
+    });
+  }
+  return {
+    sessionToken,
+    expiresAt:
+      typeof payload.expiresAt === 'number' ? payload.expiresAt : undefined,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   handleSpacecatProxyConfigRequest,
   handleSpacecatProxyRequest,
 } from './server/spacecat-proxy';
+import { handleSpacecatLoginRequest } from './server/spacecat-login';
 
 const ALLOWED_VITE_HOSTS = ['.vercel.app', '.amplifyapp.com'];
 
@@ -96,6 +97,42 @@ function evaluationDevMiddleware(env: Record<string, string>) {
             });
             res.end(await response.text());
           })();
+          return;
+        }
+
+        // IMS-token login: exchange a browser-supplied IMS access token for a
+        // SpaceCat session token. POST with a JSON body { accessToken }.
+        if (requestUrl === '/api/spacecat-login') {
+          if (requestMethod !== 'POST') {
+            res.statusCode = 405;
+            res.end('');
+            return;
+          }
+          const loginChunks: Uint8Array[] = [];
+          req.on('data', (chunk?: Uint8Array) => {
+            if (chunk) loginChunks.push(chunk);
+          });
+          req.on('end', () => {
+            void (async () => {
+              const rawBody = Buffer.concat(loginChunks).toString('utf-8');
+              const response = await handleSpacecatLoginRequest(
+                new Request(`http://localhost${requestUrl}`, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: rawBody,
+                }),
+                {
+                  SPACECAT_API_BASE_URL: env.SPACECAT_API_BASE_URL,
+                  SPACECAT_USER_LOGIN_URL: env.SPACECAT_USER_LOGIN_URL,
+                },
+              );
+              res.statusCode = response.status;
+              response.headers.forEach((value, name) => {
+                res.setHeader(name, value);
+              });
+              res.end(await response.text());
+            })();
+          });
           return;
         }
 

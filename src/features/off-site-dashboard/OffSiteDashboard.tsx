@@ -3343,6 +3343,65 @@ export function OffSiteDashboard() {
                       </label>
                     ) : null}
 
+                    {isManagedConnection ? (
+                      <div className="ims-login">
+                        <label className="field">
+                          <span>
+                            Or log in with an IMS access token{' '}
+                            <em className="field-note-inline">
+                              (mints the session token above for you)
+                            </em>
+                          </span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={dashboard.imsAccessToken}
+                            onChange={(event) =>
+                              dashboard.setImsAccessToken(event.target.value)
+                            }
+                            placeholder="eyJhbGci… paste your IMS user access token"
+                            autoComplete="off"
+                          />
+                          <small className="field-note">
+                            The IMS user access token from the Experience Cloud
+                            shell (exc_app). We exchange it server-side via
+                            /auth/login and never store it. The IMS token itself
+                            expires (~24h), so re-paste when it does.
+                          </small>
+                        </label>
+                        <div className="ims-login-actions">
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => void dashboard.loginWithImsToken()}
+                            disabled={
+                              dashboard.imsLoginState.kind === 'exchanging' ||
+                              !dashboard.imsAccessToken.trim()
+                            }
+                          >
+                            {dashboard.imsLoginState.kind === 'exchanging'
+                              ? 'Exchanging…'
+                              : 'Exchange for session token'}
+                          </button>
+                          {dashboard.imsLoginState.kind === 'success' ? (
+                            <span className="status-pill status-pill-success">
+                              Session token set
+                              {dashboard.imsLoginState.expiresAt
+                                ? ` · expires ${new Date(
+                                    dashboard.imsLoginState.expiresAt,
+                                  ).toLocaleTimeString()}`
+                                : ''}
+                            </span>
+                          ) : null}
+                          {dashboard.imsLoginState.kind === 'error' ? (
+                            <span className="status-pill status-pill-error">
+                              {dashboard.imsLoginState.message}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div
                       className={`settings-grid ${
                         isManagedConnection ? 'settings-grid-managed' : ''

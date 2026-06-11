@@ -232,28 +232,31 @@ function resolveUserLoginUrl(env: SpacecatS2SEnv): string {
  * fresh IMS token (e.g. after the old one expires) invalidates the cache
  * without needing an explicit reset.
  */
-export async function getUserLoginSessionToken(
+/**
+ * Exchange a raw IMS *user* access token for a SpaceCat session token via
+ * POST <base>/auth/login {accessToken}. This is the un-cached primitive — it
+ * always hits the network. Callers that hold the token server-side
+ * ({@link getUserLoginSessionToken}) layer caching on top; the
+ * request-driven login endpoint calls this directly (one user, no shared
+ * cache).
+ *
+ * Returns the session token plus its computed expiry (the JWT's real `exp`
+ * when present, otherwise now + a short TTL).
+ */
+export async function exchangeAccessTokenForSession(
+  accessToken: string,
   env: SpacecatS2SEnv,
   deps: Deps = defaultDeps,
-): Promise<string> {
-  const accessToken = env.SPACECAT_IMS_ACCESS_TOKEN?.trim() ?? '';
-  if (!accessToken) {
-    throw new Error('SPACECAT_IMS_ACCESS_TOKEN is not set.');
-  }
-  // Cheap fingerprint so a rotated IMS token busts the cache.
-  const key = accessToken.slice(-24);
-  if (
-    userSessionToken &&
-    userSessionKey === key &&
-    isTokenFresh(userSessionExpiresAt, SESSION_REFRESH_BUFFER_MS, deps.now())
-  ) {
-    return userSessionToken;
+): Promise<{ token: string; expiresAt: number }> {
+  const trimmed = accessToken.trim();
+  if (!trimmed) {
+    throw new Error('No IMS access token provided.');
   }
 
   const response = await deps.fetch(resolveUserLoginUrl(env), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accessToken }),
+    body: JSON.stringify({ accessToken: trimmed }),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -283,10 +286,32 @@ export async function getUserLoginSessionToken(
     );
   }
 
-  userSessionToken = token;
   // Prefer the JWT's real expiry; fall back to the short S2S TTL.
   const jwtExpiry = readJwtExpiryMs(token);
-  userSessionExpiresAt = jwtExpiry ?? deps.now() + SESSION_TTL_MS;
+  return { token, expiresAt: jwtExpiry ?? deps.now() + SESSION_TTL_MS };
+}
+
+export async function getUserLoginSessionToken(
+  env: SpacecatS2SEnv,
+  deps: Deps = defaultDeps,
+): Promise<string> {
+  const accessToken = env.SPACECAT_IMS_ACCESS_TOKEN?.trim() ?? '';
+  if (!accessToken) {
+    throw new Error('SPACECAT_IMS_ACCESS_TOKEN is not set.');
+  }
+  // Cheap fingerprint so a rotated IMS token busts the cache.
+  const key = accessToken.slice(-24);
+  if (
+    userSessionToken &&
+    userSessionKey === key &&
+    isTokenFresh(userSessionExpiresAt, SESSION_REFRESH_BUFFER_MS, deps.now())
+  ) {
+    return userSessionToken;
+  }
+
+  const { token, expiresAt } = await exchangeAccessTokenForSession(accessToken, env, deps);
+  userSessionToken = token;
+  userSessionExpiresAt = expiresAt;
   userSessionKey = key;
   return token;
 }

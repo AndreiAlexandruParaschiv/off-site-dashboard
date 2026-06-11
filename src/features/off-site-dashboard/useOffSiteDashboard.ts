@@ -24,6 +24,7 @@ import {
   clearEvaluatorCache,
   evaluateSentimentRow,
   evaluateSuggestionRow,
+  exchangeImsAccessToken,
   fetchSpacecatProxyConfig,
   fetchSiteDashboardData,
 } from './api';
@@ -318,6 +319,41 @@ export function useOffSiteDashboard() {
   // Session-only token pasted by the user in the UI. Never persisted to
   // localStorage — colleagues paste it once per browser session.
   const [userToken, setUserToken] = useState<string>('');
+
+  // "Log in with IMS token" flow: the user pastes a raw IMS *user* access
+  // token, we exchange it server-side for a SpaceCat session token, and store
+  // the result in `userToken`. Neither token is persisted. Kept in memory so a
+  // one-click re-exchange is possible when the session expires.
+  const [imsAccessToken, setImsAccessToken] = useState<string>('');
+  const [imsLoginState, setImsLoginState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'exchanging' }
+    | { kind: 'success'; expiresAt?: number }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
+
+  const loginWithImsToken = useCallback(async () => {
+    const token = imsAccessToken.trim();
+    if (!token) {
+      setImsLoginState({
+        kind: 'error',
+        message: 'Paste an IMS access token first.',
+      });
+      return;
+    }
+    setImsLoginState({ kind: 'exchanging' });
+    try {
+      const { sessionToken, expiresAt } = await exchangeImsAccessToken({
+        imsAccessToken: token,
+      });
+      setUserToken(sessionToken);
+      setImsLoginState({ kind: 'success', expiresAt });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'IMS token exchange failed.';
+      setImsLoginState({ kind: 'error', message });
+    }
+  }, [imsAccessToken]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -1083,6 +1119,10 @@ export function useOffSiteDashboard() {
       })),
     userToken,
     setUserToken,
+    imsAccessToken,
+    setImsAccessToken,
+    imsLoginState,
+    loginWithImsToken,
     setSiteInputText: (value: string) =>
       setConfig((previousConfig) => ({
         ...previousConfig,

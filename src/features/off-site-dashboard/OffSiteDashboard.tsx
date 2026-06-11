@@ -3025,6 +3025,11 @@ export function OffSiteDashboard() {
       apiKey: dashboard.config.apiKey,
       proxyConfig: dashboard.spacecatProxyConfig,
       siteInput: normalizedSite,
+      // Forward the pasted/IMS-minted session token, same as the main
+      // dashboard's refreshSite. Without it the proxy falls back to the
+      // server's managed auth (a possibly stale, wrong-host session token) and
+      // 401s — which is what broke the Wikipedia checker after the LLMO host fix.
+      userToken: dashboard.userToken,
     });
     const wikipediaOpportunities = siteResult.opportunities.filter(
       (opportunity) => opportunity.opportunityType === 'Wikipedia',
